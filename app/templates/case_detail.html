@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>素材包分析视图 - short-video-agent</title>
+    <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+</head>
+<body>
+<header class="site-header compact-header">
+    <div>
+        <div class="eyebrow">Case Analysis</div>
+        <h1>素材包分析视图</h1>
+        <p>查看关键帧总览、结构化输入和 Prompt，一键复制给 LLM 做爆款拆解。</p>
+    </div>
+</header>
+
+<main class="page case-page" data-case-id="{{ case_id }}">
+    <section class="case-toolbar">
+        <a class="text-link" href="/">返回首页</a>
+        <div class="toolbar-actions">
+            <button type="button" id="run-auto-analysis-button">开始 AI 自动拆解</button>
+            <button type="button" id="copy-ai-report-button">复制 AI 报告</button>
+            <button type="button" id="copy-brief-button">复制分析工作表</button>
+            <button type="button" id="copy-prompt-button">复制调试 Prompt</button>
+        </div>
+    </section>
+
+    <section class="case-view-grid">
+        <div class="result-card">
+            <h2>关键帧总览</h2>
+            <img id="contact-sheet-image" class="contact-sheet-image" alt="关键帧总览图">
+        </div>
+
+        <div class="result-card">
+            <h2>基础信息</h2>
+            <div id="case-meta" class="case-meta"></div>
+        </div>
+    </section>
+
+    <section class="result-card">
+        <h2>分析类型</h2>
+        <div class="analysis-category-control">
+            <label>选择拆解角度
+                <select id="analysis-category-select"></select>
+            </label>
+            <button type="button" id="update-category-button">应用类型</button>
+        </div>
+        <p id="category-description" class="muted"></p>
+        <div id="category-status" class="inline-result hidden"></div>
+    </section>
+
+    <section class="result-card">
+        <h2>分析起手卡</h2>
+        <div id="analysis-summary" class="analysis-summary"></div>
+    </section>
+
+    <section class="result-card">
+        <h2>类型拆解框架</h2>
+        <div class="analysis-framework-grid">
+            <div>
+                <h3>分析镜头</h3>
+                <ul id="analysis-lens-list" class="analysis-list"></ul>
+            </div>
+            <div>
+                <h3>关键问题</h3>
+                <ul id="key-questions-list" class="analysis-list"></ul>
+            </div>
+            <div>
+                <h3>内容占比</h3>
+                <ul id="content-ratio-list" class="analysis-list"></ul>
+            </div>
+        </div>
+    </section>
+
+    <section class="result-card">
+        <h2>关键帧时间线</h2>
+        <p class="muted">先看 0-3 秒，再看后续是否有动作、表情、景别或字幕变化。点击图片可在新标签打开。</p>
+        <div id="keyframe-strip" class="keyframe-strip"></div>
+    </section>
+
+    <section class="result-card">
+        <h2>AI 自动拆解结果</h2>
+        <div id="auto-analysis-status" class="inline-result"></div>
+        <div id="auto-analysis-summary" class="analysis-summary"></div>
+        <pre id="auto-analysis-report"></pre>
+    </section>
+
+    <section class="result-card">
+        <h2>我的拆解工作表</h2>
+        <p class="muted">这里保存你的人工修正和二次判断。AI 自动拆解是主流程，工作表用于校对、补充和沉淀。</p>
+        <label>一句话总结
+            <textarea id="worksheet-summary" rows="3" placeholder="这条视频最值得学习的是..."></textarea>
+        </label>
+        <div id="worksheet-sections" class="worksheet-sections"></div>
+        <div class="worksheet-actions">
+            <button type="button" id="save-worksheet-button">保存工作表</button>
+            <span id="worksheet-status" class="muted"></span>
+        </div>
+    </section>
+
+    <section class="result-card">
+        <h2>自动工作流说明</h2>
+        <ol class="analysis-steps">
+            <li>主流程会自动完成：解析链接、下载视频、抽关键帧、生成素材包、调用大模型拆解。</li>
+            <li>AI 报告生成后会保存为 analysis_result.json 和 analysis_report.md。</li>
+            <li>如果大模型未配置，素材包仍会生成，可配置 .env 后在本页点击“开始 AI 自动拆解”。</li>
+            <li>人工工作表只用于校对和补充，不是主拆解路径。</li>
+        </ol>
+    </section>
+
+    <section class="case-two-column">
+        <div class="result-card">
+            <h2>调试 Prompt</h2>
+            <pre id="prompt-text"></pre>
+        </div>
+
+        <div class="result-card">
+            <h2>analysis_brief.md</h2>
+            <pre id="analysis-brief-text"></pre>
+        </div>
+    </section>
+
+    <section class="result-card">
+        <h2>analysis_input.json</h2>
+        <pre id="analysis-json"></pre>
+    </section>
+</main>
+
+<script src="/static/case_detail.js?v={{ static_version }}"></script>
+</body>
+</html>

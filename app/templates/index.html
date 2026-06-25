@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>short-video-agent</title>
+    <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+</head>
+<body>
+<header class="site-header">
+    <div>
+        <div class="eyebrow">Local Workflow</div>
+        <h1>短视频爆款分析素材包生成器</h1>
+        <p>输入抖音作品链接，下载最高可用网页画质，再生成可复盘、可交给 LLM 分析的素材包。</p>
+    </div>
+</header>
+
+<main class="page">
+    <section class="settings-card">
+        <div>
+            <h2>设置</h2>
+            <p class="muted">清晰度在这里统一控制，主页面不展示真实下载地址。</p>
+        </div>
+        <label>下载清晰度偏好
+            <select id="quality-preference">
+                <option value="best">最高可用</option>
+                <option value="1080">1080p 优先</option>
+                <option value="720">720p 优先</option>
+            </select>
+        </label>
+    </section>
+
+    <section class="tabs" aria-label="输入入口">
+        <button class="tab active" data-tab="single">单作品导入</button>
+        <button class="tab" data-tab="profile">主页扫描</button>
+    </section>
+
+    <section class="panel hidden" id="tab-profile">
+        <h2>抖音主页 URL 扫描</h2>
+        <p class="muted">P2 接入。当前版本不请求真实抖音主页，避免把 P0 变成不稳定下载器。</p>
+        <form class="disabled-form">
+            <input disabled placeholder="https://www.douyin.com/user/...">
+            <input disabled value="20">
+            <button disabled>扫描主页</button>
+        </form>
+        <div class="notice">如果后续主页接口被风控，页面会返回明确错误，并建议使用单作品导入或本地上传。</div>
+    </section>
+
+    <section class="panel" id="tab-single">
+        <h2>单作品链接 / aweme_id 导入</h2>
+        <p class="muted">通过抖音网页公开 detail 解析最高可用转码候选，当前不使用 KuKuTool。</p>
+        <form id="single-form" class="disabled-form">
+            <input name="value" placeholder="作品链接、分享文本或 aweme_id" required>
+            <button type="submit" id="single-button">导入作品</button>
+        </form>
+        <div id="single-result" class="inline-result hidden"></div>
+        <button type="button" id="download-selected-button" hidden>按设置下载并自动拆解</button>
+    </section>
+
+    <section class="result-card hidden" id="result-card">
+        <h2>素材包结果</h2>
+        <div id="case-summary" class="case-summary"></div>
+        <pre id="upload-result"></pre>
+        <button id="build-case-button" hidden>生成素材包</button>
+    </section>
+
+    <section class="result-card hidden" id="job-card">
+        <h2>任务状态</h2>
+        <div class="progress">
+            <div id="progress-bar"></div>
+        </div>
+        <div id="job-message" class="job-message"></div>
+        <pre id="job-result"></pre>
+    </section>
+</main>
+
+<footer>
+    本工具仅用于本地学习、复盘和内容分析。请确保你拥有相关内容的分析、下载或使用权限。
+</footer>
+
+<script src="/static/app.js?v={{ static_version }}"></script>
+</body>
+</html>

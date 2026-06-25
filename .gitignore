@@ -1,0 +1,14 @@
+.env
+.venv/
+.DS_Store
+__pycache__/
+.pytest_cache/
+*.pyc
+*.sqlite3
+*.db
+outputs/uploads/*
+outputs/cases/*
+outputs/downloads/*
+!outputs/uploads/.gitkeep
+!outputs/cases/.gitkeep
+!outputs/downloads/.gitkeep
