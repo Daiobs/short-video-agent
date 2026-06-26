@@ -2,7 +2,7 @@
 
 本项目是一个本地短视频爆款分析素材包生成器，不是抖音下载器。
 
-当前目标是把已授权的本地视频或单条抖音作品整理成稳定、可复用、可扩展的自动拆解工作流：解析作品元数据、下载视频用于抽帧、生成素材包、调用大模型自动拆解，并输出选题/脚本/分镜所需的结构化结果。
+当前目标是把已授权的本地视频或单条抖音作品整理成稳定、可复用、可扩展的分析输入包：解析作品元数据、下载视频用于抽帧、生成素材包；配置大模型后，可在 case 页面自动拆解并输出选题/脚本/分镜所需的结构化结果。
 
 ## 合规和使用边界
 
@@ -14,18 +14,25 @@
 - 如果后续抖音接口被风控，系统应返回明确错误，并建议改用本地上传或已授权素材。
 - 不要把 Cookie 写进日志、素材包或 Git 仓库。
 
-## 当前功能
+## 当前主路径
+
+第一次使用时，只需要理解三件事：
+
+1. 首页输入单条作品链接或 aweme_id，生成本地素材包。
+2. 没有 API Key 也能生成 `video.mp4`、`contact_sheet.jpg`、`keyframes/`、`analysis_input.json` 和 `prompt.md`。
+3. 配置大模型后，可以在 case 页面点击“开始 AI 自动拆解 / 重新分析”，生成 `analysis_result.json` 和 `analysis_report.md`。
+
+核心功能：
 
 - FastAPI 本地 Web 页面。
 - SQLite 本地数据库。
 - 页面主入口：单作品链接 / aweme_id 导入。
-- 本地视频上传后端接口仍保留，作为兜底能力和测试入口；当前首页暂不展示。
 - 抖音 native mobile feed/share 优先解析，网页 detail 作为兜底；通常不需要 Cookie，当前不使用 KuKuTool。
 - 清晰度偏好在页面设置区统一配置，主流程不展示候选直链。
 - 同清晰度 CDN 候选会做轻量 Range 测速，默认选择响应更快的 host。
-- 单作品主流程已串联为：解析候选 → 下载视频 → 自动生成素材包 → 自动调用大模型拆解 → 首页展示分析摘要。
-- 素材包分析视图：`/cases/{case_id}` 可查看 contact sheet、关键帧时间线、分类分析镜头、AI 自动拆解报告、analysis_input，并可重跑 AI 拆解。
-- 内容类型拆解：支持美拍/COS、鸡汤/情绪价值、教学/教程、剧情/反转、种草/带货、知识/观点、强视觉吸引/尺度边界和通用短视频。
+- 单作品主流程已串联为：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。
+- 首页设置区可查看 AI 是否配置，并可测试连接。
+- Case 页面可查看素材包、复制 `prompt.md`、下载 `analysis_input.json`、开始 / 重新 AI 拆解、查看 `analysis_report.md`。
 - candidate_id 缓存：前端不接触真实下载 URL。
 - 安全下载：下载前校验 HTTPS、allowlist host、Content-Type、Content-Length 和跳转 host。
 - BackgroundTasks + SQLite Job 状态。
@@ -33,10 +40,14 @@
 - ffmpeg 抽取关键帧。
 - contact sheet 关键帧总览图。
 - 固定目录结构的素材包。
-- `analysis_input.json`、按内容类型生成的 `prompt.md` 模板、AI 输出的 `analysis_result.json` 和 `analysis_report.md`。
+
+实验 / 高级能力：
+
+- 内容类型拆解：美拍/COS、鸡汤/情绪价值、教学/教程、剧情/反转、种草/带货、知识/观点、强视觉吸引/尺度边界和通用短视频。
 - 富化层 enrichment：在同一个 case 目录下补齐评论导入、指标快照、结构化索引，并预留 ASR / OCR 标准目录。
 - 可选本地 ASR：启用 `faster-whisper` 后，可为 case 生成 `audio.wav`、`transcript.json`、`transcript.srt` 和 `transcript.txt`。
 - 可选本地 OCR：启用 `rapidocr` 后，可识别关键帧和底部字幕区文字，并生成 `frame_ocr.json`、`subtitle_ocr.json`、`cover_ocr.json`。
+- 人工质量验收和质量校准样本库：用于后续调 prompt、调质量闸门和沉淀回归样本，不是第一步必须理解的主流程。
 
 当前不包含：
 
@@ -138,7 +149,7 @@ OCR_SUBTITLE_CROP_RATIO=0.35
 
 `CANDIDATE_PROBE_*` 只在同一档清晰度存在多个 CDN host 时生效。它会用 Range 请求读取少量字节并排序，不会为了测速降低清晰度。
 
-AI 自动拆解默认关闭。官方 OpenAI API 建议使用 Responses API：
+AI 自动拆解默认关闭。默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型；主流程只会生成素材包。官方 OpenAI API 建议使用 Responses API：
 
 ```env
 LLM_PROVIDER=openai_responses
@@ -172,6 +183,8 @@ API Key 只放在本地 `.env`，不要提交到 Git；`.env` 已在 `.gitignore
 
 修改 `.env` 后需要重启本地服务，运行中的 FastAPI 进程才会重新读取配置。
 
+如果浏览器能访问 API 但页面“测试连接”失败，请检查本机代理；当前后端请求可能不会读取系统代理环境变量。
+
 本地 ASR 默认关闭。安装 `requirements-asr.txt` 后，可以启用：
 
 ```env
@@ -199,7 +212,7 @@ OCR 会优先识别关键帧全图和底部字幕区。`OCR_MAX_FRAMES` 控制�
 
 1. 在首页设置区点击“测试连接”，确认模型能返回合法 JSON。
 2. 在 case 页面点击“开始 AI 自动拆解 / 重新分析”。
-3. 重新跑单作品主流程，自动生成 `analysis_result.json` 和 `analysis_report.md`。
+3. 在 case 页面重新分析，生成 `analysis_result.json` 和 `analysis_report.md`。
 
 ## 素材包结构
 
@@ -265,11 +278,11 @@ enrichment/
 - `enrichment/ocr/cover_ocr.json`：封面替代帧 OCR 结果；当前使用第一张关键帧作为封面代理。
 - `enrichment/ocr/crops/`：底部字幕区裁剪图，便于回看 OCR 来源。
 
-## 单条作品拆解质量闭环
+## 进阶用法：单条作品拆解质量闭环
 
-当前阶段重点不是批量生产，而是把一条作品拆准、拆透、可复盘。推荐按以下顺序使用：
+质量校准、ASR、OCR、评论和指标快照属于实验 / 高级能力，不是第一次使用项目必须理解的主路径。当前阶段重点不是批量生产，而是把一条作品拆准、拆透、可复盘。需要做深度校准时，推荐按以下顺序使用：
 
-1. 输入单条作品链接，生成素材包和第一版 AI 自动拆解。
+1. 输入单条作品链接，先生成素材包。
 2. 打开 `/cases/{case_id}`，先看“拆解诊断”，确认这份拆解当前能不能用、阻塞在哪里、下一步最该做什么。诊断卡会把最合适的推荐动作放在第一位；安全动作会直接执行，例如开始 AI 拆解、保存反馈并重跑、保存校准样本，需要人工填写的动作只会定位到对应输入区。
 3. 再看“拆解准备度”，确认基础素材、ASR、OCR、评论、指标和拆解产出是否齐全。
 4. 查看“拆解质量校准”，它会合并 AI 自检、人工验收、准备度缺口和下一步动作。
@@ -312,15 +325,15 @@ enrichment/
 http://127.0.0.1:8765/cases/{case_id}
 ```
 
-首页会在任务完成后直接展示关键帧总览、基础信息和 AI 自动拆解报告摘要，不强制跳转。完整分析视图会展示内容类型、分析镜头、关键问题、内容占比、人工修正工作表、`prompt.md`、`analysis_report.md`、`analysis_brief.md` 和 `analysis_input.json`。
+首页会在任务完成后直接展示关键帧总览、基础信息和 case 入口，不强制跳转。配置大模型并运行 AI 自动拆解后，完整分析视图会展示 `analysis_report.md`；高级区域还包含内容类型、分析镜头、关键问题、内容占比、人工修正工作表、`analysis_brief.md` 等进阶信息。
 
 即使不配置 API，也可以在 case 页面复制 `prompt.md`，下载 `analysis_input.json`，再手动把它们交给 ChatGPT / Claude / Gemini 分析。`analysis_input.json` 会在读取时刷新 `analysis_enrichment`，把 ASR 转写、OCR 文字、评论摘要和指标快照合并为紧凑输入。
 
 推荐使用方式：
 
 1. 在 `.env` 配置支持图片输入的大模型 API。
-2. 输入单条作品链接，点击“按设置下载并自动拆解”。
-3. 系统自动生成素材包，并调用大模型生成 `analysis_result.json` 和 `analysis_report.md`。
+2. 输入单条作品链接，点击“下载并生成素材包”。
+3. 系统生成素材包；需要自动拆解时，在 case 页面点击“开始 AI 自动拆解”。
 4. 打开 case 页面查看 AI 自动拆解结果。页面会把报告拆成钩子、视觉、文案、口播、OCR、评论、复刻方案、发布包等卡片，便于直接复盘和执行。
 5. 如需修正，再填写“我的拆解工作表”，保存成人工修正版 `analysis_brief.md`。
 

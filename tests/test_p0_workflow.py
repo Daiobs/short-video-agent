@@ -193,7 +193,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert response.status_code == 200
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
-    assert "/calibration" in response.text
+    assert "输入作品并生成素材包" in response.text
+    assert "AI 配置状态与测试连接" in response.text
+    assert 'id="test-llm-button"' in response.text
+    assert "最近结果 / case 入口" in response.text
+    assert "主页扫描" not in response.text
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:
@@ -204,10 +208,17 @@ def test_calibration_page_uses_versioned_static_assets() -> None:
     assert "/static/app.css?v=" in response.text
 
 
-def test_readme_documents_single_case_quality_loop() -> None:
+def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
 
-    assert "## 单条作品拆解质量闭环" in readme
+    assert "没有 API Key 也能生成" in readme
+    assert "默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型" in readme
+    assert "单作品主流程已串联为：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。" in readme
+    assert "如果浏览器能访问 API 但页面“测试连接”失败，请检查本机代理" in readme
+    assert "自动调用大模型" not in readme
+    assert "按设置下载并自动拆解" not in readme
+    assert "## 进阶用法：单条作品拆解质量闭环" in readme
+    assert "实验 / 高级能力" in readme
     assert "AI 自检" in readme
     assert "人工质量验收" in readme
     assert "重新 AI 自动拆解" in readme
@@ -751,6 +762,8 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
     detail_response = client.get(f"/cases/{case['case_id']}")
     assert detail_response.status_code == 200
     assert "素材包分析视图" in detail_response.text
+    assert "primary-workflow-summary" in detail_response.text
+    assert "高级拆解 / 实验功能" in detail_response.text
     assert "case-diagnosis-summary" in detail_response.text
     assert "auto-analysis-cards" in detail_response.text
     assert "readiness-summary" in detail_response.text
@@ -771,6 +784,12 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
     assert api_payload["case"]["artifact_descriptions"]["quality_calibration_record.json"].startswith("单条作品校准样本")
     assert api_payload["case"]["artifact_descriptions"]["rerun_plan.json"].startswith("下一轮拆解任务单")
     assert api_payload["case"]["artifact_descriptions"]["rerun_plan.md"].startswith("下一轮拆解任务单")
+    primary = api_payload["case"]["primary_workflow"]
+    assert primary["artifact_ready"] is True
+    assert primary["analysis_status"] in {"not_configured", "not_analyzed"}
+    assert primary["next_action"] in {"copy_prompt", "run_ai_analysis"}
+    assert primary["next_action_label"]
+    assert isinstance(primary["llm_configured"], bool)
     quality_acceptance_path = Path(api_payload["case"]["paths"]["quality_acceptance"])
     assert quality_acceptance_path.name == "quality_acceptance.json"
     assert quality_acceptance_path.is_file()
@@ -5819,6 +5838,16 @@ def test_case_detail_renders_top_diagnosis_panel() -> None:
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     template = Path("app/templates/case_detail.html").read_text(encoding="utf-8")
 
+    assert 'id="primary-workflow-summary"' in template
+    assert 'id="primary-case-meta"' in template
+    assert 'data-primary-action="copy_prompt"' in template
+    assert 'data-primary-action="download_input"' in template
+    assert 'data-primary-action="run_ai"' in template
+    assert "高级拆解 / 实验功能" in template
+    assert "function renderPrimaryWorkflow(data)" in script
+    assert "data.primary_workflow" in script
+    assert ".primary-workflow-card" in stylesheet
+    assert ".advanced-section" in stylesheet
     assert 'id="case-diagnosis-summary"' in template
     assert "拆解诊断" in template
     assert "这份拆解能不能用" in template

@@ -59,6 +59,10 @@ const commentsImportText = document.getElementById("comments-import-text");
 const importCommentsButton = document.getElementById("import-comments-button");
 const commentsStatus = document.getElementById("comments-status");
 const metricStatus = document.getElementById("metric-status");
+const primaryWorkflowSummary = document.getElementById("primary-workflow-summary");
+const primaryCaseMeta = document.getElementById("primary-case-meta");
+const primaryArtifactStatus = document.getElementById("primary-artifact-status");
+const primaryAiStatus = document.getElementById("primary-ai-status");
 
 let loadedCase = null;
 
@@ -106,6 +110,43 @@ function renderDefinitionList(element, rows) {
         .join("")}
     </dl>
   `;
+}
+
+function syncPrimaryRunButtons(disabled) {
+  document.querySelectorAll('[data-primary-action="run_ai"]').forEach((button) => {
+    button.disabled = disabled;
+  });
+}
+
+function renderPrimaryWorkflow(data) {
+  const workflow = data.primary_workflow || {};
+  const configured = Boolean(workflow.llm_configured);
+  const analysisStatus = workflow.analysis_status || "unknown";
+  primaryWorkflowSummary.innerHTML = `
+    <div class="primary-workflow-hero ${escapeHtml(analysisStatus)}">
+      <strong>${escapeHtml(workflow.next_action_label || "查看素材包")}</strong>
+      <p>${escapeHtml(
+        workflow.artifact_ready
+          ? "素材包已生成。你可以复制 prompt 手动分析，也可以在配置大模型后启动 AI 自动拆解。"
+          : "素材包文件不完整，建议重新生成素材包。",
+      )}</p>
+    </div>
+  `;
+  const missing = normalizeItems(workflow.missing_artifacts);
+  primaryArtifactStatus.textContent = workflow.artifact_ready
+    ? "素材包已生成：video.mp4、metadata.json、ffprobe.json、contact_sheet.jpg、keyframes、prompt.md 和 analysis_input.json 可用。"
+    : `素材包缺少：${missing.join("、") || "未知文件"}`;
+  if (!workflow.artifact_ready) {
+    primaryAiStatus.textContent = "请先重新生成素材包。";
+  } else if (analysisStatus === "completed") {
+    primaryAiStatus.textContent = "AI 自动拆解已完成，可查看 analysis_report.md。";
+  } else if (!configured) {
+    primaryAiStatus.textContent = "AI 未配置。你仍然可以复制 prompt.md 和下载 analysis_input.json，手动交给外部大模型分析。";
+  } else {
+    primaryAiStatus.textContent = "AI 已配置，但当前 case 还未分析。可以点击“开始 AI 自动拆解”。";
+  }
+  runAutoAnalysisButton.textContent = analysisStatus === "completed" ? "重新 AI 自动拆解" : "开始 AI 自动拆解";
+  syncPrimaryRunButtons(!configured || !workflow.artifact_ready);
 }
 
 function renderBullets(element, items) {
@@ -1597,6 +1638,17 @@ function renderCase(data) {
     ["文件大小", formatBytes(video.file_size || ffprobe.file_size)],
     ["素材目录", loadedCase.paths.keyframes_dir],
   ]);
+  renderDefinitionList(primaryCaseMeta, [
+    ["素材包 ID", loadedCase.case_id],
+    ["作品 ID", metadata.aweme_id || analysisInput.aweme_id],
+    ["标题", metadata.title],
+    ["作者", metadata.author],
+    ["来源", metadata.source_url],
+    ["时长", formatSeconds(video.duration || ffprobe.duration)],
+    ["分辨率", `${video.width || ffprobe.width || 0}x${video.height || ffprobe.height || 0}`],
+    ["文件大小", formatBytes(video.file_size || ffprobe.file_size)],
+  ]);
+  renderPrimaryWorkflow(loadedCase);
 
   renderCategoryControls(analysisInput);
   renderDefinitionList(analysisSummary, analysisHints.rows);
@@ -1703,6 +1755,7 @@ async function pollAnalysisJob(jobId) {
   }
   const job = payload.job;
   autoAnalysisStatus.textContent = `${job.status} · ${job.progress}% · ${job.message || ""}`;
+  primaryAiStatus.textContent = `AI 分析中：${job.progress || 0}% · ${job.message || ""}`;
   if (job.status === "success") {
     await loadCase();
     runAutoAnalysisButton.disabled = false;
@@ -1713,6 +1766,7 @@ async function pollAnalysisJob(jobId) {
     const code = job.error_code || "ERROR";
     const advice = errorAdvice(code);
     autoAnalysisStatus.textContent = `${code}：${job.message || "自动拆解失败"}${advice ? ` ${advice}` : ""}`;
+    primaryAiStatus.textContent = `${code}：AI 自动拆解失败。${advice || "请检查模型配置后重试。"}`;
     runAutoAnalysisButton.disabled = false;
     saveQualityAcceptanceAndRerunButton.disabled = false;
     return job;
@@ -1738,6 +1792,7 @@ function restoreAnalysisActionButtons() {
   const configured = Boolean(loadedCase && loadedCase.llm_settings && loadedCase.llm_settings.configured);
   runAutoAnalysisButton.disabled = !configured;
   saveQualityAcceptanceAndRerunButton.disabled = !configured;
+  syncPrimaryRunButtons(!configured);
 }
 
 runAutoAnalysisButton.addEventListener("click", async () => {
@@ -1746,7 +1801,9 @@ runAutoAnalysisButton.addEventListener("click", async () => {
   }
   runAutoAnalysisButton.disabled = true;
   saveQualityAcceptanceAndRerunButton.disabled = true;
+  syncPrimaryRunButtons(true);
   autoAnalysisStatus.textContent = "正在创建 AI 自动拆解任务...";
+  primaryAiStatus.textContent = "AI 分析中：正在创建任务...";
   try {
     await startAutoAnalysisJob();
   } catch (error) {
@@ -1755,6 +1812,19 @@ runAutoAnalysisButton.addEventListener("click", async () => {
     autoAnalysisStatus.textContent = `${code}：${error.message || "任务创建失败"}${advice ? ` ${advice}` : ""}`;
     restoreAnalysisActionButtons();
   }
+});
+
+document.querySelectorAll("[data-primary-action]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.primaryAction;
+    if (action === "copy_prompt") {
+      copyPromptButton.click();
+    } else if (action === "download_input") {
+      downloadAnalysisInputButton.click();
+    } else if (action === "run_ai") {
+      runAutoAnalysisButton.click();
+    }
+  });
 });
 
 async function pollEnrichmentJob(jobId) {

@@ -19,18 +19,15 @@
 </header>
 
 <main class="page">
-    <section class="case-toolbar">
-        <a class="text-link" href="/calibration">校准样本库</a>
-    </section>
-
-    <section class="settings-card settings-drawer hidden" id="settings-drawer">
+    <section class="settings-card" id="settings-drawer">
         <div>
             <div class="settings-title-row">
                 <div>
-                    <h2>设置</h2>
-                    <p class="muted">清晰度和 AI 自动拆解在这里统一查看。API Key 只从本地 .env 读取，页面不提供保存入口。</p>
+                    <div class="entry-label">AI Settings</div>
+                    <h2>AI 配置状态与测试连接</h2>
+                    <p class="muted">没有 API Key 也能生成素材包；配置大模型后，case 页面可启动 AI 自动拆解。API Key 只从本地 .env 读取，页面不提供保存入口。</p>
                 </div>
-                <button type="button" id="settings-close" class="ghost-button">关闭</button>
+                <button type="button" id="settings-close" class="ghost-button">收起</button>
             </div>
         </div>
         <div class="settings-grid">
@@ -68,7 +65,7 @@ LLM_MODEL=支持图片输入的模型</pre>
     <section class="entry-grid" aria-label="素材入口">
         <section class="panel primary-entry" id="tab-single">
             <div class="entry-label">Single Work</div>
-            <h2>单作品导入</h2>
+            <h2>输入作品并生成素材包</h2>
             <p class="muted">粘贴抖音作品链接、分享文本或 aweme_id，系统会直接下载、抽帧并生成素材包；AI 自动拆解可在完整分析页单独启动。</p>
             <form id="single-form" class="link-form">
                 <input name="value" placeholder="作品链接、分享文本或 aweme_id" required>
@@ -76,22 +73,11 @@ LLM_MODEL=支持图片输入的模型</pre>
             </form>
             <div id="single-result" class="inline-result hidden"></div>
         </section>
-
-        <section class="panel secondary-entry" id="tab-profile">
-            <div class="entry-label">Profile Scan</div>
-            <h2>主页扫描</h2>
-            <p class="muted">P2 接入。后续可输入抖音主页 URL，按点赞、评论、分享和综合互动分筛选 Top N 作品。</p>
-            <form class="disabled-form">
-                <input disabled placeholder="https://www.douyin.com/user/...">
-                <input disabled value="20">
-                <button disabled>扫描主页</button>
-            </form>
-            <div class="notice">如果后续主页接口被风控，页面会返回明确错误，并建议使用单作品导入或本地上传。</div>
-        </section>
     </section>
 
     <section class="result-card hidden" id="result-card">
-        <h2>分析结果</h2>
+        <div class="entry-label">Latest Case</div>
+        <h2>最近结果 / case 入口</h2>
         <div id="case-summary" class="case-summary"></div>
         <div id="home-case-view" class="home-case-view hidden">
             <div class="case-view-grid">

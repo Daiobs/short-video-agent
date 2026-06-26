@@ -161,7 +161,7 @@ button:disabled {
 
 .entry-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 18px;
     align-items: stretch;
 }
@@ -434,6 +434,79 @@ pre {
     display: grid;
     grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr);
     gap: 18px;
+}
+
+.primary-workflow-card {
+    border-color: rgba(37, 99, 235, .24);
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.primary-workflow-summary {
+    margin-bottom: 18px;
+}
+
+.primary-workflow-hero {
+    padding: 18px;
+    border: 1px solid rgba(37, 99, 235, .18);
+    border-radius: 10px;
+    background: #eff6ff;
+}
+
+.primary-workflow-hero.completed {
+    border-color: rgba(22, 163, 74, .22);
+    background: #f0fdf4;
+}
+
+.primary-workflow-hero.not_configured {
+    border-color: rgba(245, 158, 11, .28);
+    background: #fffbeb;
+}
+
+.primary-workflow-hero strong {
+    display: block;
+    color: var(--text);
+    font-size: 20px;
+    margin-bottom: 6px;
+}
+
+.primary-workflow-hero p {
+    margin: 0;
+    color: var(--muted);
+}
+
+.primary-workflow-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, .8fr);
+    gap: 18px;
+    margin-bottom: 18px;
+}
+
+.primary-actions {
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+}
+
+.advanced-section {
+    margin: 18px 0;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fbfcff;
+}
+
+.advanced-section > summary {
+    cursor: pointer;
+    color: var(--text);
+    font-size: 18px;
+    font-weight: 900;
+}
+
+.advanced-section > summary::marker {
+    color: var(--brand);
+}
+
+.advanced-downloads {
+    margin-top: 16px;
 }
 
 .case-two-column {

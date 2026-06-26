@@ -2222,6 +2222,60 @@ def _analysis_readiness_payload(
     }
 
 
+def _primary_workflow_payload(artifact: CaseArtifact, analysis_result: dict | None, llm_settings: dict) -> dict:
+    required_paths = {
+        "video": artifact.video_path,
+        "metadata": artifact.metadata_path,
+        "ffprobe": artifact.ffprobe_path,
+        "analysis_input": artifact.analysis_input_path,
+        "prompt": artifact.prompt_path,
+        "contact_sheet": artifact.contact_sheet_path,
+        "keyframes_dir": artifact.keyframes_dir,
+    }
+    missing = [
+        label
+        for label, value in required_paths.items()
+        if not value or not Path(value).exists()
+    ]
+    artifact_ready = not missing
+    llm_configured = bool(llm_settings.get("configured"))
+    if not artifact_ready:
+        analysis_status = "artifact_incomplete"
+        ai_status_label = "素材包未完整"
+        next_action = "rebuild_case"
+        next_action_label = "重新生成素材包"
+        next_action_target = "/"
+    elif analysis_result:
+        analysis_status = "completed"
+        ai_status_label = "AI 报告已生成"
+        next_action = "view_report"
+        next_action_label = "查看 AI 报告"
+        next_action_target = "#auto-analysis-report"
+    elif not llm_configured:
+        analysis_status = "not_configured"
+        ai_status_label = "AI 未配置"
+        next_action = "copy_prompt"
+        next_action_label = "复制 Prompt 手动分析"
+        next_action_target = "#prompt-text"
+    else:
+        analysis_status = "not_analyzed"
+        ai_status_label = "等待 AI 拆解"
+        next_action = "run_ai_analysis"
+        next_action_label = "开始 AI 自动拆解"
+        next_action_target = "#run-auto-analysis-button"
+    return {
+        "artifact_ready": artifact_ready,
+        "artifact_status_label": "素材包已生成" if artifact_ready else "素材包文件缺失",
+        "missing_artifacts": missing,
+        "llm_configured": llm_configured,
+        "analysis_status": analysis_status,
+        "ai_status_label": ai_status_label,
+        "next_action": next_action,
+        "next_action_label": next_action_label,
+        "next_action_target": next_action_target,
+    }
+
+
 def _case_payload(artifact: CaseArtifact) -> dict:
     case_id = artifact.case_id
     metadata, ffprobe, analysis_input, prompt = _load_case_parts(artifact)
@@ -2260,6 +2314,8 @@ def _case_payload(artifact: CaseArtifact) -> dict:
         analysis_readiness,
         quality_calibration,
     )
+    llm_settings = llm_status_payload()
+    primary_workflow = _primary_workflow_payload(artifact, analysis_result, llm_settings)
     rerun_plan = _build_rerun_plan(
         artifact,
         metadata,
@@ -2307,7 +2363,8 @@ def _case_payload(artifact: CaseArtifact) -> dict:
             ],
         },
         "artifact_descriptions": ARTIFACT_DESCRIPTIONS,
-        "llm_settings": llm_status_payload(),
+        "llm_settings": llm_settings,
+        "primary_workflow": primary_workflow,
         "analysis_profiles": list_analysis_profiles(),
         "metadata": metadata,
         "qualities": _read_json_file(artifact.qualities_path),
