@@ -174,7 +174,7 @@ LLM_MODEL=gpt-5.5
 LLM_PROVIDER=openai_compatible
 LLM_API_BASE=https://www.wintoken.dev/v1
 LLM_API_KEY=中转站控制台生成的 API Key
-LLM_MODEL=gpt-4o
+LLM_MODEL=gpt-5.5
 ```
 
 如果使用 WinToken 或其他 Anthropic Messages 协议中转站，并且它们提供 `/messages`：

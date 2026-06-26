@@ -70,6 +70,7 @@ def _analysis_result(result: dict) -> dict:
         "analysis_result_path": result.get("analysis_result_path", ""),
         "analysis_report_path": result.get("analysis_report_path", ""),
         "analysis_result": result.get("analysis_result", {}),
+        "analysis_report": result.get("analysis_report", ""),
     }
 
 

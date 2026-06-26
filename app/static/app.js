@@ -182,6 +182,7 @@ function renderHomeCase(data) {
   const stats = analysisInput.stats || {};
   const report = data.analysis_report || "";
   const analysisResult = data.analysis_result || null;
+  const analysisJob = data.analysis_job || {};
   const caseUrl = `/cases/${data.case_id}`;
 
   homeCaseView.classList.remove("hidden");
@@ -198,8 +199,18 @@ function renderHomeCase(data) {
   if (analysisResult) {
     homeAiStatus.textContent = "AI 自动拆解已生成。";
     homeAiReport.textContent = analysisResult.summary || report.split("\n").slice(0, 12).join("\n") || JSON.stringify(analysisResult, null, 2);
+  } else if (analysisJob.status === "failed") {
+    const error = analysisJob.error || {};
+    homeAiStatus.textContent = `${error.error_code || "AI_FAILED"}：${error.message || "AI 自动拆解失败，可更换模型后重新解析或打开完整 case 重试。"}`;
+    homeAiReport.textContent = "";
+  } else if (analysisJob.status === "skipped") {
+    homeAiStatus.textContent = "视频已准备好，但 AI 自动拆解未配置。配置模型后可重新解析。";
+    homeAiReport.textContent = "";
+  } else if (analysisJob.status === "pending" || analysisJob.status === "running") {
+    homeAiStatus.textContent = "视频已准备好，AI 正在拆解。拆解完成后会在这里显示结果。";
+    homeAiReport.textContent = "";
   } else {
-    homeAiStatus.textContent = "视频已准备好，AI 正在拆解或等待配置。拆解完成后会在这里显示结果。";
+    homeAiStatus.textContent = "视频已准备好。AI 摘要将在拆解完成后显示。";
     homeAiReport.textContent = "";
   }
 }
@@ -213,6 +224,18 @@ async function showAnalysisInline(result, options = {}) {
     jobMessage.textContent = "素材包已生成，正在加载首页分析视图...";
   }
   const caseData = await loadCasePayload(caseId);
+  if (result.analysis_status) {
+    caseData.analysis_job = {
+      status: result.analysis_status,
+      error: result.analysis_error || {},
+    };
+  }
+  if (result.analysis && result.analysis.analysis_result) {
+    caseData.analysis_result = result.analysis.analysis_result;
+  }
+  if (result.analysis && result.analysis.analysis_report) {
+    caseData.analysis_report = result.analysis.analysis_report;
+  }
   renderHomeCase(caseData);
   if (options.scroll !== false) {
     resultCard.scrollIntoView({behavior: "smooth", block: "start"});
@@ -397,11 +420,15 @@ async function downloadCandidate(candidate) {
         setStatus(packageStatus, "已生成");
         setStatus(
           analysisStatus,
-          job.result_json.analysis_status === "success"
-            ? "已生成"
-            : "未配置或未完成，可到 case 页重试",
+          {
+            success: "已生成",
+            failed: "失败，可更换模型后重试",
+            skipped: "未配置",
+            pending: "未完成",
+          }[job.result_json.analysis_status] || "未完成",
         );
-        if (await showAnalysisInline(job.result_json, {scroll: !inlineCaseShown})) {
+        if (await showAnalysisInline(job.result_json, {scroll: !inlineCaseShown, updateMessage: false})) {
+          jobMessage.textContent = `success · 100% · ${job.message || "任务完成"}`;
           return;
         }
       }

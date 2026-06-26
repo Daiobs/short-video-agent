@@ -1639,6 +1639,7 @@ def test_download_build_analyze_case_job_reports_auto_analysis(monkeypatch, tmp_
     assert job["status"] == "success"
     assert job["result_json"]["analysis_status"] == "success"
     assert job["result_json"]["analysis"]["analysis_result"]["summary"] == "job 自动拆解"
+    assert "job 自动拆解" in job["result_json"]["analysis"]["analysis_report"]
     assert Path(job["result_json"]["analysis"]["analysis_report_path"]).is_file()
 
 
