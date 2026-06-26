@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import shutil
 import subprocess
 import time
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.database import SessionLocal
 from app.errors import AppError, ErrorCode
@@ -243,7 +245,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="test-llm-button"' in response.text
     assert "解析结果" in response.text
     assert "关键帧总览" in response.text
-    assert "AI 摘要" in response.text
+    assert "AI 拆解报告" in response.text
     assert "本地拆解底稿" not in response.text
     assert 'id="home-category-guess"' not in response.text
     assert 'id="home-template-preview"' not in response.text
@@ -647,6 +649,7 @@ def test_openai_compatible_provider_requests_json_object(monkeypatch) -> None:
         def post(self, url, headers=None, json=None):
             assert url == "https://www.wintoken.dev/v1/chat/completions"
             assert json["response_format"] == {"type": "json_object"}
+            assert json["max_tokens"] == 1200
             return FakeResponse()
 
     monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
@@ -696,6 +699,41 @@ def test_openai_compatible_provider_parses_list_content(monkeypatch) -> None:
     assert result == {"ok": True}
 
 
+def test_openai_compatible_provider_sends_optimized_image_payload(monkeypatch, tmp_path: Path) -> None:
+    image_path = tmp_path / "contact_sheet.png"
+    Image.new("RGB", (2400, 1200), color=(220, 120, 160)).save(image_path, compress_level=0)
+    original_size = image_path.stat().st_size
+
+    class FakeResponse:
+        status_code = 200
+        text = "{\"choices\": []}"
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{\"ok\": true}"}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            image_url = json["messages"][1]["content"][1]["image_url"]["url"]
+            assert image_url.startswith("data:image/jpeg;base64,")
+            encoded = image_url.split(",", 1)[1]
+            assert len(base64.b64decode(encoded)) < original_size
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
+    result = OpenAICompatibleProvider(api_key="sk-test", model="gpt-5.4-high").analyze("ping", [image_path])
+
+    assert result == {"ok": True}
+
+
 def test_openai_responses_provider_parses_output_text(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200
@@ -718,6 +756,7 @@ def test_openai_responses_provider_parses_output_text(monkeypatch) -> None:
             assert headers["Authorization"] == "Bearer sk-test"
             assert json["model"] == "gpt-5.5"
             assert json["input"][0]["content"][0]["type"] == "input_text"
+            assert json["max_output_tokens"] == 1200
             return FakeResponse()
 
     monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
@@ -799,7 +838,7 @@ def test_anthropic_compatible_provider_uses_messages_api(monkeypatch) -> None:
             assert headers["anthropic-version"] == "2023-06-01"
             assert json["model"] == "claude-fable-5"
             assert json["messages"][0]["content"][0]["type"] == "text"
-            assert json["max_tokens"] == 4096
+            assert json["max_tokens"] == 1200
             return FakeResponse()
 
     monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
@@ -913,12 +952,12 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
 
     detail_response = client.get(f"/cases/{case['case_id']}")
     assert detail_response.status_code == 200
-    assert "素材包分析视图" in detail_response.text
+    assert "短视频拆解报告" in detail_response.text
     assert "primary-workflow-summary" in detail_response.text
-    assert "概览" in detail_response.text
-    assert "AI 拆解" in detail_response.text
-    assert "素材包" in detail_response.text
-    assert "人工验收" in detail_response.text
+    assert "完整分析" in detail_response.text
+    assert "高级 / 后台材料" in detail_response.text
+    assert "素材包文件" in detail_response.text
+    assert "人工质量验收" in detail_response.text
     assert "高级富化" in detail_response.text
     assert "校准样本" in detail_response.text
     assert "case-diagnosis-summary" in detail_response.text
@@ -6048,24 +6087,20 @@ def test_case_detail_renders_top_diagnosis_panel() -> None:
     template = Path("app/templates/case_detail.html").read_text(encoding="utf-8")
 
     assert 'id="primary-workflow-summary"' in template
-    assert 'id="primary-case-meta"' in template
     assert 'data-primary-action="copy_prompt"' in template
     assert 'data-primary-action="download_input"' in template
     assert 'data-primary-action="run_ai"' in template
-    assert 'data-case-tab="overview"' in template
-    assert 'data-case-tab="ai"' in template
-    assert 'data-case-tab="package"' in template
-    assert 'data-case-tab="review"' in template
-    assert 'data-case-tab="enrichment"' in template
-    assert 'data-case-tab="calibration"' in template
+    assert 'data-case-tab="' not in template
+    assert "完整分析" in template
+    assert "高级 / 后台材料" in template
     assert "高级富化" in template
-    assert template.index('data-case-tab-panel="enrichment"') < template.index('id="asr-placeholder-button"')
-    assert template.index('data-case-tab-panel="enrichment"') < template.index('id="ocr-placeholder-button"')
-    assert template.index('data-case-tab-panel="enrichment"') < template.index('id="comments-import-text"')
+    assert template.index("高级富化") < template.index('id="asr-placeholder-button"')
+    assert template.index("高级富化") < template.index('id="ocr-placeholder-button"')
+    assert template.index("高级富化") < template.index('id="comments-import-text"')
     assert "function setCaseTab(tab)" in script
     assert "caseTabButtons" in script
-    assert ".case-tab-nav" in stylesheet
-    assert ".case-tab-button.active" in stylesheet
+    assert ".developer-workspace" in stylesheet
+    assert ".public-report-grid" in stylesheet
     assert "function renderPrimaryWorkflow(data)" in script
     assert "data.primary_workflow" in script
     assert ".primary-workflow-card" in stylesheet

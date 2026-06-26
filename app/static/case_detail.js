@@ -968,6 +968,114 @@ function collectQualityAcceptance() {
   };
 }
 
+function renderPublicList(items, emptyText = "暂无明确结论。") {
+  const values = normalizeItems(items).map(formatReportValue).filter(Boolean);
+  if (!values.length) {
+    return `<p class="muted compact-copy">${escapeHtml(emptyText)}</p>`;
+  }
+  return `<ul class="public-report-list">${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderPublicFields(rows) {
+  const values = rows.filter(([, value]) => value !== undefined && value !== null && value !== "");
+  if (!values.length) {
+    return '<p class="muted compact-copy">暂无明确结论。</p>';
+  }
+  return `
+    <dl class="public-report-fields">
+      ${values
+        .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(formatReportValue(value))}</dd>`)
+        .join("")}
+    </dl>
+  `;
+}
+
+function renderPublicCard(title, body, tone = "") {
+  return `
+    <article class="public-report-card ${escapeHtml(tone)}">
+      <h4>${escapeHtml(title)}</h4>
+      ${body}
+    </article>
+  `;
+}
+
+function renderPublicAnalysisHero(result) {
+  const category = result.content_category_label || result.content_category || "短视频";
+  const confidence = result.confidence ? `置信度 ${result.confidence}` : "";
+  return `
+    <section class="public-analysis-hero">
+      <span>${escapeHtml(category)}${confidence ? ` · ${escapeHtml(confidence)}` : ""}</span>
+      <strong>${escapeHtml(result.summary || "AI 已完成拆解，但没有返回摘要。")}</strong>
+    </section>
+  `;
+}
+
+function renderPublicAnalysisCards(result) {
+  const hook = result.hook_analysis || {};
+  const visual = result.visual_analysis || {};
+  const replication = result.replication || {};
+  const publish = result.publish_package || {};
+  return `
+    <div class="public-report-grid">
+      ${renderPublicCard(
+        "0-3 秒抓人点",
+        `
+          ${renderPublicFields([
+            ["第一眼", hook.first_impression],
+            ["停留理由", hook.why_stop_scrolling],
+            ["优化方向", hook.optimization],
+          ])}
+          ${renderPublicList(hook.first_3_seconds, "暂无逐秒观察。")}
+        `,
+        "featured",
+      )}
+      ${renderPublicCard(
+        "画面 / 人设 / 氛围",
+        `
+          ${renderPublicFields([
+            ["主体", visual.subject],
+            ["构图", visual.composition],
+            ["光线色彩", visual.lighting_color],
+            ["动作节奏", visual.movement_rhythm],
+          ])}
+          ${renderPublicList(visual.style_keywords, "暂无风格关键词。")}
+        `,
+      )}
+      ${renderPublicCard(
+        "可复刻点",
+        `
+          ${renderPublicFields([
+            ["复刻角度", replication.remake_angle],
+            ["开头 3 秒", replication.opening_3s],
+          ])}
+          ${renderPublicList(replication.copyable_points, "暂无可复刻动作。")}
+        `,
+        "featured",
+      )}
+      ${renderPublicCard(
+        "风险与改编边界",
+        `
+          <h5>不要照搬</h5>
+          ${renderPublicList(replication.avoid_copying, "暂无明确边界。")}
+          <h5>风险提醒</h5>
+          ${renderPublicList(result.risks, "暂无风险提醒。")}
+        `,
+      )}
+      ${renderPublicCard(
+        "标题与发布灵感",
+        `
+          ${renderPublicFields([["发布文案", publish.caption]])}
+          <h5>标题方向</h5>
+          ${renderPublicList(publish.titles, "暂无标题建议。")}
+          <h5>标签</h5>
+          ${renderPublicList(publish.hashtags, "暂无标签建议。")}
+        `,
+      )}
+      ${renderPublicCard("下一步", renderPublicList(result.next_actions, "暂无下一步建议。"))}
+    </div>
+  `;
+}
+
 function renderAutoAnalysis(data) {
   const result = data.analysis_result || null;
   const report = data.analysis_report || "";
@@ -986,8 +1094,8 @@ function renderAutoAnalysis(data) {
   autoAnalysisStatus.textContent = "AI 自动拆解已生成。";
   copyAiReportButton.disabled = false;
   runAutoAnalysisButton.textContent = "重新 AI 自动拆解";
-  autoAnalysisSummary.innerHTML = renderAutoAnalysisOverview(result, data.analysis_readiness || {});
-  renderAutoAnalysisCards(result);
+  autoAnalysisSummary.innerHTML = renderPublicAnalysisHero(result);
+  autoAnalysisCards.innerHTML = renderPublicAnalysisCards(result);
   autoAnalysisReport.textContent = report || JSON.stringify(result, null, 2);
 }
 

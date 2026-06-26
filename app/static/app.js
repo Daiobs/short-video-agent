@@ -108,6 +108,131 @@ function renderDefinitionList(element, rows) {
   `;
 }
 
+function normalizeItems(value) {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== undefined && item !== null && item !== "");
+  }
+  return [value];
+}
+
+function formatReportValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(formatReportValue).join(" / ");
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value)
+      .map(([key, item]) => `${key}: ${formatReportValue(item)}`)
+      .join("；");
+  }
+  return String(value ?? "");
+}
+
+function renderPublicList(items, emptyText = "暂无明确结论。") {
+  const values = normalizeItems(items).map(formatReportValue).filter(Boolean);
+  if (!values.length) {
+    return `<p class="muted compact-copy">${escapeHtml(emptyText)}</p>`;
+  }
+  return `<ul class="public-report-list">${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderPublicFields(rows) {
+  const values = rows.filter(([, value]) => value !== undefined && value !== null && value !== "");
+  if (!values.length) {
+    return '<p class="muted compact-copy">暂无明确结论。</p>';
+  }
+  return `
+    <dl class="public-report-fields">
+      ${values
+        .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(formatReportValue(value))}</dd>`)
+        .join("")}
+    </dl>
+  `;
+}
+
+function renderPublicCard(title, body, tone = "") {
+  return `
+    <article class="public-report-card ${escapeHtml(tone)}">
+      <h4>${escapeHtml(title)}</h4>
+      ${body}
+    </article>
+  `;
+}
+
+function renderPublicAnalysisReport(result) {
+  const hook = result.hook_analysis || {};
+  const visual = result.visual_analysis || {};
+  const replication = result.replication || {};
+  const publish = result.publish_package || {};
+  const category = result.content_category_label || result.content_category || "短视频";
+  const confidence = result.confidence ? `置信度 ${result.confidence}` : "";
+  return `
+    <section class="public-analysis-hero">
+      <span>${escapeHtml(category)}${confidence ? ` · ${escapeHtml(confidence)}` : ""}</span>
+      <strong>${escapeHtml(result.summary || "AI 已完成拆解，但没有返回摘要。")}</strong>
+    </section>
+    <div class="public-report-grid">
+      ${renderPublicCard(
+        "0-3 秒抓人点",
+        `
+          ${renderPublicFields([
+            ["第一眼", hook.first_impression],
+            ["停留理由", hook.why_stop_scrolling],
+            ["优化方向", hook.optimization],
+          ])}
+          ${renderPublicList(hook.first_3_seconds, "暂无逐秒观察。")}
+        `,
+        "featured",
+      )}
+      ${renderPublicCard(
+        "画面 / 人设 / 氛围",
+        `
+          ${renderPublicFields([
+            ["主体", visual.subject],
+            ["构图", visual.composition],
+            ["光线色彩", visual.lighting_color],
+            ["动作节奏", visual.movement_rhythm],
+          ])}
+          ${renderPublicList(visual.style_keywords, "暂无风格关键词。")}
+        `,
+      )}
+      ${renderPublicCard(
+        "可复刻点",
+        `
+          ${renderPublicFields([
+            ["复刻角度", replication.remake_angle],
+            ["开头 3 秒", replication.opening_3s],
+          ])}
+          ${renderPublicList(replication.copyable_points, "暂无可复刻动作。")}
+        `,
+        "featured",
+      )}
+      ${renderPublicCard(
+        "风险与改编边界",
+        `
+          <h5>不要照搬</h5>
+          ${renderPublicList(replication.avoid_copying, "暂无明确边界。")}
+          <h5>风险提醒</h5>
+          ${renderPublicList(result.risks, "暂无风险提醒。")}
+        `,
+      )}
+      ${renderPublicCard(
+        "标题与发布灵感",
+        `
+          ${renderPublicFields([["发布文案", publish.caption]])}
+          <h5>标题方向</h5>
+          ${renderPublicList(publish.titles, "暂无标题建议。")}
+          <h5>标签</h5>
+          ${renderPublicList(publish.hashtags, "暂无标签建议。")}
+        `,
+      )}
+      ${renderPublicCard("下一步", renderPublicList(result.next_actions, "暂无下一步建议。"))}
+    </div>
+  `;
+}
+
 function renderLlmStatus(llm) {
   const configured = Boolean(llm.configured);
   llmStatusBadge.textContent = configured ? "已启用" : "未配置";
@@ -198,20 +323,20 @@ function renderHomeCase(data) {
 
   if (analysisResult) {
     homeAiStatus.textContent = "AI 自动拆解已生成。";
-    homeAiReport.textContent = analysisResult.summary || report.split("\n").slice(0, 12).join("\n") || JSON.stringify(analysisResult, null, 2);
+    homeAiReport.innerHTML = renderPublicAnalysisReport(analysisResult);
   } else if (analysisJob.status === "failed") {
     const error = analysisJob.error || {};
     homeAiStatus.textContent = `${error.error_code || "AI_FAILED"}：${error.message || "AI 自动拆解失败，可更换模型后重新解析或打开完整 case 重试。"}`;
-    homeAiReport.textContent = "";
+    homeAiReport.innerHTML = "";
   } else if (analysisJob.status === "skipped") {
     homeAiStatus.textContent = "视频已准备好，但 AI 自动拆解未配置。配置模型后可重新解析。";
-    homeAiReport.textContent = "";
+    homeAiReport.innerHTML = "";
   } else if (analysisJob.status === "pending" || analysisJob.status === "running") {
     homeAiStatus.textContent = "视频已准备好，AI 正在拆解。拆解完成后会在这里显示结果。";
-    homeAiReport.textContent = "";
+    homeAiReport.innerHTML = "";
   } else {
     homeAiStatus.textContent = "视频已准备好。AI 摘要将在拆解完成后显示。";
-    homeAiReport.textContent = "";
+    homeAiReport.innerHTML = "";
   }
 }
 

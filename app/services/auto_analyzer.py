@@ -1103,13 +1103,15 @@ def _build_fast_prompt(
 ) -> str:
     return f"""你是短视频内容策略分析师。请看 contact_sheet.jpg，并快速输出一个简短 JSON。
 
-目标：给用户一个能直接看的短视频拆解摘要，不要生成长报告。总字数控制在 500 字以内。
+目标：给用户一个能直接看的短视频拆解报告，不要写后台诊断。总字数控制在 800-1200 字。
 
 要求：
 1. 只输出合法 JSON，不要 Markdown。
-2. 每个数组最多 3 条，每条不超过 25 个字。
-3. 重点判断：第一眼吸引、画面/人物气质、可复刻点、风险边界。
+2. 每个数组最多 4 条，每条尽量不超过 45 个字。
+3. summary 写 2-3 句，说明这条视频靠什么吸引、适合学习什么。
+4. 重点判断：第一眼吸引、画面/人物气质、动作节奏、可复刻点、风险边界。
 4. 看不到的内容不要编造。
+5. 面向短视频创作者，不要输出“质量门槛、证据覆盖、后台素材包”等工程说明。
 
 输出 JSON 结构：
 {{
@@ -1119,7 +1121,7 @@ def _build_fast_prompt(
   "confidence": 0.0,
   "engagement_data_quality": "ok|missing|partial",
   "hook_analysis": {{"first_impression": "", "why_stop_scrolling": "", "first_3_seconds": [], "optimization": ""}},
-  "visual_analysis": {{"subject": "", "composition": "", "movement_rhythm": "", "style_keywords": []}},
+  "visual_analysis": {{"subject": "", "composition": "", "lighting_color": "", "movement_rhythm": "", "style_keywords": []}},
   "replication": {{"copyable_points": [], "avoid_copying": [], "remake_angle": "", "opening_3s": ""}},
   "publish_package": {{"titles": [], "caption": "", "hashtags": []}},
   "evidence_summary": {{"visual_input_mode": "contact_sheet_only", "visual_evidence": [], "inferred_points": [], "evidence_gaps": []}},
@@ -1141,7 +1143,8 @@ def _fast_text_prompt(
 ) -> str:
     return f"""请做短视频快速文本拆解。本次视觉图片调用失败，只能基于标题、互动数据、视频参数和内容类型输出保守结论。
 
-只输出合法 JSON，不要 Markdown。总字数控制在 400 字以内。数组最多 3 条。
+只输出合法 JSON，不要 Markdown。总字数控制在 600-900 字。数组最多 4 条。
+面向短视频创作者，不要输出后台诊断说明；视觉判断必须标记为需要复核。
 
 输出字段：
 {{
@@ -1151,7 +1154,7 @@ def _fast_text_prompt(
   "confidence": 0.35,
   "engagement_data_quality": "ok|missing|partial",
   "hook_analysis": {{"first_impression": "文本降级推断，需要复核画面", "why_stop_scrolling": "", "first_3_seconds": [], "optimization": ""}},
-  "visual_analysis": {{"subject": "文本降级，需复核画面", "composition": "", "movement_rhythm": "", "style_keywords": []}},
+  "visual_analysis": {{"subject": "文本降级，需复核画面", "composition": "", "lighting_color": "", "movement_rhythm": "", "style_keywords": []}},
   "replication": {{"copyable_points": [], "avoid_copying": ["不要照搬原视频画面和文案"], "remake_angle": "", "opening_3s": ""}},
   "publish_package": {{"titles": [], "caption": "", "hashtags": []}},
   "evidence_summary": {{"visual_input_mode": "text_only", "visual_evidence": [], "inferred_points": ["视觉相关结论需要人工复核"], "evidence_gaps": ["缺少可用视觉输入"]}},

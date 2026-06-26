@@ -3,15 +3,15 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>素材包分析视图 - short-video-agent</title>
+    <title>短视频拆解报告 - short-video-agent</title>
     <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
 </head>
 <body>
 <header class="site-header compact-header">
     <div>
-        <div class="eyebrow">Case Analysis</div>
-        <h1>素材包分析视图</h1>
-        <p>查看素材包、复制 prompt、按需启动 AI 自动拆解，并查看 analysis_report。</p>
+        <div class="eyebrow">Analysis Report</div>
+        <h1>短视频拆解报告</h1>
+        <p>默认只展示创作者需要看的结论：为什么抓人、画面人设如何成立、哪些可以复刻、哪些需要避开。</p>
     </div>
 </header>
 
@@ -19,75 +19,68 @@
     <section class="case-toolbar">
         <a class="text-link" href="/">返回首页</a>
         <div class="toolbar-actions">
-            <button type="button" id="copy-prompt-button">复制 Prompt</button>
-            <button type="button" id="download-analysis-input-button">下载 analysis_input.json</button>
-            <button type="button" id="run-auto-analysis-button">开始 AI 自动拆解</button>
-            <a class="button-link ghost-link" href="#auto-analysis-report">查看 AI 报告</a>
+            <button type="button" id="run-auto-analysis-button" class="hidden" aria-hidden="true" tabindex="-1">重新 AI 拆解</button>
+            <button type="button" id="copy-ai-report-button" class="hidden" aria-hidden="true" tabindex="-1">复制 AI 报告</button>
         </div>
     </section>
 
-    <section class="result-card primary-workflow-card">
+    <section class="result-card public-report-card-shell">
         <div class="section-heading-row">
             <div>
-                <h2>主路径状态</h2>
-                <p class="muted">第一步只需要确认素材包是否生成、AI 是否配置，以及下一步该做什么。</p>
+                <div class="entry-label">Report</div>
+                <h2>完整分析</h2>
             </div>
+            <div id="auto-analysis-status" class="inline-result compact-status">正在读取...</div>
         </div>
-        <div id="primary-workflow-summary" class="primary-workflow-summary"></div>
-        <div class="primary-workflow-grid">
-            <div>
-                <h3>当前 case 基础信息</h3>
-                <div id="primary-case-meta" class="case-meta"></div>
-            </div>
-            <div>
-                <h3>素材包状态</h3>
-                <div id="primary-artifact-status" class="inline-result"></div>
-                <h3>AI 状态</h3>
-                <div id="primary-ai-status" class="inline-result"></div>
-            </div>
-        </div>
-        <div class="toolbar-actions primary-actions">
-            <button type="button" data-primary-action="copy_prompt">复制 Prompt</button>
-            <button type="button" data-primary-action="download_input">下载 analysis_input.json</button>
-            <button type="button" data-primary-action="run_ai">开始 / 重新 AI 拆解</button>
-            <a class="button-link ghost-link" href="#auto-analysis-report">查看 AI 报告</a>
-        </div>
-    </section>
 
-    <nav class="case-tab-nav" aria-label="Case 页面标签">
-        <button type="button" class="case-tab-button" data-case-tab="overview">概览</button>
-        <button type="button" class="case-tab-button" data-case-tab="ai">AI 拆解</button>
-        <button type="button" class="case-tab-button" data-case-tab="package">素材包</button>
-        <button type="button" class="case-tab-button" data-case-tab="review">人工验收</button>
-        <button type="button" class="case-tab-button" data-case-tab="enrichment">高级富化</button>
-        <button type="button" class="case-tab-button" data-case-tab="calibration">校准样本</button>
-    </nav>
-
-    <section class="case-tab-panel" data-case-tab-panel="overview">
-        <section class="case-view-grid">
-            <div class="result-card">
-                <h2>contact sheet 预览</h2>
+        <section class="public-report-layout">
+            <div>
                 <img id="contact-sheet-image" class="contact-sheet-image" alt="关键帧总览图">
             </div>
-
-            <div class="result-card">
-                <h2>基础信息</h2>
+            <aside>
+                <h3>作品信息</h3>
                 <div id="case-meta" class="case-meta"></div>
+            </aside>
+        </section>
+
+        <div id="auto-analysis-summary" class="analysis-summary"></div>
+        <div id="auto-analysis-cards" class="public-analysis-report"></div>
+    </section>
+
+    <details class="advanced-section developer-workspace">
+        <summary>高级 / 后台材料</summary>
+        <p class="muted">下面内容用于调试、复核和后续开发。普通拆解只需要看上方报告。</p>
+
+        <section class="result-card primary-workflow-card">
+            <div class="section-heading-row">
+                <div>
+                    <h2>主路径状态</h2>
+                    <p class="muted">确认素材包是否生成、AI 是否配置，以及下一步该做什么。</p>
+                </div>
+            </div>
+            <div id="primary-workflow-summary" class="primary-workflow-summary"></div>
+            <div class="primary-workflow-grid">
+                <div>
+                    <h3>当前 case 基础信息</h3>
+                    <div id="primary-case-meta" class="case-meta"></div>
+                </div>
+                <div>
+                    <h3>素材包状态</h3>
+                    <div id="primary-artifact-status" class="inline-result"></div>
+                    <h3>AI 状态</h3>
+                    <div id="primary-ai-status" class="inline-result"></div>
+                </div>
+            </div>
+            <div class="toolbar-actions primary-actions">
+                <button type="button" data-primary-action="copy_prompt">复制 Prompt</button>
+                <button type="button" data-primary-action="download_input">下载 analysis_input.json</button>
+                <button type="button" data-primary-action="run_ai">开始 / 重新 AI 拆解</button>
             </div>
         </section>
 
-    </section>
-
-    <section class="case-tab-panel hidden" data-case-tab-panel="ai">
         <section class="result-card">
-            <h2>AI 自动拆解</h2>
-            <div class="toolbar-actions">
-                <button type="button" id="copy-ai-report-button">复制 AI 报告</button>
-            </div>
+            <h2>AI 配置状态</h2>
             <div id="case-llm-status" class="inline-result"></div>
-            <div id="auto-analysis-status" class="inline-result"></div>
-            <div id="auto-analysis-summary" class="analysis-summary"></div>
-            <div id="auto-analysis-cards" class="report-card-grid"></div>
             <pre id="auto-analysis-report"></pre>
         </section>
 
@@ -102,9 +95,7 @@
             <p id="category-description" class="muted"></p>
             <div id="category-status" class="inline-result hidden"></div>
         </section>
-    </section>
 
-    <section class="case-tab-panel hidden" data-case-tab-panel="package">
         <section class="result-card">
             <h2>素材包文件</h2>
             <p class="muted">素材包是后续 AI 或人工拆解的输入目录。视频只用于抽帧和视觉观察；点赞、评论、分享等信息以原链接解析到的 metadata / analysis_input 为准。</p>
@@ -121,19 +112,17 @@
             <div class="result-card">
                 <h2>prompt.md</h2>
                 <p class="muted">不配置 API 时，也可以复制这段 Prompt，连同 contact_sheet.jpg / keyframes 一起交给 ChatGPT、Claude 或 Gemini 手动分析。</p>
-                <button type="button" data-primary-action="copy_prompt">复制 prompt.md</button>
+                <button type="button" id="copy-prompt-button">复制 prompt.md</button>
                 <pre id="prompt-text"></pre>
             </div>
 
             <div class="result-card">
                 <h2>analysis_input.json</h2>
-                <button type="button" data-primary-action="download_input">下载 analysis_input.json</button>
+                <button type="button" id="download-analysis-input-button">下载 analysis_input.json</button>
                 <pre id="analysis-json"></pre>
             </div>
         </section>
-    </section>
 
-    <section class="case-tab-panel hidden" data-case-tab-panel="review">
         <section class="result-card">
             <h2>人工质量验收</h2>
             <p class="muted">用真实样例校准 AI 拆解质量。这里记录“这份报告是否符合人的直觉”，不会覆盖 AI 原始结果。</p>
@@ -191,9 +180,7 @@
             <button type="button" id="copy-brief-button">复制分析工作表</button>
             <pre id="analysis-brief-text"></pre>
         </section>
-    </section>
 
-    <section class="case-tab-panel hidden" data-case-tab-panel="enrichment">
         <section class="result-card">
             <h2>高级富化</h2>
             <p class="muted">ASR、OCR、评论导入和指标快照是可选 / 高级功能，用于深度复盘，不是生成素材包和 AI 拆解的必经步骤。</p>
@@ -216,9 +203,7 @@
                 <div id="metric-status" class="muted"></div>
             </div>
         </section>
-    </section>
 
-    <section class="case-tab-panel hidden" data-case-tab-panel="calibration">
         <section class="result-card case-diagnosis-card">
             <div class="section-heading-row">
                 <div>
@@ -250,7 +235,7 @@
             <h2>拆解准备度</h2>
             <div id="readiness-summary" class="readiness-summary"></div>
         </section>
-    </section>
+    </details>
 </main>
 
 <script src="/static/case_detail.js?v={{ static_version }}"></script>

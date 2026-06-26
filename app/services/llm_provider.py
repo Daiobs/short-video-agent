@@ -5,10 +5,12 @@ import json
 import logging
 import re
 import time
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import httpx
+from PIL import Image, ImageOps
 
 from app.config import settings
 from app.errors import AppError, ErrorCode
@@ -31,12 +33,16 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         model: str | None = None,
         timeout_seconds: float | None = None,
         temperature: float | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         self.api_base = (api_base or settings.llm_api_base).rstrip("/")
         self.api_key = api_key if api_key is not None else settings.llm_api_key
         self.model = model or settings.llm_model
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
         self.temperature = temperature if temperature is not None else settings.llm_temperature
+        self.max_output_tokens = (
+            max_output_tokens if max_output_tokens is not None else settings.llm_max_output_tokens
+        )
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
         if not self.api_key or not self.model:
@@ -62,6 +68,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             "temperature": self.temperature,
             "response_format": {"type": "json_object"},
         }
+        if self.max_output_tokens:
+            payload["max_tokens"] = self.max_output_tokens
         endpoint = f"{self.api_base}/chat/completions"
         started_at = time.monotonic()
         image_bytes = _image_bytes(image_paths)
@@ -150,12 +158,16 @@ class OpenAIResponsesProvider(BaseLLMProvider):
         model: str | None = None,
         timeout_seconds: float | None = None,
         temperature: float | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         self.api_base = (api_base or settings.llm_api_base).rstrip("/")
         self.api_key = api_key if api_key is not None else settings.llm_api_key
         self.model = model or settings.llm_model
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
         self.temperature = temperature if temperature is not None else settings.llm_temperature
+        self.max_output_tokens = (
+            max_output_tokens if max_output_tokens is not None else settings.llm_max_output_tokens
+        )
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
         if not self.api_key or not self.model:
@@ -177,6 +189,8 @@ class OpenAIResponsesProvider(BaseLLMProvider):
             ],
             "temperature": self.temperature,
         }
+        if self.max_output_tokens:
+            payload["max_output_tokens"] = self.max_output_tokens
         try:
             with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
                 response = client.post(
@@ -206,12 +220,16 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
         model: str | None = None,
         timeout_seconds: float | None = None,
         temperature: float | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         self.api_base = (api_base or settings.llm_api_base).rstrip("/")
         self.api_key = api_key if api_key is not None else settings.llm_api_key
         self.model = model or settings.llm_model
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
         self.temperature = temperature if temperature is not None else settings.llm_temperature
+        self.max_output_tokens = (
+            max_output_tokens if max_output_tokens is not None else settings.llm_max_output_tokens
+        )
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
         if not self.api_key or not self.model:
@@ -224,7 +242,7 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
 
         payload = {
             "model": self.model,
-            "max_tokens": 4096,
+            "max_tokens": self.max_output_tokens or 1200,
             "temperature": self.temperature,
             "system": "你是短视频内容策略分析师。只输出合法 JSON，不要输出 Markdown。",
             "messages": [
@@ -321,16 +339,14 @@ def _extract_json_object(text: str) -> str:
 
 
 def _image_data_url(path: Path) -> str:
-    suffix = path.suffix.lower()
-    mime = "image/png" if suffix == ".png" else "image/jpeg"
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    mime, image_bytes = _optimized_image_payload(path)
+    encoded = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{mime};base64,{encoded}"
 
 
 def _anthropic_image_payload(path: Path) -> dict:
-    suffix = path.suffix.lower()
-    media_type = "image/png" if suffix == ".png" else "image/jpeg"
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    media_type, image_bytes = _optimized_image_payload(path)
+    encoded = base64.b64encode(image_bytes).decode("ascii")
     return {
         "type": "image",
         "source": {
@@ -339,6 +355,26 @@ def _anthropic_image_payload(path: Path) -> dict:
             "data": encoded,
         },
     }
+
+
+def _optimized_image_payload(path: Path) -> tuple[str, bytes]:
+    try:
+        with Image.open(path) as image:
+            image = ImageOps.exif_transpose(image)
+            if image.mode not in {"RGB", "L"}:
+                image = image.convert("RGB")
+            max_width = max(320, int(settings.llm_image_max_width or 1280))
+            if image.width > max_width:
+                ratio = max_width / image.width
+                image = image.resize((max_width, max(1, int(image.height * ratio))), Image.Resampling.LANCZOS)
+            output = BytesIO()
+            quality = min(95, max(40, int(settings.llm_image_jpeg_quality or 72)))
+            image.save(output, format="JPEG", quality=quality, optimize=True)
+            return "image/jpeg", output.getvalue()
+    except Exception:
+        suffix = path.suffix.lower()
+        mime = "image/png" if suffix == ".png" else "image/jpeg"
+        return mime, path.read_bytes()
 
 
 def _anthropic_messages_url(api_base: str) -> str:
