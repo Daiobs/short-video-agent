@@ -16,7 +16,7 @@ from app.services.analysis_taxonomy import (
     BASE_ANALYSIS_FOCUS,
     build_analysis_context,
     build_prompt,
-    infer_content_category,
+    explain_content_category,
 )
 from app.services.analysis_worksheet import build_default_worksheet, render_analysis_brief
 from app.services.douyin_url_parser import extract_aweme_id
@@ -93,7 +93,7 @@ def build_case_from_local_video(
 
         imported_at = datetime.now(timezone.utc).isoformat()
         aweme_id = _extract_optional_aweme_id(local_video.source_url)
-        category_id = infer_content_category(
+        category_guess = explain_content_category(
             " ".join(
                 [
                     local_video.title or "",
@@ -103,6 +103,7 @@ def build_case_from_local_video(
                 ]
             )
         )
+        category_id = category_guess["category_id"]
         analysis_context = build_analysis_context(category_id)
         metadata = {
             "aweme_id": aweme_id,
@@ -120,6 +121,7 @@ def build_case_from_local_video(
             "notes": local_video.remark,
             "content_category": analysis_context["category_id"],
             "content_category_label": analysis_context["label"],
+            "content_category_guess": category_guess,
         }
         qualities = {"source": "local", "candidates": []}
         analysis_input = {
@@ -159,6 +161,7 @@ def build_case_from_local_video(
             },
             "content_category": analysis_context["category_id"],
             "content_category_label": analysis_context["label"],
+            "content_category_guess": category_guess,
             "analysis_context": analysis_context,
             "analysis_lens": analysis_context["analysis_lens"],
             "key_questions": analysis_context["key_questions"],

@@ -16,6 +16,7 @@ from app.models import CaseArtifact, DouyinVideoItem, VideoQualityCandidate
 from app.providers.base import VideoQualityCandidateDTO
 from app.providers.douyin_web import DouyinWebProvider, normalize_douyin_detail_payload, normalize_douyin_html_payload
 from app.routes import cases as case_routes
+from app.services.analysis_taxonomy import explain_content_category
 from app.services.analysis_worksheet import normalize_worksheet, worksheet_quality_review
 from app.services.auto_analyzer import analyze_case_artifact, existing_auto_analysis
 from app.services.asr import run_case_asr
@@ -188,6 +189,48 @@ def test_engagement_score_formula() -> None:
     assert engagement_score(-1, 2, 0) == 10
 
 
+def test_content_category_explain_reports_local_rule_reason() -> None:
+    guess = explain_content_category("黑婚纱申请出战 cos 写真 美拍")
+
+    assert guess["category_id"] == "beauty_cos"
+    assert guess["label"] == "美拍 / COS / 颜值向"
+    assert guess["confidence"] in {"medium", "high"}
+    assert "cos" in [keyword.lower() for keyword in guess["matched_keywords"]]
+    assert guess["source"] == "local_rules"
+
+
+def test_case_build_persists_beauty_content_category_guess(tmp_path: Path) -> None:
+    video_path = make_sample_video(tmp_path / "beauty-category.mp4")
+    with video_path.open("rb") as file_obj:
+        upload_response = client.post(
+            "/api/import/local-video",
+            data={
+                "title": "黑婚纱申请出战 cos 写真",
+                "source_url": "https://example.com/beauty",
+                "author": "coser",
+                "like_count": "0",
+                "comment_count": "0",
+                "share_count": "0",
+                "remark": "美拍 颜值",
+            },
+            files={"video_file": ("beauty.mp4", file_obj, "video/mp4")},
+        )
+    assert upload_response.status_code == 200
+    local_video_id = upload_response.json()["local_video"]["local_video_id"]
+
+    case_response = client.post("/api/cases/build", json={"local_video_id": local_video_id})
+    assert case_response.status_code == 200
+    case_id = case_response.json()["case"]["case_id"]
+    case_payload = client.get(f"/api/cases/{case_id}").json()["case"]
+    analysis_input = case_payload["analysis_input"]
+
+    assert analysis_input["content_category"] == "beauty_cos"
+    assert analysis_input["content_category_label"] == "美拍 / COS / 颜值向"
+    assert analysis_input["content_category_guess"]["category_id"] == "beauty_cos"
+    assert analysis_input["content_category_guess"]["matched_keywords"]
+    assert "第一眼" in " ".join(analysis_input["analysis_lens"])
+
+
 def test_home_uses_versioned_static_assets() -> None:
     response = client.get("/")
     assert response.status_code == 200
@@ -199,6 +242,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "API 与解析设置" in response.text
     assert 'id="test-llm-button"' in response.text
     assert "解析结果" in response.text
+    assert "本地拆解底稿" in response.text
+    assert 'id="home-category-guess"' in response.text
+    assert 'id="home-template-preview"' in response.text
     assert 'data-home-route="single"' in response.text
     assert 'data-home-route="profile"' in response.text
     assert 'data-home-route="cases"' not in response.text
@@ -751,6 +797,8 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
     assert analysis_input["stats"]["engagement_score"] == 44
     assert analysis_input["content_category"] == "generic"
     assert analysis_input["analysis_context"]["label"] == "通用短视频"
+    assert analysis_input["content_category_guess"]["category_id"] == "generic"
+    assert analysis_input["content_category_guess"]["confidence"] == "low"
     assert analysis_input["analysis_lens"]
     assert analysis_input["key_questions"]
     assert analysis_input["content_ratio"]
@@ -792,6 +840,7 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
     api_payload = api_response.json()
     assert api_payload["ok"] is True
     assert api_payload["case"]["analysis_input"]["case_id"] == case["case_id"]
+    assert api_payload["case"]["analysis_input"]["content_category_guess"]["source"] == "local_rules"
     assert api_payload["case"]["analysis_profiles"]
     assert api_payload["case"]["artifact_urls"]["keyframes"]
     assert api_payload["case"]["artifact_urls"]["analysis_input"].endswith("/analysis-input")

@@ -19,6 +19,7 @@ from app.services.analysis_taxonomy import (
     BASE_ANALYSIS_FOCUS,
     build_analysis_context,
     build_prompt,
+    explain_content_category,
     infer_content_category,
     list_analysis_profiles,
 )
@@ -202,12 +203,44 @@ def _infer_case_category(metadata: dict, analysis_input: dict) -> str:
     )
 
 
-def _apply_analysis_context(metadata: dict, analysis_input: dict, category_id: str) -> tuple[dict, dict]:
+def _category_source_text(metadata: dict, analysis_input: dict) -> str:
+    return " ".join(
+        [
+            str(metadata.get("title") or analysis_input.get("title") or ""),
+            str(metadata.get("notes") or ""),
+            str(metadata.get("author") or analysis_input.get("author") or ""),
+            str(metadata.get("source_url") or analysis_input.get("source_url") or ""),
+        ]
+    )
+
+
+def _apply_analysis_context(
+    metadata: dict,
+    analysis_input: dict,
+    category_id: str,
+    *,
+    category_guess: dict | None = None,
+) -> tuple[dict, dict]:
     analysis_context = build_analysis_context(category_id)
+    guess = category_guess if isinstance(category_guess, dict) else analysis_input.get("content_category_guess")
+    if not isinstance(guess, dict) or guess.get("category_id") != analysis_context["category_id"]:
+        guess = explain_content_category(_category_source_text(metadata, analysis_input))
+        if guess.get("category_id") != analysis_context["category_id"]:
+            guess = {
+                "category_id": analysis_context["category_id"],
+                "label": analysis_context["label"],
+                "description": analysis_context["description"],
+                "confidence": "manual",
+                "matched_keywords": [],
+                "reason": "用户已手动切换分析类型，系统按当前模板展示和生成 Prompt。",
+                "source": "manual_override",
+            }
     metadata["content_category"] = analysis_context["category_id"]
     metadata["content_category_label"] = analysis_context["label"]
+    metadata["content_category_guess"] = guess
     analysis_input["content_category"] = analysis_context["category_id"]
     analysis_input["content_category_label"] = analysis_context["label"]
+    analysis_input["content_category_guess"] = guess
     analysis_input["analysis_context"] = analysis_context
     analysis_input["analysis_lens"] = analysis_context["analysis_lens"]
     analysis_input["key_questions"] = analysis_context["key_questions"]
@@ -222,6 +255,8 @@ def _load_case_parts(artifact: CaseArtifact) -> tuple[dict, dict, dict, str]:
     analysis_input = refresh_analysis_input_enrichment(artifact)
     category_id = _infer_case_category(metadata, analysis_input)
     metadata, analysis_input = _apply_analysis_context(metadata, analysis_input, category_id)
+    _write_json_file(artifact.metadata_path, metadata)
+    _write_json_file(artifact.analysis_input_path, analysis_input)
     prompt = _read_text_file(artifact.prompt_path)
     if "## 2. 本类型优先分析镜头" not in prompt:
         prompt = build_prompt(metadata, ffprobe, analysis_input["analysis_context"])

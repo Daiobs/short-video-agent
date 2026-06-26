@@ -20,6 +20,8 @@ const caseSummary = document.getElementById("case-summary");
 const homeCaseView = document.getElementById("home-case-view");
 const homeContactSheet = document.getElementById("home-contact-sheet");
 const homeCaseMeta = document.getElementById("home-case-meta");
+const homeCategoryGuess = document.getElementById("home-category-guess");
+const homeTemplatePreview = document.getElementById("home-template-preview");
 const homeAiStatus = document.getElementById("home-ai-status");
 const homeAiReport = document.getElementById("home-ai-report");
 const openFullCaseLink = document.getElementById("open-full-case-link");
@@ -108,6 +110,14 @@ function renderDefinitionList(element, rows) {
   `;
 }
 
+function renderSimpleList(items) {
+  const values = (items || []).filter(Boolean);
+  if (!values.length) {
+    return '<p class="muted compact-copy">等待 AI 拆解或人工补充。</p>';
+  }
+  return `<ul>${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
 function renderLlmStatus(llm) {
   const configured = Boolean(llm.configured);
   llmStatusBadge.textContent = configured ? "已启用" : "未配置";
@@ -182,6 +192,8 @@ function renderHomeCase(data) {
   const stats = analysisInput.stats || {};
   const report = data.analysis_report || "";
   const analysisResult = data.analysis_result || null;
+  const context = analysisInput.analysis_context || {};
+  const categoryGuess = analysisInput.content_category_guess || {};
   const caseUrl = `/cases/${data.case_id}`;
 
   homeCaseView.classList.remove("hidden");
@@ -194,6 +206,40 @@ function renderHomeCase(data) {
     ["评论", formatNumber(stats.comment_count)],
     ["分享", formatNumber(stats.share_count)],
   ]);
+
+  homeCategoryGuess.innerHTML = `
+    <div>
+      <span class="status-pill">${escapeHtml(analysisInput.content_category_label || context.label || "通用短视频")}</span>
+      <span class="muted compact-copy">置信度：${escapeHtml(categoryGuess.confidence || "unknown")}</span>
+    </div>
+    <p>${escapeHtml(categoryGuess.reason || context.description || "系统已根据素材包生成默认分析模板。")}</p>
+    ${
+      (categoryGuess.matched_keywords || []).length
+        ? `<p class="muted compact-copy">命中关键词：${escapeHtml(categoryGuess.matched_keywords.join("、"))}</p>`
+        : ""
+    }
+  `;
+  homeTemplatePreview.innerHTML = `
+    <div class="template-preview-card">
+      <strong>优先观察</strong>
+      ${renderSimpleList(context.analysis_lens || analysisInput.analysis_lens)}
+    </div>
+    <div class="template-preview-card">
+      <strong>关键问题</strong>
+      ${renderSimpleList(context.key_questions || analysisInput.key_questions)}
+    </div>
+    <div class="template-preview-card">
+      <strong>内容占比底稿</strong>
+      ${renderSimpleList(context.content_ratio || analysisInput.content_ratio)}
+    </div>
+    <div class="template-preview-card">
+      <strong>AI 待补充</strong>
+      ${renderSimpleList(context.prompt_focus || [
+        "等待 AI 结合 contact sheet 和关键帧输出案例概述。",
+        "等待 AI 判断可借鉴点、不可借鉴点和复刻建议。",
+      ])}
+    </div>
+  `;
 
   if (analysisResult) {
     homeAiStatus.textContent = "AI 自动拆解已生成。可以在完整分析页继续修改类型、工作表或重新分析。";
