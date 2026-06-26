@@ -8,12 +8,15 @@ from pydantic import BaseModel
 
 from app.database import SessionLocal
 from app.errors import AppError, ErrorCode
-from app.models import Job, utc_now
+from app.models import CaseArtifact, Job, utc_now
 from app.routes.common import error_response, not_implemented_response
+from app.services.asr import run_case_asr
 from app.services.auto_analyzer import analyze_case_artifact
 from app.services.case_builder import build_case_from_local_video
 from app.services.downloader import download_candidate
 from app.services.douyin_url_parser import extract_aweme_id
+from app.services.enrichment import build_enrichment_archive
+from app.services.ocr import run_case_ocr
 from app.services.quality_resolver import resolve_quality_candidates
 
 
@@ -34,6 +37,18 @@ class DownloadJobRequest(BaseModel):
 
 
 class AnalyzeCaseJobRequest(BaseModel):
+    case_id: str
+
+
+class EnrichCaseJobRequest(BaseModel):
+    case_id: str
+
+
+class AsrCaseJobRequest(BaseModel):
+    case_id: str
+
+
+class OcrCaseJobRequest(BaseModel):
     case_id: str
 
 
@@ -279,6 +294,119 @@ def _run_analyze_case_job(job_id: str, case_id: str) -> None:
         db.close()
 
 
+def _run_enrich_case_job(job_id: str, case_id: str) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "running", 5, "准备富化归档")
+            db.commit()
+
+        artifact = db.get(CaseArtifact, case_id)
+        if not artifact:
+            raise AppError(ErrorCode.CASE_BUILD_FAILED, "素材包不存在。")
+
+        def progress(value: int, message: str) -> None:
+            current = db.get(Job, job_id)
+            if current:
+                _set_job(current, "running", value, message)
+                db.commit()
+
+        result = build_enrichment_archive(artifact, progress=progress)
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "success", 100, "富化归档完成", result=result)
+            db.commit()
+    except AppError as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            db.commit()
+    except Exception as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.ENRICHMENT_FAILED)
+            db.commit()
+    finally:
+        db.close()
+
+
+def _run_asr_case_job(job_id: str, case_id: str) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "running", 5, "准备语音识别")
+            db.commit()
+
+        artifact = db.get(CaseArtifact, case_id)
+        if not artifact:
+            raise AppError(ErrorCode.CASE_BUILD_FAILED, "素材包不存在。")
+
+        def progress(value: int, message: str) -> None:
+            current = db.get(Job, job_id)
+            if current:
+                _set_job(current, "running", value, message)
+                db.commit()
+
+        result = run_case_asr(artifact, progress=progress)
+        job = db.get(Job, job_id)
+        if job:
+            message = "ASR 完成" if result.get("status") == "success" else "ASR 完成：未检测到语音"
+            _set_job(job, "success", 100, message, result=result)
+            db.commit()
+    except AppError as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            db.commit()
+    except Exception as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.ASR_FAILED)
+            db.commit()
+    finally:
+        db.close()
+
+
+def _run_ocr_case_job(job_id: str, case_id: str) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "running", 5, "准备画面文字识别")
+            db.commit()
+
+        artifact = db.get(CaseArtifact, case_id)
+        if not artifact:
+            raise AppError(ErrorCode.CASE_BUILD_FAILED, "素材包不存在。")
+
+        def progress(value: int, message: str) -> None:
+            current = db.get(Job, job_id)
+            if current:
+                _set_job(current, "running", value, message)
+                db.commit()
+
+        result = run_case_ocr(artifact, progress=progress)
+        job = db.get(Job, job_id)
+        if job:
+            message = "OCR 完成" if result.get("status") == "success" else "OCR 完成：未检测到画面文字"
+            _set_job(job, "success", 100, message, result=result)
+            db.commit()
+    except AppError as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            db.commit()
+    except Exception as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.OCR_FAILED)
+            db.commit()
+    finally:
+        db.close()
+
+
 def _run_download_build_analyze_case_job(job_id: str, aweme_id: str, candidate_id: str) -> None:
     db = SessionLocal()
     try:
@@ -313,6 +441,23 @@ def _run_download_build_analyze_case_job(job_id: str, aweme_id: str, candidate_i
         analysis_status = "success"
         analysis = {}
         analysis_error = {}
+        result = {
+            "download": download_result,
+            "case": _artifact_result(artifact),
+            "local_video_id": local_video_id,
+            "case_id": artifact.case_id,
+            "analysis_status": "pending",
+            "analysis": {},
+            "analysis_error": {},
+            "analysis_input_path": artifact.analysis_input_path,
+            "prompt_path": artifact.prompt_path,
+            "contact_sheet_path": artifact.contact_sheet_path,
+            "keyframes_dir": artifact.keyframes_dir,
+        }
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "running", 65, "素材包已生成，开始自动拆解", result=result)
+            db.commit()
 
         def analysis_progress(value: int, message: str) -> None:
             current = db.get(Job, job_id)
@@ -324,27 +469,20 @@ def _run_download_build_analyze_case_job(job_id: str, aweme_id: str, candidate_i
         try:
             analysis = _analysis_result(analyze_case_artifact(artifact, progress=analysis_progress))
         except AppError as error:
-            if error.code != ErrorCode.LLM_NOT_CONFIGURED:
-                raise
-            analysis_status = "skipped"
+            analysis_status = "skipped" if error.code == ErrorCode.LLM_NOT_CONFIGURED else "failed"
             analysis_error = error.as_dict()
 
-        result = {
-            "download": download_result,
-            "case": _artifact_result(artifact),
-            "local_video_id": local_video_id,
-            "case_id": artifact.case_id,
-            "analysis_status": analysis_status,
-            "analysis": analysis,
-            "analysis_error": analysis_error,
-            "analysis_input_path": artifact.analysis_input_path,
-            "prompt_path": artifact.prompt_path,
-            "contact_sheet_path": artifact.contact_sheet_path,
-            "keyframes_dir": artifact.keyframes_dir,
-        }
+        result["analysis_status"] = analysis_status
+        result["analysis"] = analysis
+        result["analysis_error"] = analysis_error
         job = db.get(Job, job_id)
         if job:
-            message = "下载、素材包和自动拆解完成" if analysis_status == "success" else "素材包已生成，自动拆解等待配置大模型"
+            if analysis_status == "success":
+                message = "下载、素材包和自动拆解完成"
+            elif analysis_status == "skipped":
+                message = "素材包已生成，自动拆解等待配置大模型"
+            else:
+                message = "素材包已生成，自动拆解失败，可在分析页重试"
             _set_job(job, "success", 100, message, result=result)
             db.commit()
     except AppError as error:
@@ -442,6 +580,27 @@ def download_and_build_case_job(payload: DownloadJobRequest, background_tasks: B
 def analyze_case_job(payload: AnalyzeCaseJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("analyze-case", "等待自动拆解")
     background_tasks.add_task(_run_analyze_case_job, job.id, payload.case_id)
+    return {"ok": True, "job_id": job.id}
+
+
+@router.post("/enrich-case")
+def enrich_case_job(payload: EnrichCaseJobRequest, background_tasks: BackgroundTasks):
+    job = _create_job("enrich-case", "等待富化归档")
+    background_tasks.add_task(_run_enrich_case_job, job.id, payload.case_id)
+    return {"ok": True, "job_id": job.id}
+
+
+@router.post("/asr-case")
+def asr_case_job(payload: AsrCaseJobRequest, background_tasks: BackgroundTasks):
+    job = _create_job("asr-case", "等待语音识别")
+    background_tasks.add_task(_run_asr_case_job, job.id, payload.case_id)
+    return {"ok": True, "job_id": job.id}
+
+
+@router.post("/ocr-case")
+def ocr_case_job(payload: OcrCaseJobRequest, background_tasks: BackgroundTasks):
+    job = _create_job("ocr-case", "等待画面文字识别")
+    background_tasks.add_task(_run_ocr_case_job, job.id, payload.case_id)
     return {"ok": True, "job_id": job.id}
 
 

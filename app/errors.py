@@ -31,6 +31,12 @@ class ErrorCode:
     LLM_REQUEST_FAILED = "LLM_REQUEST_FAILED"
     LLM_RESPONSE_INVALID = "LLM_RESPONSE_INVALID"
     AUTO_ANALYSIS_FAILED = "AUTO_ANALYSIS_FAILED"
+    ENRICHMENT_FAILED = "ENRICHMENT_FAILED"
+    COMMENTS_IMPORT_FAILED = "COMMENTS_IMPORT_FAILED"
+    ASR_PROVIDER_NOT_CONFIGURED = "ASR_PROVIDER_NOT_CONFIGURED"
+    ASR_FAILED = "ASR_FAILED"
+    OCR_PROVIDER_NOT_CONFIGURED = "OCR_PROVIDER_NOT_CONFIGURED"
+    OCR_FAILED = "OCR_FAILED"
     NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
 
 
@@ -58,10 +64,16 @@ ERROR_MESSAGES = {
     ErrorCode.CASE_BUILD_FAILED: "素材包生成失败。",
     ErrorCode.LOCAL_UPLOAD_FAILED: "本地视频上传失败。",
     ErrorCode.INVALID_VIDEO_FILE: "上传文件不是有效视频，或文件为空。",
-    ErrorCode.LLM_NOT_CONFIGURED: "大模型 API 未配置。请在 .env 中配置 LLM_PROVIDER、LLM_API_KEY 和 LLM_MODEL。",
-    ErrorCode.LLM_REQUEST_FAILED: "大模型 API 请求失败。",
-    ErrorCode.LLM_RESPONSE_INVALID: "大模型返回内容不是可解析的 JSON。",
-    ErrorCode.AUTO_ANALYSIS_FAILED: "自动拆解失败。",
+    ErrorCode.LLM_NOT_CONFIGURED: "大模型 API 未配置。请在 .env 中配置 LLM_PROVIDER、LLM_API_BASE、LLM_API_KEY 和 LLM_MODEL。",
+    ErrorCode.LLM_REQUEST_FAILED: "大模型 API 请求失败。请检查 API Base、Key、网络、余额和模型名。",
+    ErrorCode.LLM_RESPONSE_INVALID: "大模型没有返回合法 JSON。可以降低 LLM_TEMPERATURE，或换用更稳定的多模态模型。",
+    ErrorCode.AUTO_ANALYSIS_FAILED: "自动拆解失败。请检查 contact_sheet.jpg 和 keyframes/ 是否已经生成。",
+    ErrorCode.ENRICHMENT_FAILED: "素材富化归档失败。请检查素材包文件是否完整。",
+    ErrorCode.COMMENTS_IMPORT_FAILED: "评论导入失败。请检查评论文本或 JSON 格式。",
+    ErrorCode.ASR_PROVIDER_NOT_CONFIGURED: "ASR provider 尚未配置。后续可接入 faster-whisper、whisper.cpp 或 API ASR。",
+    ErrorCode.ASR_FAILED: "语音识别失败。请检查视频音轨、ffmpeg 输出和 ASR 模型配置。",
+    ErrorCode.OCR_PROVIDER_NOT_CONFIGURED: "OCR provider 尚未配置。后续可接入 PaddleOCR 或 rapidocr-onnxruntime。",
+    ErrorCode.OCR_FAILED: "画面文字识别失败。请检查关键帧是否存在，以及 OCR provider 配置是否正确。",
     ErrorCode.NOT_IMPLEMENTED: "该功能将在后续版本接入，当前版本未启用。",
 }
 

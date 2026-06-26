@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db
-from app.routes import cases, downloads, jobs, pages, profile, videos
+from app.routes import cases, downloads, jobs, pages, profile, settings as settings_routes, videos
 
 
 def create_app() -> FastAPI:
@@ -23,8 +23,8 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(profile.router)
     app.include_router(downloads.router)
+    app.include_router(settings_routes.router)
     return app
 
 
 app = create_app()
-
