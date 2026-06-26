@@ -250,15 +250,19 @@ function renderHomeCase(data) {
   }
 }
 
-async function showAnalysisInline(result) {
+async function showAnalysisInline(result, options = {}) {
   const caseId = getCaseId(result);
   if (!caseId) {
     return false;
   }
-  jobMessage.textContent = "素材包已生成，正在加载首页分析视图...";
+  if (options.updateMessage !== false) {
+    jobMessage.textContent = "素材包已生成，正在加载首页分析视图...";
+  }
   const caseData = await loadCasePayload(caseId);
   renderHomeCase(caseData);
-  resultCard.scrollIntoView({behavior: "smooth", block: "start"});
+  if (options.scroll !== false) {
+    resultCard.scrollIntoView({behavior: "smooth", block: "start"});
+  }
   return true;
 }
 
@@ -389,6 +393,7 @@ function chooseCandidate(candidates) {
 }
 
 async function downloadCandidate(candidate) {
+  let inlineCaseShown = false;
   jobCard.classList.remove("hidden");
   setHomeRoute("single");
   progressBar.style.width = "0%";
@@ -408,6 +413,26 @@ async function downloadCandidate(candidate) {
       body: JSON.stringify({aweme_id: currentAwemeId, candidate_id: candidate.candidate_id}),
     });
     const payload = await readJsonResponse(response);
+    const renderIntermediateCase = async (job, {scroll = false} = {}) => {
+      const result = job.result_json || {};
+      const caseId = getCaseId(result);
+      if (!caseId || inlineCaseShown) {
+        return;
+      }
+      currentLocalVideoId = result.local_video_id || currentLocalVideoId;
+      resultCard.classList.remove("hidden");
+      buildCaseButton.hidden = true;
+      renderWorkflowResult(result);
+      setStatus(downloadStatus, "完成");
+      setStatus(packageStatus, "已生成");
+      setStatus(analysisStatus, job.status === "success" ? "完成" : "AI 自动拆解中，本地拆解已可查看");
+      try {
+        await showAnalysisInline(result, {scroll, updateMessage: false});
+        inlineCaseShown = true;
+      } catch (error) {
+        homeAiStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "本地拆解视图加载失败，任务仍在继续"}`;
+      }
+    };
     return pollJob(payload.job_id, async (job) => {
       if (job.status === "success" && job.result_json.local_video_id) {
         currentLocalVideoId = job.result_json.local_video_id;
@@ -422,10 +447,12 @@ async function downloadCandidate(candidate) {
             ? "已生成"
             : "未配置或未完成，可到 case 页重试",
         );
-        if (await showAnalysisInline(job.result_json)) {
+        if (await showAnalysisInline(job.result_json, {scroll: !inlineCaseShown})) {
           return;
         }
       }
+    }, async (job) => {
+      await renderIntermediateCase(job, {scroll: true});
     });
   } catch (error) {
     jobMessage.className = "job-message failed";
@@ -461,7 +488,7 @@ buildCaseButton.addEventListener("click", async () => {
   }
 });
 
-async function pollJob(jobId, onSuccess) {
+async function pollJob(jobId, onSuccess, onProgress) {
   try {
     const response = await fetch(`/api/jobs/${jobId}`, {cache: "no-store"});
     const payload = await readJsonResponse(response);
@@ -490,10 +517,13 @@ async function pollJob(jobId, onSuccess) {
       singleButton.textContent = "解析";
       return;
     }
+    if (onProgress) {
+      await onProgress(job);
+    }
     await new Promise((resolve) => {
       window.setTimeout(resolve, 700);
     });
-    return pollJob(jobId, onSuccess);
+    return pollJob(jobId, onSuccess, onProgress);
   } catch (error) {
     jobMessage.className = "job-message failed";
     jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "查询任务失败"}`;
