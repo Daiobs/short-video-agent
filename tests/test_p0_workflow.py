@@ -810,6 +810,37 @@ def test_anthropic_compatible_provider_uses_messages_api(monkeypatch) -> None:
     assert result == {"ok": True, "message": "pong"}
 
 
+def test_anthropic_compatible_provider_accepts_root_base_url(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"content": [{"type": "text", "text": "{\"ok\": true}"}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            assert url == "https://www.wintoken.dev/v1/messages"
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
+    result = AnthropicCompatibleProvider(
+        api_base="https://www.wintoken.dev",
+        api_key="sk-test",
+        model="claude-fable-5",
+    ).analyze("ping", [])
+
+    assert result == {"ok": True}
+
+
 def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> None:
     video_path = make_sample_video(tmp_path / "sample.mp4")
     local_video = upload_video(video_path, source_url="https://www.douyin.com/video/7651938969785849192")

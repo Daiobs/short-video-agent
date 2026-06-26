@@ -181,7 +181,7 @@ LLM_MODEL=gpt-4o
 
 ```env
 LLM_PROVIDER=anthropic_compatible
-LLM_API_BASE=https://www.wintoken.dev/v1
+LLM_API_BASE=https://www.wintoken.dev
 LLM_API_KEY=中转站控制台生成的 API Key
 LLM_MODEL=claude-fable-5
 ```

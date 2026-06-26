@@ -186,7 +186,7 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
         try:
             with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
                 response = client.post(
-                    f"{self.api_base}/messages",
+                    _anthropic_messages_url(self.api_base),
                     headers={
                         "x-api-key": self.api_key,
                         "anthropic-version": "2023-06-01",
@@ -288,6 +288,13 @@ def _anthropic_image_payload(path: Path) -> dict:
             "data": encoded,
         },
     }
+
+
+def _anthropic_messages_url(api_base: str) -> str:
+    base = api_base.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/messages"
+    return f"{base}/v1/messages"
 
 
 def _chat_completion_output_text(data: dict) -> str:
