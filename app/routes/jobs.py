@@ -9,7 +9,8 @@ from pydantic import BaseModel
 from app.database import SessionLocal
 from app.errors import AppError, ErrorCode
 from app.models import CaseArtifact, Job, utc_now
-from app.routes.common import error_response, not_implemented_response
+from app.providers.profile_base import ProfileScanRequest
+from app.routes.common import error_response
 from app.services.asr import run_case_asr
 from app.services.auto_analyzer import analyze_case_artifact
 from app.services.case_builder import build_case_from_local_video
@@ -18,6 +19,7 @@ from app.services.douyin_url_parser import extract_aweme_id
 from app.services.enrichment import build_enrichment_archive
 from app.services.ocr import run_case_ocr
 from app.services.quality_resolver import resolve_quality_candidates
+from app.services.profile_scan import scan_profile
 
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -34,6 +36,15 @@ class ResolveQualitiesJobRequest(BaseModel):
 class DownloadJobRequest(BaseModel):
     aweme_id: str
     candidate_id: str
+
+
+class ProfileScanJobRequest(BaseModel):
+    profile_url: str = ""
+    sec_user_id: str = ""
+    manual_links: str = ""
+    count: int = 20
+    max_pages: int = 1
+    sort_by: str = "like_count"
 
 
 class AnalyzeCaseJobRequest(BaseModel):
@@ -160,6 +171,40 @@ def _run_resolve_qualities_job(job_id: str, aweme_ids: list[str]) -> None:
         job = db.get(Job, job_id)
         if job:
             _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.PROVIDER_FAILED)
+            db.commit()
+    finally:
+        db.close()
+
+
+def _run_profile_scan_job(job_id: str, payload: dict) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "running", 10, "正在扫描主页作品列表")
+            db.commit()
+
+        result = scan_profile(ProfileScanRequest(**payload))
+
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(
+                job,
+                "success",
+                100,
+                "主页扫描完成",
+                result=result.to_dict() | {"sort_by": payload.get("sort_by", "like_count")},
+            )
+            db.commit()
+    except AppError as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            db.commit()
+    except Exception as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.PROFILE_SCAN_FAILED)
             db.commit()
     finally:
         db.close()
@@ -552,8 +597,21 @@ def get_job(job_id: str):
 
 
 @router.post("/profile-scan")
-def profile_scan_job_placeholder():
-    return not_implemented_response()
+def profile_scan_job(payload: ProfileScanJobRequest, background_tasks: BackgroundTasks):
+    job = _create_job("profile-scan", "等待扫描主页")
+    background_tasks.add_task(
+        _run_profile_scan_job,
+        job.id,
+        {
+            "profile_url": payload.profile_url,
+            "sec_user_id": payload.sec_user_id,
+            "manual_links": payload.manual_links,
+            "count": payload.count,
+            "max_pages": payload.max_pages,
+            "sort_by": payload.sort_by,
+        },
+    )
+    return {"ok": True, "job_id": job.id}
 
 
 @router.post("/resolve-qualities")

@@ -17,12 +17,19 @@ from app.main import app
 from app.models import CaseArtifact, DouyinVideoItem, VideoQualityCandidate
 from app.providers.base import VideoQualityCandidateDTO
 from app.providers.douyin_web import DouyinWebProvider, normalize_douyin_detail_payload, normalize_douyin_html_payload
+from app.providers.profile_base import ProfileScanRequest, ProfileVideoItem, profile_engagement_score, sorted_profile_items
 from app.routes import cases as case_routes
 from app.services.analysis_taxonomy import explain_content_category
 from app.services.analysis_worksheet import normalize_worksheet, worksheet_quality_review
 from app.services.auto_analyzer import analyze_case_artifact, existing_auto_analysis
 from app.services.asr import run_case_asr
 from app.services.douyin_url_parser import extract_aweme_id
+from app.services.profile_scan import (
+    DouyinPublicProfileProvider,
+    ManualLinksProfileProvider,
+    extract_profile_items_from_html,
+    scan_profile,
+)
 from app.services.quality_resolver import resolve_quality_candidates
 from app.services.ffmpeg_service import plan_keyframe_timestamps
 from app.services.llm_provider import AnthropicCompatibleProvider, OpenAICompatibleProvider, OpenAIResponsesProvider, parse_json_text
@@ -240,7 +247,12 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "/static/app.css?v=" in response.text
     assert "单作品解析" in response.text
     assert "主页扫描" in response.text
-    assert "主页扫描将在 P2 阶段实现。当前请先使用单作品解析。" in response.text
+    assert "主页 URL / sec_user_id" in response.text
+    assert "多作品链接粘贴框" in response.text
+    assert 'id="profile-scan-button"' in response.text
+    assert 'id="profile-sort"' in response.text
+    assert 'id="profile-results-body"' in response.text
+    assert "不使用 Cookie、不登录、不绕风控" in response.text
     assert "API 与解析设置" in response.text
     assert 'id="test-llm-button"' in response.text
     assert "解析结果" in response.text
@@ -272,9 +284,8 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "没有 API Key 也能生成" in readme
     assert "## 业务模块规划" in readme
     assert "单作品解析：当前可用" in readme
-    assert "主页扫描：P2 阶段实现" in readme
-    assert "主页扫描在页面中只保留入口和占位说明" in readme
-    assert "`/api/profile/scan` 与 `/api/jobs/profile-scan` 仍返回 `NOT_IMPLEMENTED`" in readme
+    assert "主页扫描：P2.0 当前可用" in readme
+    assert "主页扫描不自动批量下载" in readme
     assert "默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型" in readme
     assert "单作品主流程已收敛为一个“解析”按钮：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。" in readme
     assert "如果浏览器能访问 API 但页面“测试连接”失败，请检查本机代理" in readme
@@ -6501,11 +6512,180 @@ def test_enrich_case_job_reports_success(tmp_path: Path) -> None:
     assert job["result_json"]["manifest"]["statuses"]["metrics"] == "success"
 
 
-def test_placeholder_endpoints_return_not_implemented() -> None:
-    for path in (
+def test_profile_video_item_engagement_score() -> None:
+    assert profile_engagement_score(100, 3, 4) == 147
+    item = ProfileVideoItem(aweme_id="7622653084993647603", like_count=100, comment_count=3, share_count=4)
+    assert item.engagement_score == 147
+
+
+def test_manual_links_profile_provider_extracts_and_deduplicates_aweme_ids() -> None:
+    provider = ManualLinksProfileProvider()
+    result = provider.scan(
+        ProfileScanRequest(
+            manual_links="""
+            https://www.douyin.com/video/7622653084993647603
+            复制口令 https://www.douyin.com/user/self?modal_id=7622653084993647603
+            https://www.douyin.com/video/7539896907901062452
+            """,
+            count=20,
+            sort_by="like_count",
+        )
+    )
+
+    assert result.provider == "manual_links"
+    assert [item.aweme_id for item in result.items] == ["7622653084993647603", "7539896907901062452"]
+    assert result.items[0].webpage_url.endswith("7622653084993647603")
+
+
+def test_profile_items_sort_by_metrics() -> None:
+    items = [
+        ProfileVideoItem(aweme_id="100000000000000001", like_count=10, comment_count=1, share_count=0, create_time="2026-01-01"),
+        ProfileVideoItem(aweme_id="100000000000000002", like_count=2, comment_count=9, share_count=0, create_time="2026-01-03"),
+        ProfileVideoItem(aweme_id="100000000000000003", like_count=1, comment_count=0, share_count=10, create_time="2026-01-02"),
+    ]
+
+    assert sorted_profile_items(items, "like_count")[0].aweme_id == "100000000000000001"
+    assert sorted_profile_items(items, "comment_count")[0].aweme_id == "100000000000000002"
+    assert sorted_profile_items(items, "share_count")[0].aweme_id == "100000000000000003"
+    assert sorted_profile_items(items, "engagement_score")[0].aweme_id == "100000000000000003"
+    assert sorted_profile_items(items, "create_time")[0].aweme_id == "100000000000000002"
+
+
+def test_douyin_public_profile_provider_returns_fallback_error(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+        text = "<html><title>profile</title></html>"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+    provider = DouyinPublicProfileProvider()
+
+    with pytest.raises(AppError) as raised:
+        provider.scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
+
+    assert raised.value.code == "PROFILE_SCAN_NEEDS_FALLBACK"
+
+
+def test_douyin_public_profile_provider_reports_structure_changed(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+        text = '<script id="RENDER_DATA" type="application/json">{"aweme_list":[{"broken":true}]}</script>'
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+    provider = DouyinPublicProfileProvider()
+
+    with pytest.raises(AppError) as raised:
+        provider.scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
+
+    assert raised.value.code == "PROFILE_SCAN_STRUCTURE_CHANGED"
+
+
+def test_extract_profile_items_from_public_html_payload() -> None:
+    payload = {
+        "aweme_list": [
+            {
+                "aweme_id": "7622653084993647603",
+                "desc": "测试标题 #COS",
+                "author": {"nickname": "测试作者", "sec_uid": "MS4wLjABAAAAabc12345"},
+                "statistics": {
+                    "digg_count": 300,
+                    "comment_count": 7,
+                    "share_count": 4,
+                    "collect_count": 11,
+                },
+                "video": {"duration": 12000, "cover": {"url_list": ["https://example.com/cover.jpg"]}},
+                "create_time": 1780000000,
+            }
+        ]
+    }
+    html = f'<script id="RENDER_DATA" type="application/json">{json.dumps(payload)}</script>'
+
+    items = extract_profile_items_from_html(html, sec_user_id="MS4wLjABAAAAabc12345")
+
+    assert len(items) == 1
+    assert items[0].aweme_id == "7622653084993647603"
+    assert items[0].title == "测试标题 #COS"
+    assert items[0].author == "测试作者"
+    assert items[0].like_count == 300
+    assert items[0].comment_count == 7
+    assert items[0].share_count == 4
+    assert items[0].collect_count == 11
+    assert items[0].engagement_score == 367
+    assert items[0].cover_url == "https://example.com/cover.jpg"
+
+
+def test_profile_scan_endpoint_returns_manual_items() -> None:
+    response = client.post(
         "/api/profile/scan",
+        json={
+            "manual_links": "https://www.douyin.com/video/7622653084993647603\n7539896907901062452",
+            "count": 20,
+            "sort_by": "like_count",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["provider"] == "manual_links"
+    assert [item["aweme_id"] for item in payload["items"]] == ["7622653084993647603", "7539896907901062452"]
+    assert payload["summary"]["scanned_count"] == 2
+    assert payload["sort_by"] == "like_count"
+
+
+def test_profile_scan_job_returns_items() -> None:
+    response = client.post(
         "/api/jobs/profile-scan",
-    ):
-        response = client.post(path)
-        assert response.status_code == 501
-        assert response.json()["error_code"] == "NOT_IMPLEMENTED"
+        json={"manual_links": "https://www.douyin.com/video/7622653084993647603", "count": 20},
+    )
+    assert response.status_code == 200
+    job_id = response.json()["job_id"]
+
+    deadline = time.time() + 10
+    job = None
+    while time.time() < deadline:
+        job_response = client.get(f"/api/jobs/{job_id}")
+        assert job_response.status_code == 200
+        job = job_response.json()["job"]
+        if job["status"] in {"success", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert job is not None
+    assert job["status"] == "success"
+    assert job["result_json"]["items"][0]["aweme_id"] == "7622653084993647603"
+
+
+def test_external_profile_provider_requires_api_base(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.profile_scan.settings.profile_scan_provider", "external_api")
+    monkeypatch.setattr("app.services.profile_scan.settings.profile_scan_api_base", "")
+
+    with pytest.raises(AppError) as raised:
+        scan_profile(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
+
+    assert raised.value.code == "PROFILE_SCAN_API_NOT_CONFIGURED"

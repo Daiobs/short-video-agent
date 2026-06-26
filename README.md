@@ -27,9 +27,9 @@
 项目未来会拆成两个一级主功能：
 
 1. 单作品解析：当前可用。围绕一条视频完成链接输入、解析、下载、生成素材包、AI 拆解和 case 查看。
-2. 主页扫描：P2 阶段实现。未来用于输入主页 URL、筛选 Top N 作品，再复用“单作品解析”的素材包与 AI 拆解流程。
+2. 主页扫描：P2.0 当前可用。用于输入主页 URL / sec_user_id 或粘贴多条作品链接，整理作品列表、排序和账号概览，再复用“单作品解析”的素材包与 AI 拆解流程。
 
-当前阶段只解决单作品解析闭环。主页扫描在页面中只保留入口和占位说明，接口 `/api/profile/scan` 与 `/api/jobs/profile-scan` 仍返回 `NOT_IMPLEMENTED`；本阶段不实现真实扫描、不接入爬虫、不绕风控。
+当前阶段的主页扫描是“作品列表获取壳”：默认不使用 Cookie、不登录、不绕风控；公开主页如果无法解析，会提示改用多作品链接粘贴或单作品解析。主页扫描不自动批量下载，也不自动批量 AI 拆解；后续下载、素材包和拆解都复用单作品流程。
 
 核心功能：
 
@@ -40,6 +40,7 @@
 - 清晰度偏好在右上角设置弹窗中统一配置，主流程不展示候选直链。
 - 同清晰度 CDN 候选会做轻量 Range 测速，默认选择响应更快的 host。
 - 单作品主流程已收敛为一个“解析”按钮：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。
+- 主页扫描可整理作品列表，支持点赞、评论、分享、综合分和发布时间排序，并显示基础账号概览。
 - 解析结果区会先展示本地拆解底稿：规则判断内容类型、命中原因、优先观察点、关键问题和内容占比，再继续展示 AI 摘要。
 - 右上角设置弹窗可查看 AI 是否配置，并可测试连接。
 - Case 页面默认展示创作者可读报告；素材包、`prompt.md`、`analysis_input.json`、人工验收、富化数据和质量校准功能收纳在“高级 / 后台材料”中。
@@ -61,7 +62,8 @@
 
 当前不包含：
 
-- 真实抖音主页扫描；
+- 批量下载主页全部作品；
+- 账号级 AI 策略报告；
 - ZIP 导出；
 - TTS；
 - 自动字幕；
@@ -406,7 +408,9 @@ http://127.0.0.1:8765/cases/{case_id}
 - `POST /api/settings/llm/test`
 - `POST /api/videos/import-single`
 - `POST /api/videos/qualities`
+- `POST /api/profile/scan`
 - `POST /api/downloads`
+- `POST /api/jobs/profile-scan`
 - `POST /api/jobs/resolve-qualities`
 - `POST /api/jobs/download`
 - `POST /api/jobs/download-and-build-case`
@@ -415,13 +419,6 @@ http://127.0.0.1:8765/cases/{case_id}
 - `POST /api/jobs/enrich-case`
 - `POST /api/jobs/asr-case`
 - `POST /api/jobs/ocr-case`
-
-占位接口：
-
-- `POST /api/profile/scan`
-- `POST /api/jobs/profile-scan`
-
-占位接口会返回 `NOT_IMPLEMENTED`，不假装成功。
 
 ## 错误码
 

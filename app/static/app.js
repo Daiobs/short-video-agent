@@ -33,11 +33,24 @@ const jobMessage = document.getElementById("job-message");
 const jobResult = document.getElementById("job-result");
 const homeRouteButtons = Array.from(document.querySelectorAll("[data-home-route]"));
 const homePanels = Array.from(document.querySelectorAll("[data-home-panel]"));
+const profileForm = document.getElementById("profile-form");
+const profileSort = document.getElementById("profile-sort");
+const profileScanButton = document.getElementById("profile-scan-button");
+const profileSelectedImportButton = document.getElementById("profile-selected-import-button");
+const profileSelectedBuildButton = document.getElementById("profile-selected-build-button");
+const profileScanStatus = document.getElementById("profile-scan-status");
+const profileResultsCard = document.getElementById("profile-results-card");
+const profileProviderBadge = document.getElementById("profile-provider-badge");
+const profileWarnings = document.getElementById("profile-warnings");
+const profileSummary = document.getElementById("profile-summary");
+const profileResultsBody = document.getElementById("profile-results-body");
 
 let currentLocalVideoId = "";
 let currentAwemeId = "";
 let selectedCandidate = null;
 let loadedHomeCase = null;
+let profileItems = [];
+let profileScanPayload = null;
 
 function setStatus(element, value) {
   if (element) {
@@ -253,6 +266,144 @@ function renderLlmStatus(llm) {
   `;
 }
 
+function sortProfileItems(items, sortBy) {
+  const key = ["like_count", "comment_count", "share_count", "engagement_score", "create_time"].includes(sortBy)
+    ? sortBy
+    : "like_count";
+  return [...items].sort((left, right) => {
+    const leftValue = left[key] || 0;
+    const rightValue = right[key] || 0;
+    return rightValue > leftValue ? 1 : rightValue < leftValue ? -1 : 0;
+  });
+}
+
+function selectedProfileItems() {
+  const ids = Array.from(document.querySelectorAll("[data-profile-select]:checked")).map((input) => input.value);
+  return profileItems.filter((item) => ids.includes(item.aweme_id));
+}
+
+function renderProfileSummary(summary) {
+  if (!summary || !profileSummary) {
+    return;
+  }
+  const topItems = normalizeItems(summary.top_items).slice(0, 3);
+  profileSummary.innerHTML = `
+    <article><span>扫描作品</span><strong>${formatNumber(summary.scanned_count)}</strong></article>
+    <article><span>最高综合分</span><strong>${formatNumber(summary.max_engagement_score)}</strong></article>
+    <article><span>平均点赞</span><strong>${formatNumber(summary.avg_like_count)}</strong></article>
+    <article><span>平均评论</span><strong>${formatNumber(summary.avg_comment_count)}</strong></article>
+    <article><span>平均分享</span><strong>${formatNumber(summary.avg_share_count)}</strong></article>
+    <article class="wide"><span>高频关键词</span><strong>${escapeHtml(normalizeItems(summary.content_keywords).slice(0, 8).join(" / ") || "暂无")}</strong></article>
+    <article class="wide"><span>综合分 Top 3</span><strong>${escapeHtml(topItems.map((item) => item.title || item.aweme_id).join(" / ") || "暂无")}</strong></article>
+  `;
+}
+
+function renderProfileResults(payload) {
+  profileScanPayload = payload;
+  profileItems = normalizeItems(payload.items);
+  profileResultsCard.classList.remove("hidden");
+  profileProviderBadge.textContent = payload.provider || "profile";
+  const warnings = normalizeItems(payload.warnings);
+  profileWarnings.classList.toggle("hidden", !warnings.length);
+  profileWarnings.textContent = warnings.join(" ");
+  renderProfileSummary(payload.summary || {});
+  renderProfileTable();
+}
+
+function renderProfileTable() {
+  const sorted = sortProfileItems(profileItems, profileSort.value);
+  if (!sorted.length) {
+    profileResultsBody.innerHTML = '<tr><td colspan="9" class="muted">没有扫描到作品。可以改用多作品链接粘贴。</td></tr>';
+    return;
+  }
+  profileResultsBody.innerHTML = sorted
+    .map((item) => {
+      const image = item.cover_url
+        ? `<img src="${escapeHtml(item.cover_url)}" alt="" class="profile-cover">`
+        : '<div class="profile-cover placeholder">无封面</div>';
+      return `
+        <tr>
+          <td><input type="checkbox" data-profile-select value="${escapeHtml(item.aweme_id)}"></td>
+          <td>${image}</td>
+          <td>
+            <strong>${escapeHtml(item.title || item.desc || item.aweme_id)}</strong>
+            <p>${escapeHtml(item.desc || item.webpage_url || "")}</p>
+          </td>
+          <td>${formatNumber(item.like_count)}</td>
+          <td>${formatNumber(item.comment_count)}</td>
+          <td>${formatNumber(item.share_count)}</td>
+          <td>${formatNumber(item.engagement_score)}</td>
+          <td>${escapeHtml(item.create_time || "未知")}</td>
+          <td>
+            <button type="button" data-profile-import="${escapeHtml(item.aweme_id)}">进入解析</button>
+            <button type="button" data-profile-build="${escapeHtml(item.aweme_id)}">生成素材包</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+async function scanProfile() {
+  profileScanButton.disabled = true;
+  profileScanStatus.textContent = "正在扫描...";
+  profileResultsCard.classList.add("hidden");
+  try {
+    const formData = new FormData(profileForm);
+    const profileValue = String(formData.get("profile_url") || "").trim();
+    const isUrl = /^https?:\/\//i.test(profileValue);
+    const payload = {
+      profile_url: isUrl ? profileValue : "",
+      sec_user_id: isUrl ? "" : profileValue,
+      manual_links: String(formData.get("manual_links") || ""),
+      count: Number(formData.get("count") || 20),
+      max_pages: 1,
+      sort_by: String(formData.get("sort_by") || "like_count"),
+    };
+    const response = await fetch("/api/profile/scan", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const result = await readJsonResponse(response);
+    profileScanStatus.textContent = `扫描完成：${result.items.length} 条作品。`;
+    renderProfileResults(result);
+  } catch (error) {
+    profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "扫描失败，请改用多作品链接粘贴或单作品解析。"}`;
+  } finally {
+    profileScanButton.disabled = false;
+  }
+}
+
+function profileItemByAwemeId(awemeId) {
+  return profileItems.find((item) => item.aweme_id === awemeId);
+}
+
+function profileItemValue(item) {
+  return item?.webpage_url || item?.aweme_id || "";
+}
+
+function importProfileItem(item) {
+  const value = profileItemValue(item);
+  if (!value) {
+    return;
+  }
+  singleForm.querySelector('[name="value"]').value = value;
+  setHomeRoute("single");
+  singleResult.classList.remove("hidden");
+  singleResult.textContent = `已带入作品：${item.aweme_id}。点击“解析”会复用单作品流程。`;
+}
+
+async function buildProfileItem(item) {
+  const value = profileItemValue(item);
+  if (!value) {
+    return;
+  }
+  singleForm.querySelector('[name="value"]').value = value;
+  setHomeRoute("single");
+  await runSingleValue(value);
+}
+
 async function loadLlmStatus() {
   try {
     const response = await fetch("/api/settings/llm", {cache: "no-store"});
@@ -418,8 +569,7 @@ testLlmButton.addEventListener("click", async () => {
   }
 });
 
-singleForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+async function runSingleValue(value) {
   singleButton.disabled = true;
   singleButton.textContent = "解析中...";
   selectedCandidate = null;
@@ -431,7 +581,6 @@ singleForm.addEventListener("submit", async (event) => {
   setStatus(packageStatus, "未生成");
   setStatus(analysisStatus, "未运行");
   try {
-    const value = new FormData(singleForm).get("value");
     const importResponse = await fetch("/api/videos/import-single", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
@@ -457,6 +606,59 @@ singleForm.addEventListener("submit", async (event) => {
       singleButton.textContent = "解析";
     }
   }
+}
+
+singleForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const value = new FormData(singleForm).get("value");
+  await runSingleValue(value);
+});
+
+profileForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await scanProfile();
+});
+
+profileSort.addEventListener("change", () => {
+  if (profileScanPayload) {
+    renderProfileTable();
+  }
+});
+
+profileResultsBody.addEventListener("click", async (event) => {
+  const importButton = event.target.closest("[data-profile-import]");
+  const buildButton = event.target.closest("[data-profile-build]");
+  if (importButton) {
+    importProfileItem(profileItemByAwemeId(importButton.dataset.profileImport));
+  } else if (buildButton) {
+    await buildProfileItem(profileItemByAwemeId(buildButton.dataset.profileBuild));
+  }
+});
+
+profileSelectedImportButton.addEventListener("click", () => {
+  const selected = selectedProfileItems();
+  if (!selected.length) {
+    profileScanStatus.textContent = "请先选择 1 条作品。";
+    return;
+  }
+  if (selected.length > 1) {
+    profileScanStatus.textContent = "P2.0 不做批量解析，请先选择 1 条作品。";
+    return;
+  }
+  importProfileItem(selected[0]);
+});
+
+profileSelectedBuildButton.addEventListener("click", async () => {
+  const selected = selectedProfileItems();
+  if (!selected.length) {
+    profileScanStatus.textContent = "请先选择 1 条作品。";
+    return;
+  }
+  if (selected.length > 1) {
+    profileScanStatus.textContent = "P2.0 不自动批量下载或批量 AI 拆解，请先选择 1 条作品。";
+    return;
+  }
+  await buildProfileItem(selected[0]);
 });
 
 async function resolveQualities(awemeIds) {

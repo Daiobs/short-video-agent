@@ -33,6 +33,10 @@ class ErrorCode:
     AUTO_ANALYSIS_FAILED = "AUTO_ANALYSIS_FAILED"
     ENRICHMENT_FAILED = "ENRICHMENT_FAILED"
     COMMENTS_IMPORT_FAILED = "COMMENTS_IMPORT_FAILED"
+    PROFILE_SCAN_FAILED = "PROFILE_SCAN_FAILED"
+    PROFILE_SCAN_NEEDS_FALLBACK = "PROFILE_SCAN_NEEDS_FALLBACK"
+    PROFILE_SCAN_API_NOT_CONFIGURED = "PROFILE_SCAN_API_NOT_CONFIGURED"
+    PROFILE_SCAN_STRUCTURE_CHANGED = "PROFILE_SCAN_STRUCTURE_CHANGED"
     ASR_PROVIDER_NOT_CONFIGURED = "ASR_PROVIDER_NOT_CONFIGURED"
     ASR_FAILED = "ASR_FAILED"
     OCR_PROVIDER_NOT_CONFIGURED = "OCR_PROVIDER_NOT_CONFIGURED"
@@ -70,6 +74,10 @@ ERROR_MESSAGES = {
     ErrorCode.AUTO_ANALYSIS_FAILED: "自动拆解失败。请检查 contact_sheet.jpg 和 keyframes/ 是否已经生成。",
     ErrorCode.ENRICHMENT_FAILED: "素材富化归档失败。请检查素材包文件是否完整。",
     ErrorCode.COMMENTS_IMPORT_FAILED: "评论导入失败。请检查评论文本或 JSON 格式。",
+    ErrorCode.PROFILE_SCAN_FAILED: "主页扫描失败。请检查主页 URL / sec_user_id，或改用多作品链接粘贴。",
+    ErrorCode.PROFILE_SCAN_NEEDS_FALLBACK: "公开主页未包含可解析作品列表。当前不登录、不使用 Cookie、不绕风控，请改用多作品链接粘贴或单作品解析。",
+    ErrorCode.PROFILE_SCAN_API_NOT_CONFIGURED: "已选择 external_api 主页扫描，但 PROFILE_SCAN_API_BASE 未配置。",
+    ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED: "主页返回结构无法归一化，可能是平台页面结构变化。请改用多作品链接粘贴或单作品解析。",
     ErrorCode.ASR_PROVIDER_NOT_CONFIGURED: "ASR provider 尚未配置。后续可接入 faster-whisper、whisper.cpp 或 API ASR。",
     ErrorCode.ASR_FAILED: "语音识别失败。请检查视频音轨、ffmpeg 输出和 ASR 模型配置。",
     ErrorCode.OCR_PROVIDER_NOT_CONFIGURED: "OCR provider 尚未配置。后续可接入 PaddleOCR 或 rapidocr-onnxruntime。",

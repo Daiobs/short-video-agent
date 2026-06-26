@@ -1,0 +1,333 @@
+from __future__ import annotations
+
+import html
+import json
+import re
+from urllib.parse import unquote, urlparse
+
+import httpx
+
+from app.config import settings
+from app.errors import AppError, ErrorCode
+from app.providers.profile_base import (
+    ProfileScanRequest,
+    ProfileScanResult,
+    ProfileVideoItem,
+    build_profile_summary,
+    sorted_profile_items,
+)
+from app.services.douyin_url_parser import extract_aweme_id, extract_first_url
+
+
+PROFILE_URL_RE = re.compile(r"https?://(?:www\.)?douyin\.com/[^\s]+", re.I)
+SEC_USER_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{8,128}$")
+
+
+class ManualLinksProfileProvider:
+    name = "manual_links"
+
+    def scan(self, request: ProfileScanRequest) -> ProfileScanResult:
+        raw_text = request.manual_links or ""
+        values = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        if not values and raw_text.strip():
+            values = [raw_text.strip()]
+        seen: set[str] = set()
+        items: list[ProfileVideoItem] = []
+        for value in values:
+            try:
+                aweme_id = extract_aweme_id(value)
+            except AppError:
+                continue
+            if aweme_id in seen:
+                continue
+            seen.add(aweme_id)
+            source_url = extract_first_url(value) or f"https://www.douyin.com/video/{aweme_id}"
+            items.append(
+                ProfileVideoItem(
+                    aweme_id=aweme_id,
+                    title=f"抖音作品 {aweme_id}",
+                    desc=value[:180],
+                    webpage_url=source_url,
+                    source_provider=self.name,
+                )
+            )
+        if not items:
+            raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "多作品链接中没有找到有效 aweme_id。")
+        limited = sorted_profile_items(items[: _safe_count(request.count)], request.sort_by)
+        result = ProfileScanResult(
+            provider=self.name,
+            profile_url=request.profile_url or "",
+            sec_user_id=request.sec_user_id or "",
+            items=limited,
+            has_more=len(items) > len(limited),
+            warnings=["多链接模式只提取 aweme_id；互动数据会在进入单作品解析后继续补齐。"],
+        )
+        result.summary = build_profile_summary(result)
+        return result
+
+
+class DouyinPublicProfileProvider:
+    name = "douyin_public"
+
+    def scan(self, request: ProfileScanRequest) -> ProfileScanResult:
+        profile_url = normalize_profile_url(request.profile_url, request.sec_user_id)
+        sec_user_id = extract_sec_user_id(profile_url, request.sec_user_id)
+        if not sec_user_id:
+            raise AppError(ErrorCode.SEC_USER_ID_NOT_FOUND)
+
+        try:
+            with httpx.Client(timeout=8.0, follow_redirects=True, trust_env=False) as client:
+                response = client.get(
+                    profile_url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 short-video-agent profile scan",
+                        "Accept": "text/html,application/xhtml+xml",
+                    },
+                )
+        except httpx.HTTPError as error:
+            raise AppError(ErrorCode.PROFILE_SCAN_FAILED, f"主页请求失败：{str(error)[:160]}") from error
+
+        if response.status_code in {401, 403, 429}:
+            raise AppError(ErrorCode.PROFILE_SCAN_NEEDS_FALLBACK)
+        if response.status_code >= 400:
+            raise AppError(ErrorCode.PROFILE_SCAN_FAILED, f"主页请求失败：HTTP {response.status_code}。")
+
+        items = extract_profile_items_from_html(response.text, sec_user_id=sec_user_id)
+        if not items:
+            if _has_aweme_payload_marker(response.text):
+                raise AppError(ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED)
+            raise AppError(ErrorCode.PROFILE_SCAN_NEEDS_FALLBACK)
+        sorted_items = sorted_profile_items(items[: _safe_count(request.count)], request.sort_by)
+        result = ProfileScanResult(
+            provider=self.name,
+            profile_url=profile_url,
+            sec_user_id=sec_user_id,
+            items=sorted_items,
+            has_more=len(items) > len(sorted_items),
+            warnings=["公开主页扫描不使用 Cookie、不登录、不绕风控；结果取决于页面公开数据。"],
+        )
+        result.summary = build_profile_summary(result)
+        return result
+
+
+class ExternalApiProfileProvider:
+    name = "external_api"
+
+    def scan(self, request: ProfileScanRequest) -> ProfileScanResult:
+        if not settings.profile_scan_api_base:
+            raise AppError(ErrorCode.PROFILE_SCAN_API_NOT_CONFIGURED)
+        raise AppError(
+            ErrorCode.PROFILE_SCAN_FAILED,
+            "external_api provider 仅预留接口形态，本轮不接入第三方扫描服务。",
+        )
+
+
+def scan_profile(request: ProfileScanRequest) -> ProfileScanResult:
+    normalized = ProfileScanRequest(
+        profile_url=(request.profile_url or "").strip() or None,
+        sec_user_id=(request.sec_user_id or "").strip() or None,
+        manual_links=(request.manual_links or "").strip() or None,
+        count=_safe_count(request.count),
+        max_pages=max(1, min(int(request.max_pages or settings.profile_scan_max_pages), 5)),
+        sort_by=request.sort_by or "like_count",
+    )
+    if normalized.manual_links:
+        return ManualLinksProfileProvider().scan(normalized)
+
+    provider_name = settings.profile_scan_provider or "public"
+    if provider_name == "external_api":
+        provider = ExternalApiProfileProvider()
+    else:
+        provider = DouyinPublicProfileProvider()
+    result = provider.scan(normalized)
+    result.items = sorted_profile_items(result.items, normalized.sort_by)
+    result.summary = build_profile_summary(result)
+    return result
+
+
+def normalize_profile_url(profile_url: str | None, sec_user_id: str | None) -> str:
+    if profile_url:
+        value = profile_url.strip()
+        parsed = urlparse(value)
+        if not parsed.scheme or not parsed.netloc:
+            raise AppError(ErrorCode.INVALID_PROFILE_URL)
+        if "douyin.com" not in parsed.netloc.lower():
+            raise AppError(ErrorCode.INVALID_PROFILE_URL, "仅支持抖音主页 URL。")
+        return value
+    if sec_user_id and SEC_USER_ID_RE.fullmatch(sec_user_id.strip()):
+        return f"https://www.douyin.com/user/{sec_user_id.strip()}"
+    raise AppError(ErrorCode.INVALID_PROFILE_URL)
+
+
+def extract_sec_user_id(profile_url: str | None, explicit_sec_user_id: str | None = None) -> str:
+    if explicit_sec_user_id and SEC_USER_ID_RE.fullmatch(explicit_sec_user_id.strip()):
+        return explicit_sec_user_id.strip()
+    if not profile_url:
+        return ""
+    parsed = urlparse(profile_url.strip())
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) >= 2 and parts[0] == "user" and SEC_USER_ID_RE.fullmatch(parts[1]):
+        return parts[1]
+    query_match = re.search(r"(?:sec_user_id|sec_uid)=([A-Za-z0-9_\-]+)", parsed.query)
+    if query_match:
+        return query_match.group(1)
+    return ""
+
+
+def extract_profile_items_from_html(html_text: str, sec_user_id: str = "") -> list[ProfileVideoItem]:
+    decoded = html.unescape(unquote(html_text or ""))
+    payloads = _extract_json_payloads(decoded)
+    items: list[ProfileVideoItem] = []
+    seen: set[str] = set()
+    for payload in payloads:
+        for raw_item in _walk_aweme_items(payload):
+            item = normalize_profile_video_item(raw_item, sec_user_id=sec_user_id)
+            if not item or item.aweme_id in seen:
+                continue
+            seen.add(item.aweme_id)
+            items.append(item)
+    return items
+
+
+def normalize_profile_video_item(raw: dict, sec_user_id: str = "") -> ProfileVideoItem | None:
+    aweme_id = str(raw.get("aweme_id") or raw.get("awemeId") or raw.get("id") or "")
+    if not re.fullmatch(r"\d{15,22}", aweme_id):
+        return None
+    desc = str(raw.get("desc") or raw.get("title") or raw.get("caption") or "")
+    author = raw.get("author") if isinstance(raw.get("author"), dict) else {}
+    statistics = raw.get("statistics") if isinstance(raw.get("statistics"), dict) else {}
+    video = raw.get("video") if isinstance(raw.get("video"), dict) else {}
+    cover = raw.get("cover") if isinstance(raw.get("cover"), dict) else {}
+    cover_url = _first_url(video.get("cover")) or _first_url(video.get("origin_cover")) or _first_url(cover) or str(raw.get("cover_url") or "")
+    item_sec_user_id = str(author.get("sec_uid") or author.get("sec_user_id") or sec_user_id or "")
+    return ProfileVideoItem(
+        aweme_id=aweme_id,
+        title=desc[:120] or f"抖音作品 {aweme_id}",
+        desc=desc,
+        author=str(author.get("nickname") or raw.get("nickname") or ""),
+        sec_user_id=item_sec_user_id,
+        cover_url=cover_url,
+        create_time=str(raw.get("create_time") or raw.get("createTime") or ""),
+        like_count=_safe_int(statistics.get("digg_count") or raw.get("digg_count")),
+        comment_count=_safe_int(statistics.get("comment_count") or raw.get("comment_count")),
+        share_count=_safe_int(statistics.get("share_count") or raw.get("share_count")),
+        collect_count=_safe_int(statistics.get("collect_count") or raw.get("collect_count")),
+        duration=_safe_int(video.get("duration") or raw.get("duration")),
+        webpage_url=f"https://www.douyin.com/video/{aweme_id}",
+        source_provider=DouyinPublicProfileProvider.name,
+    )
+
+
+def _extract_json_payloads(text: str) -> list:
+    payloads = []
+    script_patterns = [
+        r'<script[^>]+id=["\']RENDER_DATA["\'][^>]*>(.*?)</script>',
+        r'<script[^>]+id=["\']SIGI_STATE["\'][^>]*>(.*?)</script>',
+    ]
+    for pattern in script_patterns:
+        for match in re.finditer(pattern, text, re.S | re.I):
+            payload = _json_loads(match.group(1).strip())
+            if payload is not None:
+                payloads.append(payload)
+    for marker in ("aweme_list", "awemeList"):
+        if marker in text:
+            payload = _json_loads(_balanced_json_near_marker(text, marker))
+            if payload is not None:
+                payloads.append(payload)
+    return payloads
+
+
+def _has_aweme_payload_marker(text: str) -> bool:
+    return "aweme_list" in (text or "") or "awemeList" in (text or "")
+
+
+def _walk_aweme_items(value) -> list[dict]:
+    items: list[dict] = []
+    if isinstance(value, dict):
+        for key in ("aweme_list", "awemeList", "post", "posts"):
+            candidate = value.get(key)
+            if isinstance(candidate, list):
+                items.extend(item for item in candidate if isinstance(item, dict))
+            elif isinstance(candidate, dict):
+                items.extend(_walk_aweme_items(candidate))
+        if re.fullmatch(r"\d{15,22}", str(value.get("aweme_id") or value.get("awemeId") or "")):
+            items.append(value)
+        for child in value.values():
+            if isinstance(child, (dict, list)):
+                items.extend(_walk_aweme_items(child))
+    elif isinstance(value, list):
+        for child in value:
+            if isinstance(child, (dict, list)):
+                items.extend(_walk_aweme_items(child))
+    return items
+
+
+def _json_loads(value: str | None):
+    if not value:
+        return None
+    candidate = value.strip()
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+
+
+def _balanced_json_near_marker(text: str, marker: str) -> str:
+    marker_index = text.find(marker)
+    if marker_index < 0:
+        return ""
+    start = text.rfind("{", 0, marker_index)
+    if start < 0:
+        return ""
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, min(len(text), start + 500_000)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return ""
+
+
+def _first_url(value) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("url_list", "urlList", "uri"):
+            result = _first_url(value.get(key))
+            if result:
+                return result
+    if isinstance(value, list):
+        for item in value:
+            result = _first_url(item)
+            if result:
+                return result
+    return ""
+
+
+def _safe_int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_count(value) -> int:
+    try:
+        return max(1, min(int(value or settings.profile_scan_count_per_page), 100))
+    except (TypeError, ValueError):
+        return settings.profile_scan_count_per_page
