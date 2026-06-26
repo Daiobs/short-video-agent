@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,7 @@ from app.errors import AppError, ErrorCode
 
 
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+logger = logging.getLogger("uvicorn.error")
 
 
 class BaseLLMProvider:
@@ -59,10 +62,22 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             "temperature": self.temperature,
             "response_format": {"type": "json_object"},
         }
+        endpoint = f"{self.api_base}/chat/completions"
+        started_at = time.monotonic()
+        image_bytes = _image_bytes(image_paths)
+        logger.info(
+            "llm_request_start provider=openai_compatible model=%s endpoint=%s prompt_chars=%s image_count=%s image_bytes=%s timeout=%s",
+            self.model,
+            endpoint,
+            len(prompt),
+            len([path for path in image_paths if path.is_file()]),
+            image_bytes,
+            self.timeout_seconds,
+        )
         try:
             with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
                 response = client.post(
-                    f"{self.api_base}/chat/completions",
+                    endpoint,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
@@ -72,7 +87,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 if response.status_code >= 400 and _response_format_may_be_unsupported(response):
                     payload.pop("response_format", None)
                     response = client.post(
-                        f"{self.api_base}/chat/completions",
+                        endpoint,
                         headers={
                             "Authorization": f"Bearer {self.api_key}",
                             "Content-Type": "application/json",
@@ -80,14 +95,50 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                         json=payload,
                     )
             if response.status_code >= 400:
+                logger.warning(
+                    "llm_request_failed provider=openai_compatible model=%s status=%s duration_ms=%s prompt_chars=%s image_count=%s image_bytes=%s",
+                    self.model,
+                    response.status_code,
+                    _duration_ms(started_at),
+                    len(prompt),
+                    len([path for path in image_paths if path.is_file()]),
+                    image_bytes,
+                )
                 raise AppError(ErrorCode.LLM_REQUEST_FAILED, f"大模型 API 返回 HTTP {response.status_code}。")
             data = response.json()
-            return parse_json_text(_chat_completion_output_text(data))
+            result = parse_json_text(_chat_completion_output_text(data))
+            logger.info(
+                "llm_request_success provider=openai_compatible model=%s duration_ms=%s prompt_chars=%s image_count=%s image_bytes=%s",
+                self.model,
+                _duration_ms(started_at),
+                len(prompt),
+                len([path for path in image_paths if path.is_file()]),
+                image_bytes,
+            )
+            return result
         except AppError:
             raise
         except httpx.TimeoutException as error:
+            logger.warning(
+                "llm_request_timeout provider=openai_compatible model=%s duration_ms=%s prompt_chars=%s image_count=%s image_bytes=%s timeout=%s",
+                self.model,
+                _duration_ms(started_at),
+                len(prompt),
+                len([path for path in image_paths if path.is_file()]),
+                image_bytes,
+                self.timeout_seconds,
+            )
             raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 请求超时。") from error
         except Exception as error:
+            logger.warning(
+                "llm_request_error provider=openai_compatible model=%s error_type=%s duration_ms=%s prompt_chars=%s image_count=%s image_bytes=%s",
+                self.model,
+                type(error).__name__,
+                _duration_ms(started_at),
+                len(prompt),
+                len([path for path in image_paths if path.is_file()]),
+                image_bytes,
+            )
             raise AppError(ErrorCode.LLM_REQUEST_FAILED, str(error)[:500]) from error
 
 
@@ -295,6 +346,18 @@ def _anthropic_messages_url(api_base: str) -> str:
     if base.endswith("/v1"):
         return f"{base}/messages"
     return f"{base}/v1/messages"
+
+
+def _duration_ms(started_at: float) -> int:
+    return int((time.monotonic() - started_at) * 1000)
+
+
+def _image_bytes(image_paths: list[Path]) -> int:
+    total = 0
+    for path in image_paths:
+        if path.is_file():
+            total += path.stat().st_size
+    return total
 
 
 def _chat_completion_output_text(data: dict) -> str:
