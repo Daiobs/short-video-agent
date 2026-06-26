@@ -32,6 +32,7 @@ body {
 }
 
 .site-header > div,
+.primary-nav,
 .page {
     max-width: 1080px;
     margin: 0 auto;
@@ -42,6 +43,26 @@ body {
     justify-content: space-between;
     gap: 24px;
     align-items: flex-start;
+}
+
+.primary-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 24px;
+}
+
+.primary-nav-button {
+    padding: 0 16px;
+    border-color: transparent;
+    background: #f3f6fb;
+    color: var(--muted);
+}
+
+.primary-nav-button.active {
+    border-color: rgba(37, 99, 235, .28);
+    background: #eff6ff;
+    color: var(--brand-dark);
 }
 
 .eyebrow {
@@ -192,6 +213,45 @@ button:disabled {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 12px;
     align-items: end;
+}
+
+.single-workbench-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+    gap: 14px;
+    align-items: end;
+}
+
+.single-workbench-form .toolbar-actions {
+    grid-column: 1 / -1;
+}
+
+.task-status-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+}
+
+.task-status-grid > div {
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #f9fafb;
+}
+
+.task-status-grid span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    margin-bottom: 6px;
+}
+
+.task-status-grid strong {
+    display: block;
+    color: var(--text);
+    font-size: 14px;
 }
 
 .settings-panel {
@@ -484,6 +544,49 @@ pre {
 .primary-actions {
     padding-top: 12px;
     border-top: 1px solid var(--line);
+}
+
+.case-tab-nav {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 18px 0;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, .92);
+    backdrop-filter: blur(8px);
+}
+
+.case-tab-button {
+    padding: 0 14px;
+    border-color: transparent;
+    background: #f3f6fb;
+    color: var(--muted);
+}
+
+.case-tab-button.active {
+    border-color: rgba(37, 99, 235, .3);
+    background: #eff6ff;
+    color: var(--brand-dark);
+}
+
+.case-tab-panel {
+    animation: fade-in .12s ease-out;
+}
+
+@keyframes fade-in {
+    from {
+        opacity: .65;
+        transform: translateY(3px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .advanced-section {
@@ -2142,8 +2245,11 @@ footer {
     .settings-title-row,
     .entry-grid,
     .link-form,
+    .single-workbench-form,
+    .task-status-grid,
     .case-view-grid,
     .case-two-column,
+    .primary-workflow-grid,
     .case-diagnosis-hero,
     .case-diagnosis-grid,
     .case-diagnosis-blocker,

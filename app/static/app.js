@@ -3,14 +3,20 @@ const settingsDrawer = document.getElementById("settings-drawer");
 const settingsClose = document.getElementById("settings-close");
 const singleForm = document.getElementById("single-form");
 const singleButton = document.getElementById("single-button");
+const downloadSelectedButton = document.getElementById("download-selected-button");
 const singleResult = document.getElementById("single-result");
 const qualityPreference = document.getElementById("quality-preference");
+const parseStatus = document.getElementById("parse-status");
+const downloadStatus = document.getElementById("download-status");
+const packageStatus = document.getElementById("package-status");
+const analysisStatus = document.getElementById("analysis-status");
 const llmStatusBadge = document.getElementById("llm-status-badge");
 const llmStatusList = document.getElementById("llm-status-list");
 const llmConfigHint = document.getElementById("llm-config-hint");
 const testLlmButton = document.getElementById("test-llm-button");
 const llmTestResult = document.getElementById("llm-test-result");
 const resultCard = document.getElementById("result-card");
+const recentEmptyState = document.getElementById("recent-empty-state");
 const caseSummary = document.getElementById("case-summary");
 const homeCaseView = document.getElementById("home-case-view");
 const homeContactSheet = document.getElementById("home-contact-sheet");
@@ -26,11 +32,38 @@ const jobCard = document.getElementById("job-card");
 const progressBar = document.getElementById("progress-bar");
 const jobMessage = document.getElementById("job-message");
 const jobResult = document.getElementById("job-result");
+const homeRouteButtons = Array.from(document.querySelectorAll("[data-home-route]"));
+const homePanels = Array.from(document.querySelectorAll("[data-home-panel]"));
 
 let currentLocalVideoId = "";
 let currentAwemeId = "";
 let selectedCandidate = null;
 let loadedHomeCase = null;
+
+function setStatus(element, value) {
+  if (element) {
+    element.textContent = value;
+  }
+}
+
+function setHomeRoute(route, updateHash = true) {
+  const activeRoute = ["single", "profile", "cases", "settings"].includes(route) ? route : "single";
+  homePanels.forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.homePanel !== activeRoute);
+  });
+  homeRouteButtons.forEach((button) => {
+    const active = button.dataset.homeRoute === activeRoute;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-current", active ? "page" : "false");
+  });
+  if (updateHash) {
+    history.replaceState(null, "", `#${activeRoute}`);
+  }
+}
+
+function routeFromHash() {
+  return window.location.hash.replace("#", "") || "single";
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -115,16 +148,11 @@ function buildFullPrompt(data) {
 
 function renderWorkflowResult(result) {
   const caseInfo = result.case || {};
-  const downloadInfo = result.download || {};
   const caseId = result.case_id || caseInfo.case_id || "";
   const rows = [
     ["素材包 ID", caseId || ""],
-    ["视频文件", caseInfo.video_path || downloadInfo.file_path || ""],
-    ["分析输入", result.analysis_input_path || caseInfo.analysis_input_path || ""],
-    ["Prompt 模板", result.prompt_path || caseInfo.prompt_path || ""],
-    ["关键帧总览", result.contact_sheet_path || caseInfo.contact_sheet_path || ""],
-    ["关键帧目录", result.keyframes_dir || caseInfo.keyframes_dir || ""],
-    ["AI 自动拆解", result.analysis_status === "success" ? "已生成" : "未运行，可在完整分析页手动启动"],
+    ["素材包状态", "已生成"],
+    ["AI 自动拆解", result.analysis_status === "success" ? "已生成" : "未运行，可在 case 详情页启动"],
   ].filter(([, value]) => value);
 
   caseSummary.innerHTML = `
@@ -133,6 +161,7 @@ function renderWorkflowResult(result) {
       ${rows.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}
     </dl>
   `;
+  recentEmptyState.classList.add("hidden");
   uploadResult.classList.add("hidden");
   uploadResult.textContent = JSON.stringify(result, null, 2);
 }
@@ -208,11 +237,21 @@ async function readJsonResponse(response) {
 }
 
 settingsToggle.addEventListener("click", () => {
-  settingsDrawer.classList.toggle("hidden");
+  setHomeRoute("settings");
 });
 
 settingsClose.addEventListener("click", () => {
-  settingsDrawer.classList.add("hidden");
+  setHomeRoute("single");
+});
+
+homeRouteButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setHomeRoute(button.dataset.homeRoute);
+  });
+});
+
+window.addEventListener("hashchange", () => {
+  setHomeRoute(routeFromHash(), false);
 });
 
 testLlmButton.addEventListener("click", async () => {
@@ -233,9 +272,15 @@ singleForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   singleButton.disabled = true;
   singleButton.textContent = "处理中...";
+  downloadSelectedButton.disabled = true;
   selectedCandidate = null;
+  currentLocalVideoId = "";
   homeCaseView.classList.add("hidden");
   resultCard.classList.add("hidden");
+  setStatus(parseStatus, "解析中");
+  setStatus(downloadStatus, "未开始");
+  setStatus(packageStatus, "未生成");
+  setStatus(analysisStatus, "未运行");
   try {
     const value = new FormData(singleForm).get("value");
     const importResponse = await fetch("/api/videos/import-single", {
@@ -248,19 +293,15 @@ singleForm.addEventListener("submit", async (event) => {
     singleResult.classList.remove("hidden");
     singleResult.textContent = `已导入作品：${currentAwemeId}，正在解析可用清晰度...`;
     await resolveQualities([currentAwemeId]);
-    if (selectedCandidate) {
-      await downloadCandidate(selectedCandidate);
-    }
   } catch (error) {
     singleResult.classList.remove("hidden");
     singleResult.textContent = `${error.error_code || "ERROR"}：${error.message || "导入失败"}`;
+    setStatus(parseStatus, "失败");
     singleButton.disabled = false;
-    singleButton.textContent = "下载并生成素材包";
+    singleButton.textContent = "解析作品";
   } finally {
-    if (!selectedCandidate) {
-      singleButton.disabled = false;
-      singleButton.textContent = "下载并生成素材包";
-    }
+    singleButton.disabled = false;
+    singleButton.textContent = "解析作品";
   }
 });
 
@@ -274,6 +315,7 @@ async function resolveQualities(awemeIds) {
   const candidates = payload.results[currentAwemeId] || [];
   if (!candidates.length) {
     singleResult.textContent = "没有解析到可用清晰度候选。";
+    setStatus(parseStatus, "未解析到候选");
     return;
   }
   selectedCandidate = chooseCandidate(candidates);
@@ -284,6 +326,8 @@ async function resolveQualities(awemeIds) {
     ? `${Math.round(selectedCandidate.bitrate / 1000)} kbps`
     : "未知码率";
   singleResult.textContent = `已按设置选择：${selectedCandidate.quality_label || "网页候选"} · ${sizeMb} MB · ${bitrate}`;
+  setStatus(parseStatus, "已解析");
+  downloadSelectedButton.disabled = false;
 }
 
 function chooseCandidate(candidates) {
@@ -299,13 +343,18 @@ function chooseCandidate(candidates) {
 
 async function downloadCandidate(candidate) {
   jobCard.classList.remove("hidden");
+  setHomeRoute("single");
   progressBar.style.width = "0%";
   jobMessage.className = "job-message";
   jobMessage.textContent = "创建下载和素材包任务...";
+  setStatus(downloadStatus, "等待任务");
+  setStatus(packageStatus, "等待生成");
+  setStatus(analysisStatus, "未运行");
   jobResult.textContent = "";
   caseSummary.innerHTML = "";
   resultCard.classList.add("hidden");
   buildCaseButton.hidden = true;
+  downloadSelectedButton.disabled = true;
   try {
     const response = await fetch("/api/jobs/download-and-build-case", {
       method: "POST",
@@ -319,7 +368,11 @@ async function downloadCandidate(candidate) {
         resultCard.classList.remove("hidden");
         buildCaseButton.hidden = true;
         renderWorkflowResult(job.result_json);
+        setStatus(downloadStatus, "完成");
+        setStatus(packageStatus, "已生成");
+        setStatus(analysisStatus, "未运行，可到 case 页启动");
         if (await showAnalysisInline(job.result_json)) {
+          setHomeRoute("cases");
           return;
         }
       }
@@ -327,10 +380,19 @@ async function downloadCandidate(candidate) {
   } catch (error) {
     jobMessage.className = "job-message failed";
     jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "任务创建失败"}`;
+    setStatus(downloadStatus, "失败");
     singleButton.disabled = false;
-    singleButton.textContent = "下载并生成素材包";
+    singleButton.textContent = "解析作品";
+    downloadSelectedButton.disabled = !selectedCandidate;
   }
 }
+
+downloadSelectedButton.addEventListener("click", async () => {
+  if (!selectedCandidate) {
+    return;
+  }
+  await downloadCandidate(selectedCandidate);
+});
 
 buildCaseButton.addEventListener("click", async () => {
   if (!currentLocalVideoId) {
@@ -373,16 +435,19 @@ async function pollJob(jobId, onSuccess) {
       }
       buildCaseButton.disabled = false;
       singleButton.disabled = false;
-      singleButton.textContent = "下载并生成素材包";
+      singleButton.textContent = "解析作品";
+      downloadSelectedButton.disabled = !selectedCandidate;
       return;
     }
     if (job.status === "failed") {
       jobMessage.className = "job-message failed";
       jobMessage.textContent = `${job.error_code || "ERROR"}：${job.message || "任务失败"}`;
       showJson(jobResult, job);
+      setStatus(downloadStatus, "失败");
       buildCaseButton.disabled = false;
       singleButton.disabled = false;
-      singleButton.textContent = "下载并生成素材包";
+      singleButton.textContent = "解析作品";
+      downloadSelectedButton.disabled = !selectedCandidate;
       return;
     }
     window.setTimeout(() => pollJob(jobId, onSuccess), 700);
@@ -391,7 +456,8 @@ async function pollJob(jobId, onSuccess) {
     jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "查询任务失败"}`;
     buildCaseButton.disabled = false;
     singleButton.disabled = false;
-    singleButton.textContent = "下载并生成素材包";
+    singleButton.textContent = "解析作品";
+    downloadSelectedButton.disabled = !selectedCandidate;
   }
 }
 
@@ -414,3 +480,4 @@ downloadHomeAnalysisInputButton.addEventListener("click", () => {
 });
 
 loadLlmStatus();
+setHomeRoute(routeFromHash(), false);

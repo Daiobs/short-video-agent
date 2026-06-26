@@ -22,11 +22,20 @@
 2. 没有 API Key 也能生成 `video.mp4`、`contact_sheet.jpg`、`keyframes/`、`analysis_input.json` 和 `prompt.md`。
 3. 配置大模型后，可以在 case 页面点击“开始 AI 自动拆解 / 重新分析”，生成 `analysis_result.json` 和 `analysis_report.md`。
 
+## 业务模块规划
+
+项目未来会拆成两个一级主功能：
+
+1. 单作品解析：当前可用。围绕一条视频完成链接输入、解析、下载、生成素材包、AI 拆解和 case 查看。
+2. 主页扫描：P2 阶段实现。未来用于输入主页 URL、筛选 Top N 作品，再复用“单作品解析”的素材包与 AI 拆解流程。
+
+当前阶段只解决单作品解析闭环。主页扫描在页面中只保留入口和占位说明，接口 `/api/profile/scan` 与 `/api/jobs/profile-scan` 仍返回 `NOT_IMPLEMENTED`；本阶段不实现真实扫描、不接入爬虫、不绕风控。
+
 核心功能：
 
 - FastAPI 本地 Web 页面。
 - SQLite 本地数据库。
-- 页面主入口：单作品链接 / aweme_id 导入。
+- 页面主入口：单作品解析。
 - 抖音 native mobile feed/share 优先解析，网页 detail 作为兜底；通常不需要 Cookie，当前不使用 KuKuTool。
 - 清晰度偏好在页面设置区统一配置，主流程不展示候选直链。
 - 同清晰度 CDN 候选会做轻量 Range 测速，默认选择响应更快的 host。
