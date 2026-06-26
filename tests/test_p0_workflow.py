@@ -23,7 +23,7 @@ from app.services.asr import run_case_asr
 from app.services.douyin_url_parser import extract_aweme_id
 from app.services.quality_resolver import resolve_quality_candidates
 from app.services.ffmpeg_service import plan_keyframe_timestamps
-from app.services.llm_provider import OpenAICompatibleProvider, OpenAIResponsesProvider, parse_json_text
+from app.services.llm_provider import AnthropicCompatibleProvider, OpenAICompatibleProvider, OpenAIResponsesProvider, parse_json_text
 from app.services.ocr import run_case_ocr
 from app.services.video_importer import engagement_score
 from app.services import auto_analyzer, candidate_probe
@@ -562,6 +562,21 @@ def test_llm_settings_accepts_openai_responses_provider(monkeypatch) -> None:
     assert payload["llm"]["model"] == "gpt-5.5"
 
 
+def test_llm_settings_accepts_anthropic_provider(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_provider", "anthropic_compatible")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_api_base", "https://www.wintoken.dev/v1")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_api_key", "sk-test-anthropic")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_model", "claude-fable-5")
+
+    response = client.get("/api/settings/llm")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm"]["configured"] is True
+    assert payload["llm"]["provider"] == "anthropic_compatible"
+    assert payload["llm"]["model"] == "claude-fable-5"
+
+
 def test_parse_json_text_extracts_object_from_extra_model_text() -> None:
     payload = parse_json_text(
         '下面是拆解结果：\n{"summary":"可用","nested":{"text":"这里有 { 大括号 } 字符"},"items":[1,2]}\n请查收。'
@@ -750,6 +765,49 @@ def test_openai_responses_provider_parses_nested_output(monkeypatch) -> None:
     ).analyze("ping", [])
 
     assert result == {"ok": True}
+
+
+def test_anthropic_compatible_provider_uses_messages_api(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "{\"ok\": true, \"message\": \"pong\"}",
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            assert url == "https://www.wintoken.dev/v1/messages"
+            assert headers["x-api-key"] == "sk-test"
+            assert headers["anthropic-version"] == "2023-06-01"
+            assert json["model"] == "claude-fable-5"
+            assert json["messages"][0]["content"][0]["type"] == "text"
+            assert json["max_tokens"] == 4096
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
+    result = AnthropicCompatibleProvider(
+        api_base="https://www.wintoken.dev/v1",
+        api_key="sk-test",
+        model="claude-fable-5",
+    ).analyze("ping", [])
+
+    assert result == {"ok": True, "message": "pong"}
 
 
 def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> None:

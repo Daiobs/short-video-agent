@@ -177,17 +177,26 @@ LLM_API_KEY=中转站控制台生成的 API Key
 LLM_MODEL=gpt-4o
 ```
 
+如果使用 WinToken 或其他 Anthropic Messages 协议中转站，并且它们提供 `/messages`：
+
+```env
+LLM_PROVIDER=anthropic_compatible
+LLM_API_BASE=https://www.wintoken.dev/v1
+LLM_API_KEY=中转站控制台生成的 API Key
+LLM_MODEL=claude-fable-5
+```
+
 兑换码额度不是 API Key。通常需要先在对应站点把兑换码充值到账户，再在控制台生成可调用的 API Key。
-WinToken 已验证可通过 `https://www.wintoken.dev/v1/chat/completions` 调用；如果某个模型返回 `model_not_found` 或“无可用渠道”，请在 `/v1/models` 或控制台里换成当前分组可用的模型名。
+WinToken 已验证可通过 `https://www.wintoken.dev/v1/chat/completions` 或 `https://www.wintoken.dev/v1/messages` 调用，具体取决于模型所属协议；如果某个模型返回 `model_not_found`、401 或“无可用渠道”，请在控制台确认当前 Key 可调用的协议和模型名。
 
 通用要求：
 
-- `LLM_PROVIDER` 可选 `openai_responses` / `responses` / `openai_compatible`
+- `LLM_PROVIDER` 可选 `openai_responses` / `responses` / `openai_compatible` / `anthropic_compatible`
 - `LLM_API_BASE` 填 API Base，例如 `https://api.openai.com/v1`
 - `LLM_API_KEY` 填你的 API Key
 - `LLM_MODEL` 填支持图片输入的多模态模型
 
-当前支持官方 OpenAI Responses API 和 OpenAI-compatible `/chat/completions`。AI 自动拆解会把 `contact_sheet.jpg` 和部分关键帧作为图片输入发送给模型，因此建议使用支持图片输入的多模态模型。如果模型不支持图片，可能只能分析标题、元数据和 Prompt，视觉拆解会不准确。
+当前支持官方 OpenAI Responses API、OpenAI-compatible `/chat/completions` 和 Anthropic-compatible `/messages`。AI 自动拆解会把 `contact_sheet.jpg` 和部分关键帧作为图片输入发送给模型，因此建议使用支持图片输入的多模态模型。如果模型不支持图片，可能只能分析标题、元数据和 Prompt，视觉拆解会不准确。
 
 API Key 只放在本地 `.env`，不要提交到 Git；`.env` 已在 `.gitignore` 中排除。接口和页面只显示 API Key 是否存在或脱敏值，不会返回完整 Key。
 
