@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import shutil
 import subprocess
 import time
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.database import SessionLocal
 from app.errors import AppError, ErrorCode
@@ -16,13 +18,14 @@ from app.models import CaseArtifact, DouyinVideoItem, VideoQualityCandidate
 from app.providers.base import VideoQualityCandidateDTO
 from app.providers.douyin_web import DouyinWebProvider, normalize_douyin_detail_payload, normalize_douyin_html_payload
 from app.routes import cases as case_routes
+from app.services.analysis_taxonomy import explain_content_category
 from app.services.analysis_worksheet import normalize_worksheet, worksheet_quality_review
 from app.services.auto_analyzer import analyze_case_artifact, existing_auto_analysis
 from app.services.asr import run_case_asr
 from app.services.douyin_url_parser import extract_aweme_id
 from app.services.quality_resolver import resolve_quality_candidates
 from app.services.ffmpeg_service import plan_keyframe_timestamps
-from app.services.llm_provider import OpenAICompatibleProvider, OpenAIResponsesProvider, parse_json_text
+from app.services.llm_provider import AnthropicCompatibleProvider, OpenAICompatibleProvider, OpenAIResponsesProvider, parse_json_text
 from app.services.ocr import run_case_ocr
 from app.services.video_importer import engagement_score
 from app.services import auto_analyzer, candidate_probe
@@ -188,6 +191,48 @@ def test_engagement_score_formula() -> None:
     assert engagement_score(-1, 2, 0) == 10
 
 
+def test_content_category_explain_reports_local_rule_reason() -> None:
+    guess = explain_content_category("黑婚纱申请出战 cos 写真 美拍")
+
+    assert guess["category_id"] == "beauty_cos"
+    assert guess["label"] == "美拍 / COS / 颜值向"
+    assert guess["confidence"] in {"medium", "high"}
+    assert "cos" in [keyword.lower() for keyword in guess["matched_keywords"]]
+    assert guess["source"] == "local_rules"
+
+
+def test_case_build_persists_beauty_content_category_guess(tmp_path: Path) -> None:
+    video_path = make_sample_video(tmp_path / "beauty-category.mp4")
+    with video_path.open("rb") as file_obj:
+        upload_response = client.post(
+            "/api/import/local-video",
+            data={
+                "title": "黑婚纱申请出战 cos 写真",
+                "source_url": "https://example.com/beauty",
+                "author": "coser",
+                "like_count": "0",
+                "comment_count": "0",
+                "share_count": "0",
+                "remark": "美拍 颜值",
+            },
+            files={"video_file": ("beauty.mp4", file_obj, "video/mp4")},
+        )
+    assert upload_response.status_code == 200
+    local_video_id = upload_response.json()["local_video"]["local_video_id"]
+
+    case_response = client.post("/api/cases/build", json={"local_video_id": local_video_id})
+    assert case_response.status_code == 200
+    case_id = case_response.json()["case"]["case_id"]
+    case_payload = client.get(f"/api/cases/{case_id}").json()["case"]
+    analysis_input = case_payload["analysis_input"]
+
+    assert analysis_input["content_category"] == "beauty_cos"
+    assert analysis_input["content_category_label"] == "美拍 / COS / 颜值向"
+    assert analysis_input["content_category_guess"]["category_id"] == "beauty_cos"
+    assert analysis_input["content_category_guess"]["matched_keywords"]
+    assert "第一眼" in " ".join(analysis_input["analysis_lens"])
+
+
 def test_home_uses_versioned_static_assets() -> None:
     response = client.get("/")
     assert response.status_code == 200
@@ -196,15 +241,21 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "单作品解析" in response.text
     assert "主页扫描" in response.text
     assert "主页扫描将在 P2 阶段实现。当前请先使用单作品解析。" in response.text
-    assert "案例库 / 最近案例" in response.text
-    assert "AI 配置状态与测试连接" in response.text
+    assert "API 与解析设置" in response.text
     assert 'id="test-llm-button"' in response.text
-    assert "最近结果 / case 入口" in response.text
+    assert "解析结果" in response.text
+    assert "关键帧总览" in response.text
+    assert "AI 拆解报告" in response.text
+    assert "本地拆解底稿" not in response.text
+    assert 'id="home-category-guess"' not in response.text
+    assert 'id="home-template-preview"' not in response.text
     assert 'data-home-route="single"' in response.text
     assert 'data-home-route="profile"' in response.text
-    assert 'data-home-route="cases"' in response.text
-    assert 'data-home-route="settings"' in response.text
-    assert 'id="download-selected-button"' in response.text
+    assert 'data-home-route="cases"' not in response.text
+    assert 'data-home-route="settings"' not in response.text
+    assert 'id="settings-modal"' in response.text
+    assert 'id="download-selected-button"' not in response.text
+    assert "下载并生成素材包" not in response.text
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:
@@ -225,7 +276,7 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "主页扫描在页面中只保留入口和占位说明" in readme
     assert "`/api/profile/scan` 与 `/api/jobs/profile-scan` 仍返回 `NOT_IMPLEMENTED`" in readme
     assert "默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型" in readme
-    assert "单作品主流程已串联为：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。" in readme
+    assert "单作品主流程已收敛为一个“解析”按钮：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。" in readme
     assert "如果浏览器能访问 API 但页面“测试连接”失败，请检查本机代理" in readme
     assert "自动调用大模型" not in readme
     assert "按设置下载并自动拆解" not in readme
@@ -515,6 +566,21 @@ def test_llm_settings_accepts_openai_responses_provider(monkeypatch) -> None:
     assert payload["llm"]["model"] == "gpt-5.5"
 
 
+def test_llm_settings_accepts_anthropic_provider(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_provider", "anthropic_compatible")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_api_base", "https://www.wintoken.dev/v1")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_api_key", "sk-test-anthropic")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_model", "claude-fable-5")
+
+    response = client.get("/api/settings/llm")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm"]["configured"] is True
+    assert payload["llm"]["provider"] == "anthropic_compatible"
+    assert payload["llm"]["model"] == "claude-fable-5"
+
+
 def test_parse_json_text_extracts_object_from_extra_model_text() -> None:
     payload = parse_json_text(
         '下面是拆解结果：\n{"summary":"可用","nested":{"text":"这里有 { 大括号 } 字符"},"items":[1,2]}\n请查收。'
@@ -583,6 +649,7 @@ def test_openai_compatible_provider_requests_json_object(monkeypatch) -> None:
         def post(self, url, headers=None, json=None):
             assert url == "https://www.wintoken.dev/v1/chat/completions"
             assert json["response_format"] == {"type": "json_object"}
+            assert json["max_tokens"] == 1200
             return FakeResponse()
 
     monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
@@ -632,6 +699,41 @@ def test_openai_compatible_provider_parses_list_content(monkeypatch) -> None:
     assert result == {"ok": True}
 
 
+def test_openai_compatible_provider_sends_optimized_image_payload(monkeypatch, tmp_path: Path) -> None:
+    image_path = tmp_path / "contact_sheet.png"
+    Image.new("RGB", (2400, 1200), color=(220, 120, 160)).save(image_path, compress_level=0)
+    original_size = image_path.stat().st_size
+
+    class FakeResponse:
+        status_code = 200
+        text = "{\"choices\": []}"
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{\"ok\": true}"}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            image_url = json["messages"][1]["content"][1]["image_url"]["url"]
+            assert image_url.startswith("data:image/jpeg;base64,")
+            encoded = image_url.split(",", 1)[1]
+            assert len(base64.b64decode(encoded)) < original_size
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
+    result = OpenAICompatibleProvider(api_key="sk-test", model="gpt-5.4-high").analyze("ping", [image_path])
+
+    assert result == {"ok": True}
+
+
 def test_openai_responses_provider_parses_output_text(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200
@@ -654,6 +756,7 @@ def test_openai_responses_provider_parses_output_text(monkeypatch) -> None:
             assert headers["Authorization"] == "Bearer sk-test"
             assert json["model"] == "gpt-5.5"
             assert json["input"][0]["content"][0]["type"] == "input_text"
+            assert json["max_output_tokens"] == 1200
             return FakeResponse()
 
     monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
@@ -705,6 +808,80 @@ def test_openai_responses_provider_parses_nested_output(monkeypatch) -> None:
     assert result == {"ok": True}
 
 
+def test_anthropic_compatible_provider_uses_messages_api(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "{\"ok\": true, \"message\": \"pong\"}",
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            assert url == "https://www.wintoken.dev/v1/messages"
+            assert headers["x-api-key"] == "sk-test"
+            assert headers["anthropic-version"] == "2023-06-01"
+            assert json["model"] == "claude-fable-5"
+            assert json["messages"][0]["content"][0]["type"] == "text"
+            assert json["max_tokens"] == 1200
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
+    result = AnthropicCompatibleProvider(
+        api_base="https://www.wintoken.dev/v1",
+        api_key="sk-test",
+        model="claude-fable-5",
+    ).analyze("ping", [])
+
+    assert result == {"ok": True, "message": "pong"}
+
+
+def test_anthropic_compatible_provider_accepts_root_base_url(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"content": [{"type": "text", "text": "{\"ok\": true}"}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            assert url == "https://www.wintoken.dev/v1/messages"
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
+    result = AnthropicCompatibleProvider(
+        api_base="https://www.wintoken.dev",
+        api_key="sk-test",
+        model="claude-fable-5",
+    ).analyze("ping", [])
+
+    assert result == {"ok": True}
+
+
 def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> None:
     video_path = make_sample_video(tmp_path / "sample.mp4")
     local_video = upload_video(video_path, source_url="https://www.douyin.com/video/7651938969785849192")
@@ -750,6 +927,8 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
     assert analysis_input["stats"]["engagement_score"] == 44
     assert analysis_input["content_category"] == "generic"
     assert analysis_input["analysis_context"]["label"] == "通用短视频"
+    assert analysis_input["content_category_guess"]["category_id"] == "generic"
+    assert analysis_input["content_category_guess"]["confidence"] == "low"
     assert analysis_input["analysis_lens"]
     assert analysis_input["key_questions"]
     assert analysis_input["content_ratio"]
@@ -773,12 +952,12 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
 
     detail_response = client.get(f"/cases/{case['case_id']}")
     assert detail_response.status_code == 200
-    assert "素材包分析视图" in detail_response.text
+    assert "短视频拆解报告" in detail_response.text
     assert "primary-workflow-summary" in detail_response.text
-    assert "概览" in detail_response.text
-    assert "AI 拆解" in detail_response.text
-    assert "素材包" in detail_response.text
-    assert "人工验收" in detail_response.text
+    assert "完整分析" in detail_response.text
+    assert "高级 / 后台材料" in detail_response.text
+    assert "素材包文件" in detail_response.text
+    assert "人工质量验收" in detail_response.text
     assert "高级富化" in detail_response.text
     assert "校准样本" in detail_response.text
     assert "case-diagnosis-summary" in detail_response.text
@@ -791,6 +970,7 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
     api_payload = api_response.json()
     assert api_payload["ok"] is True
     assert api_payload["case"]["analysis_input"]["case_id"] == case["case_id"]
+    assert api_payload["case"]["analysis_input"]["content_category_guess"]["source"] == "local_rules"
     assert api_payload["case"]["analysis_profiles"]
     assert api_payload["case"]["artifact_urls"]["keyframes"]
     assert api_payload["case"]["artifact_urls"]["analysis_input"].endswith("/analysis-input")
@@ -1369,6 +1549,54 @@ def test_auto_analyzer_falls_back_to_text_when_vision_request_fails(tmp_path: Pa
     assert Path(analysis["analysis_report_path"]).is_file()
 
 
+def test_auto_analyzer_fast_mode_uses_contact_sheet_only(tmp_path: Path) -> None:
+    video_path = make_sample_video(tmp_path / "fast-analysis.mp4")
+    local_video = upload_video(video_path, source_url="https://www.douyin.com/video/7651938969785849999")
+    case_response = client.post("/api/cases/build", json={"local_video_id": local_video["local_video_id"]})
+    assert case_response.status_code == 200
+    case_id = case_response.json()["case"]["case_id"]
+
+    class FastProvider:
+        def __init__(self):
+            self.prompt = ""
+            self.image_names = []
+
+        def analyze(self, prompt, image_paths):
+            self.prompt = prompt
+            self.image_names = [Path(path).name for path in image_paths]
+            assert "快速输出一个简短 JSON" in prompt
+            assert "输出必须满足质量门槛" not in prompt
+            assert self.image_names == ["contact_sheet.jpg"]
+            return {
+                "summary": "快速拆解：第一眼靠人物和画面氛围吸引。",
+                "content_category": "beauty_cos",
+                "content_category_label": "美拍 / COS / 颜值向",
+                "confidence": 0.72,
+                "hook_analysis": {
+                    "first_impression": "人物主体明确",
+                    "why_stop_scrolling": "画面氛围直接",
+                    "first_3_seconds": ["0-1s 人物出现", "1-3s 动作延续"],
+                    "optimization": "强化标题点击理由",
+                },
+                "visual_analysis": {"subject": "人物", "movement_rhythm": "轻动作"},
+                "replication": {"copyable_points": ["保留人物居中和妆造氛围"], "avoid_copying": ["不要照搬原片"]},
+                "publish_package": {"titles": ["今天这套氛围感拉满"]},
+            }
+
+    provider = FastProvider()
+    db = SessionLocal()
+    try:
+        artifact = db.get(CaseArtifact, case_id)
+        analysis = analyze_case_artifact(artifact, provider=provider, mode="fast")
+    finally:
+        db.close()
+
+    assert provider.image_names == ["contact_sheet.jpg"]
+    assert analysis["analysis_result"]["summary"].startswith("快速拆解")
+    assert analysis["analysis_result"]["evidence_summary"]["visual_input_mode"] == "contact_sheet_only"
+    assert Path(analysis["analysis_report_path"]).is_file()
+
+
 
 def test_build_case_job_reports_success(tmp_path: Path) -> None:
     video_path = make_sample_video(tmp_path / "job.mp4")
@@ -1457,7 +1685,8 @@ def test_download_build_analyze_case_job_reports_auto_analysis(monkeypatch, tmp_
             "local_video_id": local_video["local_video_id"],
         }
 
-    def fake_analyze_case_artifact(artifact, progress=None):
+    def fake_analyze_case_artifact(artifact, progress=None, mode="deep"):
+        assert mode == "fast"
         if progress:
             progress(100, "自动拆解完成")
         case_dir = Path(artifact.prompt_path).parent
@@ -1498,6 +1727,7 @@ def test_download_build_analyze_case_job_reports_auto_analysis(monkeypatch, tmp_
     assert job["status"] == "success"
     assert job["result_json"]["analysis_status"] == "success"
     assert job["result_json"]["analysis"]["analysis_result"]["summary"] == "job 自动拆解"
+    assert "job 自动拆解" in job["result_json"]["analysis"]["analysis_report"]
     assert Path(job["result_json"]["analysis"]["analysis_report_path"]).is_file()
 
 
@@ -1517,7 +1747,8 @@ def test_download_build_analyze_case_job_keeps_case_when_ai_fails(monkeypatch, t
             "local_video_id": local_video["local_video_id"],
         }
 
-    def fake_analyze_case_artifact(artifact, progress=None):
+    def fake_analyze_case_artifact(artifact, progress=None, mode="deep"):
+        assert mode == "fast"
         if progress:
             progress(35, "调用大模型自动拆解")
         raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 返回 HTTP 504。")
@@ -5856,24 +6087,20 @@ def test_case_detail_renders_top_diagnosis_panel() -> None:
     template = Path("app/templates/case_detail.html").read_text(encoding="utf-8")
 
     assert 'id="primary-workflow-summary"' in template
-    assert 'id="primary-case-meta"' in template
     assert 'data-primary-action="copy_prompt"' in template
     assert 'data-primary-action="download_input"' in template
     assert 'data-primary-action="run_ai"' in template
-    assert 'data-case-tab="overview"' in template
-    assert 'data-case-tab="ai"' in template
-    assert 'data-case-tab="package"' in template
-    assert 'data-case-tab="review"' in template
-    assert 'data-case-tab="enrichment"' in template
-    assert 'data-case-tab="calibration"' in template
+    assert 'data-case-tab="' not in template
+    assert "完整分析" in template
+    assert "高级 / 后台材料" in template
     assert "高级富化" in template
-    assert template.index('data-case-tab-panel="enrichment"') < template.index('id="asr-placeholder-button"')
-    assert template.index('data-case-tab-panel="enrichment"') < template.index('id="ocr-placeholder-button"')
-    assert template.index('data-case-tab-panel="enrichment"') < template.index('id="comments-import-text"')
+    assert template.index("高级富化") < template.index('id="asr-placeholder-button"')
+    assert template.index("高级富化") < template.index('id="ocr-placeholder-button"')
+    assert template.index("高级富化") < template.index('id="comments-import-text"')
     assert "function setCaseTab(tab)" in script
     assert "caseTabButtons" in script
-    assert ".case-tab-nav" in stylesheet
-    assert ".case-tab-button.active" in stylesheet
+    assert ".developer-workspace" in stylesheet
+    assert ".public-report-grid" in stylesheet
     assert "function renderPrimaryWorkflow(data)" in script
     assert "data.primary_workflow" in script
     assert ".primary-workflow-card" in stylesheet

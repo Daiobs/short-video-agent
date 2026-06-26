@@ -5,7 +5,16 @@ from app.errors import AppError, ErrorCode
 from app.services.llm_provider import BaseLLMProvider, get_llm_provider
 
 
-SUPPORTED_PROVIDERS = {"openai", "openai_compatible", "compatible", "openai_responses", "responses"}
+SUPPORTED_PROVIDERS = {
+    "openai",
+    "openai_compatible",
+    "compatible",
+    "openai_responses",
+    "responses",
+    "anthropic",
+    "anthropic_compatible",
+    "claude",
+}
 DISABLED_PROVIDERS = {"", "disabled", "none", "off"}
 
 

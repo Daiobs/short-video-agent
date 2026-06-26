@@ -37,10 +37,11 @@
 - SQLite 本地数据库。
 - 页面主入口：单作品解析。
 - 抖音 native mobile feed/share 优先解析，网页 detail 作为兜底；通常不需要 Cookie，当前不使用 KuKuTool。
-- 清晰度偏好在页面设置区统一配置，主流程不展示候选直链。
+- 清晰度偏好在右上角设置弹窗中统一配置，主流程不展示候选直链。
 - 同清晰度 CDN 候选会做轻量 Range 测速，默认选择响应更快的 host。
-- 单作品主流程已串联为：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。
-- 首页设置区可查看 AI 是否配置，并可测试连接。
+- 单作品主流程已收敛为一个“解析”按钮：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。
+- 解析结果区会先展示本地拆解底稿：规则判断内容类型、命中原因、优先观察点、关键问题和内容占比，再继续展示 AI 摘要。
+- 右上角设置弹窗可查看 AI 是否配置，并可测试连接。
 - Case 页面可查看素材包、复制 `prompt.md`、下载 `analysis_input.json`、开始 / 重新 AI 拆解、查看 `analysis_report.md`。
 - candidate_id 缓存：前端不接触真实下载 URL。
 - 安全下载：下载前校验 HTTPS、allowlist host、Content-Type、Content-Length 和跳转 host。
@@ -173,20 +174,29 @@ LLM_MODEL=gpt-5.5
 LLM_PROVIDER=openai_compatible
 LLM_API_BASE=https://www.wintoken.dev/v1
 LLM_API_KEY=中转站控制台生成的 API Key
-LLM_MODEL=gpt-4o
+LLM_MODEL=gpt-5.5
+```
+
+如果使用 WinToken 或其他 Anthropic Messages 协议中转站，并且它们提供 `/messages`：
+
+```env
+LLM_PROVIDER=anthropic_compatible
+LLM_API_BASE=https://www.wintoken.dev
+LLM_API_KEY=中转站控制台生成的 API Key
+LLM_MODEL=claude-fable-5
 ```
 
 兑换码额度不是 API Key。通常需要先在对应站点把兑换码充值到账户，再在控制台生成可调用的 API Key。
-WinToken 已验证可通过 `https://www.wintoken.dev/v1/chat/completions` 调用；如果某个模型返回 `model_not_found` 或“无可用渠道”，请在 `/v1/models` 或控制台里换成当前分组可用的模型名。
+WinToken 已验证可通过 `https://www.wintoken.dev/v1/chat/completions` 或 `https://www.wintoken.dev/v1/messages` 调用，具体取决于模型所属协议；如果某个模型返回 `model_not_found`、401 或“无可用渠道”，请在控制台确认当前 Key 可调用的协议和模型名。
 
 通用要求：
 
-- `LLM_PROVIDER` 可选 `openai_responses` / `responses` / `openai_compatible`
+- `LLM_PROVIDER` 可选 `openai_responses` / `responses` / `openai_compatible` / `anthropic_compatible`
 - `LLM_API_BASE` 填 API Base，例如 `https://api.openai.com/v1`
 - `LLM_API_KEY` 填你的 API Key
 - `LLM_MODEL` 填支持图片输入的多模态模型
 
-当前支持官方 OpenAI Responses API 和 OpenAI-compatible `/chat/completions`。AI 自动拆解会把 `contact_sheet.jpg` 和部分关键帧作为图片输入发送给模型，因此建议使用支持图片输入的多模态模型。如果模型不支持图片，可能只能分析标题、元数据和 Prompt，视觉拆解会不准确。
+当前支持官方 OpenAI Responses API、OpenAI-compatible `/chat/completions` 和 Anthropic-compatible `/messages`。AI 自动拆解会把 `contact_sheet.jpg` 和部分关键帧作为图片输入发送给模型，因此建议使用支持图片输入的多模态模型。如果模型不支持图片，可能只能分析标题、元数据和 Prompt，视觉拆解会不准确。
 
 API Key 只放在本地 `.env`，不要提交到 Git；`.env` 已在 `.gitignore` 中排除。接口和页面只显示 API Key 是否存在或脱敏值，不会返回完整 Key。
 
@@ -219,7 +229,7 @@ OCR 会优先识别关键帧全图和底部字幕区。`OCR_MAX_FRAMES` 控制�
 
 未配置时，主流程仍会完成下载和素材包生成，并在首页与 case 页面提示“AI 自动拆解未配置”。配置后可以：
 
-1. 在首页设置区点击“测试连接”，确认模型能返回合法 JSON。
+1. 在右上角设置弹窗点击“测试连接”，确认模型能返回合法 JSON。
 2. 在 case 页面点击“开始 AI 自动拆解 / 重新分析”。
 3. 在 case 页面重新分析，生成 `analysis_result.json` 和 `analysis_report.md`。
 
@@ -341,8 +351,8 @@ http://127.0.0.1:8765/cases/{case_id}
 推荐使用方式：
 
 1. 在 `.env` 配置支持图片输入的大模型 API。
-2. 输入单条作品链接，点击“下载并生成素材包”。
-3. 系统生成素材包；需要自动拆解时，在 case 页面点击“开始 AI 自动拆解”。
+2. 输入单条作品链接，点击“解析”。
+3. 系统自动解析候选、下载视频并生成素材包；需要自动拆解时，在 case 页面点击“开始 AI 自动拆解”。
 4. 打开 case 页面查看 AI 自动拆解结果。页面会把报告拆成钩子、视觉、文案、口播、OCR、评论、复刻方案、发布包等卡片，便于直接复盘和执行。
 5. 如需修正，再填写“我的拆解工作表”，保存成人工修正版 `analysis_brief.md`。
 

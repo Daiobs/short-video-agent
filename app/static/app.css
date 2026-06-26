@@ -161,9 +161,21 @@ button:disabled {
     gap: 18px;
 }
 
-.settings-drawer {
-    position: relative;
-    margin-top: -10px;
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: grid;
+    place-items: start center;
+    padding: 72px 24px 24px;
+    overflow: auto;
+    background: rgba(15, 23, 42, .36);
+}
+
+.settings-modal-card {
+    width: min(960px, 100%);
+    margin: 0;
+    box-shadow: 0 24px 80px rgba(15, 23, 42, .24);
 }
 
 .settings-title-row {
@@ -217,13 +229,13 @@ button:disabled {
 
 .single-workbench-form {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 14px;
     align-items: end;
 }
 
 .single-workbench-form .toolbar-actions {
-    grid-column: 1 / -1;
+    align-items: end;
 }
 
 .task-status-grid {
@@ -252,6 +264,45 @@ button:disabled {
     display: block;
     color: var(--text);
     font-size: 14px;
+}
+
+.template-preview-section {
+    margin-bottom: 18px;
+}
+
+.category-guess-card {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 14px;
+    padding: 14px;
+    border: 1px solid rgba(37, 99, 235, .18);
+    border-radius: 10px;
+    background: #eff6ff;
+}
+
+.template-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.template-preview-card {
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+}
+
+.template-preview-card strong {
+    display: block;
+    margin-bottom: 8px;
+}
+
+.template-preview-card ul {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--muted);
+    line-height: 1.65;
 }
 
 .settings-panel {
@@ -414,6 +465,11 @@ pre {
     color: var(--muted);
 }
 
+.compact-status {
+    margin-top: 0;
+    min-width: 220px;
+}
+
 .case-summary {
     margin-bottom: 14px;
 }
@@ -421,6 +477,104 @@ pre {
 .home-case-view {
     display: grid;
     gap: 18px;
+}
+
+.public-report-card-shell {
+    border-color: rgba(37, 99, 235, .18);
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.public-report-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr);
+    gap: 18px;
+    align-items: start;
+    margin-bottom: 18px;
+}
+
+.public-analysis-report {
+    display: grid;
+    gap: 14px;
+}
+
+.public-analysis-hero {
+    display: grid;
+    gap: 8px;
+    margin: 16px 0;
+    padding: 18px;
+    border: 1px solid rgba(37, 99, 235, .18);
+    border-radius: 10px;
+    background: #eff6ff;
+}
+
+.public-analysis-hero span {
+    color: var(--brand-dark);
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.public-analysis-hero strong {
+    display: block;
+    max-width: 920px;
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1.7;
+}
+
+.public-report-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.public-report-card {
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+}
+
+.public-report-card.featured {
+    border-color: rgba(37, 99, 235, .22);
+    background: #f8fbff;
+}
+
+.public-report-card h4 {
+    margin: 0 0 12px;
+    font-size: 17px;
+}
+
+.public-report-card h5 {
+    margin: 14px 0 8px;
+    color: #374151;
+    font-size: 14px;
+}
+
+.public-report-fields {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 8px 10px;
+    margin: 0;
+}
+
+.public-report-fields dt {
+    color: var(--muted);
+    font-weight: 800;
+}
+
+.public-report-fields dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.6;
+}
+
+.public-report-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding-left: 20px;
+    color: #374151;
+    line-height: 1.65;
 }
 
 .result-subsection {
@@ -595,6 +749,11 @@ pre {
     border: 1px solid var(--line);
     border-radius: 12px;
     background: #fbfcff;
+}
+
+.developer-workspace {
+    margin-top: 24px;
+    background: #fff;
 }
 
 .advanced-section > summary {
@@ -2247,8 +2406,11 @@ footer {
     .link-form,
     .single-workbench-form,
     .task-status-grid,
+    .template-preview-grid,
     .case-view-grid,
     .case-two-column,
+    .public-report-layout,
+    .public-report-grid,
     .primary-workflow-grid,
     .case-diagnosis-hero,
     .case-diagnosis-grid,

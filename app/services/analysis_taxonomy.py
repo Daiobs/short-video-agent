@@ -302,17 +302,43 @@ def list_analysis_profiles() -> list[dict]:
 
 
 def infer_content_category(text: str) -> str:
+    return explain_content_category(text)["category_id"]
+
+
+def explain_content_category(text: str) -> dict:
     normalized = (text or "").lower()
-    best_category = DEFAULT_CATEGORY
+    best_profile = PROFILE_MAP[DEFAULT_CATEGORY]
     best_score = 0
+    best_matches: list[str] = []
     for profile in ANALYSIS_PROFILES:
         if profile.category_id == DEFAULT_CATEGORY:
             continue
-        score = sum(1 for keyword in profile.keywords if keyword.lower() in normalized)
+        matches = [keyword for keyword in profile.keywords if keyword.lower() in normalized]
+        score = len(matches)
         if score > best_score:
-            best_category = profile.category_id
+            best_profile = profile
             best_score = score
-    return best_category
+            best_matches = matches
+
+    if best_score >= 3:
+        confidence = "high"
+        reason = f"标题、作者或备注中命中 {best_score} 个类型关键词，判断较稳定。"
+    elif best_score >= 1:
+        confidence = "medium"
+        reason = f"标题、作者或备注中命中 {best_score} 个类型关键词，作为初步判断。"
+    else:
+        confidence = "low"
+        reason = "未命中明确类型关键词，暂按通用短视频模板处理。"
+
+    return {
+        "category_id": best_profile.category_id,
+        "label": best_profile.label,
+        "description": best_profile.description,
+        "confidence": confidence,
+        "matched_keywords": best_matches,
+        "reason": reason,
+        "source": "local_rules",
+    }
 
 
 def build_analysis_context(category_id: str) -> dict:

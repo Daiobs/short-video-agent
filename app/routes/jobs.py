@@ -70,6 +70,7 @@ def _analysis_result(result: dict) -> dict:
         "analysis_result_path": result.get("analysis_result_path", ""),
         "analysis_report_path": result.get("analysis_report_path", ""),
         "analysis_result": result.get("analysis_result", {}),
+        "analysis_report": result.get("analysis_report", ""),
     }
 
 
@@ -275,7 +276,7 @@ def _run_analyze_case_job(job_id: str, case_id: str) -> None:
                 _set_job(current, "running", value, message)
                 db.commit()
 
-        result = analyze_case_artifact(artifact, progress=progress)
+        result = analyze_case_artifact(artifact, progress=progress, mode="fast")
         job = db.get(Job, job_id)
         if job:
             _set_job(job, "success", 100, "自动拆解完成", result=_analysis_result(result))
@@ -467,7 +468,7 @@ def _run_download_build_analyze_case_job(job_id: str, aweme_id: str, candidate_i
                 db.commit()
 
         try:
-            analysis = _analysis_result(analyze_case_artifact(artifact, progress=analysis_progress))
+            analysis = _analysis_result(analyze_case_artifact(artifact, progress=analysis_progress, mode="fast"))
         except AppError as error:
             analysis_status = "skipped" if error.code == ErrorCode.LLM_NOT_CONFIGURED else "failed"
             analysis_error = error.as_dict()
