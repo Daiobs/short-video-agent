@@ -2,14 +2,10 @@ const page = document.querySelector(".case-page");
 const caseId = page.dataset.caseId;
 const contactSheetImage = document.getElementById("contact-sheet-image");
 const caseMeta = document.getElementById("case-meta");
-const analysisSummary = document.getElementById("analysis-summary");
 const analysisCategorySelect = document.getElementById("analysis-category-select");
 const updateCategoryButton = document.getElementById("update-category-button");
 const categoryDescription = document.getElementById("category-description");
 const categoryStatus = document.getElementById("category-status");
-const analysisLensList = document.getElementById("analysis-lens-list");
-const keyQuestionsList = document.getElementById("key-questions-list");
-const contentRatioList = document.getElementById("content-ratio-list");
 const keyframeStrip = document.getElementById("keyframe-strip");
 const promptText = document.getElementById("prompt-text");
 const analysisBriefText = document.getElementById("analysis-brief-text");
@@ -163,15 +159,6 @@ function renderPrimaryWorkflow(data) {
   }
   runAutoAnalysisButton.textContent = analysisStatus === "completed" ? "重新 AI 自动拆解" : "开始 AI 自动拆解";
   syncPrimaryRunButtons(!configured || !workflow.artifact_ready);
-}
-
-function renderBullets(element, items) {
-  const values = Array.isArray(items) ? items : [];
-  if (!values.length) {
-    element.innerHTML = "<li>暂无。</li>";
-    return;
-  }
-  element.innerHTML = values.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
 }
 
 function normalizeItems(value) {
@@ -629,13 +616,6 @@ function renderCategoryControls(analysisInput) {
   const context = analysisInput.analysis_context || {};
   const profile = findProfile(currentCategory);
   categoryDescription.textContent = context.description || (profile ? profile.description : "");
-}
-
-function renderAnalysisFramework(analysisInput) {
-  const context = analysisInput.analysis_context || {};
-  renderBullets(analysisLensList, context.analysis_lens || analysisInput.analysis_lens || []);
-  renderBullets(keyQuestionsList, context.key_questions || analysisInput.key_questions || []);
-  renderBullets(contentRatioList, context.content_ratio || analysisInput.content_ratio || []);
 }
 
 function buildAnalysisHints(metadata, ffprobe, analysisInput) {
@@ -1667,8 +1647,6 @@ function renderCase(data) {
   renderPrimaryWorkflow(loadedCase);
 
   renderCategoryControls(analysisInput);
-  renderDefinitionList(analysisSummary, analysisHints.rows);
-  renderAnalysisFramework(analysisInput);
   renderCaseDiagnosis(loadedCase);
   renderReadiness(loadedCase);
   renderQualityCalibration(loadedCase);

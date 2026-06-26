@@ -242,9 +242,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "API 与解析设置" in response.text
     assert 'id="test-llm-button"' in response.text
     assert "解析结果" in response.text
-    assert "本地拆解底稿" in response.text
-    assert 'id="home-category-guess"' in response.text
-    assert 'id="home-template-preview"' in response.text
+    assert "关键帧总览" in response.text
+    assert "AI 摘要" in response.text
+    assert "本地拆解底稿" not in response.text
+    assert 'id="home-category-guess"' not in response.text
+    assert 'id="home-template-preview"' not in response.text
     assert 'data-home-route="single"' in response.text
     assert 'data-home-route="profile"' in response.text
     assert 'data-home-route="cases"' not in response.text
