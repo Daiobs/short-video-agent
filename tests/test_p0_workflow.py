@@ -6093,13 +6093,21 @@ def test_case_detail_renders_top_diagnosis_panel() -> None:
     assert 'data-case-tab="' not in template
     assert "完整分析" in template
     assert "高级 / 后台材料" in template
+    assert "素材包与 Prompt" in template
+    assert "人工验收与工作表" in template
+    assert "富化数据：ASR / OCR / 评论 / 指标" in template
+    assert "质量校准：诊断 / rerun_plan / 样本库" in template
     assert "高级富化" in template
     assert template.index("高级富化") < template.index('id="asr-placeholder-button"')
     assert template.index("高级富化") < template.index('id="ocr-placeholder-button"')
     assert template.index("高级富化") < template.index('id="comments-import-text"')
-    assert "function setCaseTab(tab)" in script
-    assert "caseTabButtons" in script
+    assert "function setCaseTab(tab)" not in script
+    assert "caseTabButtons" not in script
+    assert "caseTabPanels" not in script
+    assert ".case-tab-nav" not in stylesheet
+    assert ".case-tab-button" not in stylesheet
     assert ".developer-workspace" in stylesheet
+    assert ".advanced-subsection" in stylesheet
     assert ".public-report-grid" in stylesheet
     assert "function renderPrimaryWorkflow(data)" in script
     assert "data.primary_workflow" in script
