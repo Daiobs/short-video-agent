@@ -9,6 +9,7 @@ __pycache__/
 outputs/uploads/*
 outputs/cases/*
 outputs/downloads/*
+outputs/calibration/*
 !outputs/uploads/.gitkeep
 !outputs/cases/.gitkeep
 !outputs/downloads/.gitkeep

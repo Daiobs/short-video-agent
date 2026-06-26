@@ -2,7 +2,7 @@
 
 本项目是一个本地短视频爆款分析素材包生成器，不是抖音下载器。
 
-当前目标是把已授权的本地视频或单条抖音作品整理成稳定、可复用、可扩展的自动拆解工作流：解析作品元数据、下载视频用于抽帧、生成素材包、调用大模型自动拆解，并输出选题/脚本/分镜所需的结构化结果。
+当前目标是把已授权的本地视频或单条抖音作品整理成稳定、可复用、可扩展的分析输入包：解析作品元数据、下载视频用于抽帧、生成素材包；配置大模型后，可在 case 页面自动拆解并输出选题/脚本/分镜所需的结构化结果。
 
 ## 合规和使用边界
 
@@ -14,18 +14,25 @@
 - 如果后续抖音接口被风控，系统应返回明确错误，并建议改用本地上传或已授权素材。
 - 不要把 Cookie 写进日志、素材包或 Git 仓库。
 
-## 当前功能
+## 当前主路径
+
+第一次使用时，只需要理解三件事：
+
+1. 首页输入单条作品链接或 aweme_id，生成本地素材包。
+2. 没有 API Key 也能生成 `video.mp4`、`contact_sheet.jpg`、`keyframes/`、`analysis_input.json` 和 `prompt.md`。
+3. 配置大模型后，可以在 case 页面点击“开始 AI 自动拆解 / 重新分析”，生成 `analysis_result.json` 和 `analysis_report.md`。
+
+核心功能：
 
 - FastAPI 本地 Web 页面。
 - SQLite 本地数据库。
 - 页面主入口：单作品链接 / aweme_id 导入。
-- 本地视频上传后端接口仍保留，作为兜底能力和测试入口；当前首页暂不展示。
 - 抖音 native mobile feed/share 优先解析，网页 detail 作为兜底；通常不需要 Cookie，当前不使用 KuKuTool。
 - 清晰度偏好在页面设置区统一配置，主流程不展示候选直链。
 - 同清晰度 CDN 候选会做轻量 Range 测速，默认选择响应更快的 host。
-- 单作品主流程已串联为：解析候选 → 下载视频 → 自动生成素材包 → 自动调用大模型拆解。
-- 素材包分析视图：`/cases/{case_id}` 可查看 contact sheet、关键帧时间线、分类分析镜头、AI 自动拆解报告、analysis_input，并可重跑 AI 拆解。
-- 内容类型拆解：支持美拍/COS、鸡汤/情绪价值、教学/教程、剧情/反转、种草/带货、知识/观点、强视觉吸引/尺度边界和通用短视频。
+- 单作品主流程已串联为：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。
+- 首页设置区可查看 AI 是否配置，并可测试连接。
+- Case 页面可查看素材包、复制 `prompt.md`、下载 `analysis_input.json`、开始 / 重新 AI 拆解、查看 `analysis_report.md`。
 - candidate_id 缓存：前端不接触真实下载 URL。
 - 安全下载：下载前校验 HTTPS、allowlist host、Content-Type、Content-Length 和跳转 host。
 - BackgroundTasks + SQLite Job 状态。
@@ -33,7 +40,14 @@
 - ffmpeg 抽取关键帧。
 - contact sheet 关键帧总览图。
 - 固定目录结构的素材包。
-- `analysis_input.json`、按内容类型生成的 `prompt.md` 模板、AI 输出的 `analysis_result.json` 和 `analysis_report.md`。
+
+实验 / 高级能力：
+
+- 内容类型拆解：美拍/COS、鸡汤/情绪价值、教学/教程、剧情/反转、种草/带货、知识/观点、强视觉吸引/尺度边界和通用短视频。
+- 富化层 enrichment：在同一个 case 目录下补齐评论导入、指标快照、结构化索引，并预留 ASR / OCR 标准目录。
+- 可选本地 ASR：启用 `faster-whisper` 后，可为 case 生成 `audio.wav`、`transcript.json`、`transcript.srt` 和 `transcript.txt`。
+- 可选本地 OCR：启用 `rapidocr` 后，可识别关键帧和底部字幕区文字，并生成 `frame_ocr.json`、`subtitle_ocr.json`、`cover_ocr.json`。
+- 人工质量验收和质量校准样本库：用于后续调 prompt、调质量闸门和沉淀回归样本，不是第一步必须理解的主流程。
 
 当前不包含：
 
@@ -69,6 +83,18 @@ cp .env.example .env
 ```
 
 如果本机默认 `python3` 低于 3.10，请改用 PyCharm 或其他 Python 3.10+ 解释器。
+
+ASR 是可选重依赖，默认不安装。需要本地语音识别时再安装：
+
+```bash
+python -m pip install -r requirements-asr.txt
+```
+
+OCR 也是可选依赖，需要画面文字识别时再安装：
+
+```bash
+python -m pip install -r requirements-ocr.txt
+```
 
 ## 运行
 
@@ -107,20 +133,86 @@ LLM_MODEL=
 LLM_TIMEOUT_SECONDS=90
 LLM_TEMPERATURE=0.2
 LLM_MAX_KEYFRAMES=6
+ASR_PROVIDER=disabled
+ASR_MODEL_SIZE=base
+ASR_DEVICE=auto
+ASR_COMPUTE_TYPE=default
+ASR_LANGUAGE=zh
+ASR_BEAM_SIZE=5
+OCR_PROVIDER=disabled
+OCR_LANGUAGE=ch
+OCR_MAX_FRAMES=12
+OCR_SUBTITLE_CROP_RATIO=0.35
 ```
 
 单作品解析优先使用 native mobile feed/share，不需要 Cookie；网页 detail/page 兜底会在配置存在时附带 `DOUYIN_COOKIE`，但不会写入日志、数据库或素材包。如果所有路线都被限制，接口会返回明确错误。
 
 `CANDIDATE_PROBE_*` 只在同一档清晰度存在多个 CDN host 时生效。它会用 Range 请求读取少量字节并排序，不会为了测速降低清晰度。
 
-AI 自动拆解默认关闭。配置大模型时：
+AI 自动拆解默认关闭。默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型；主流程只会生成素材包。官方 OpenAI API 建议使用 Responses API：
 
-- `LLM_PROVIDER=openai_compatible`
-- `LLM_API_BASE` 填兼容 `/chat/completions` 的 API 地址
+```env
+LLM_PROVIDER=openai_responses
+LLM_API_BASE=https://api.openai.com/v1
+LLM_API_KEY=你的 OpenAI API Key
+LLM_MODEL=gpt-5.5
+```
+
+如果使用 WinToken 或其他 OpenAI-compatible 中转站，并且它们只提供 `/chat/completions`：
+
+```env
+LLM_PROVIDER=openai_compatible
+LLM_API_BASE=https://www.wintoken.dev/v1
+LLM_API_KEY=中转站控制台生成的 API Key
+LLM_MODEL=gpt-4o
+```
+
+兑换码额度不是 API Key。通常需要先在对应站点把兑换码充值到账户，再在控制台生成可调用的 API Key。
+WinToken 已验证可通过 `https://www.wintoken.dev/v1/chat/completions` 调用；如果某个模型返回 `model_not_found` 或“无可用渠道”，请在 `/v1/models` 或控制台里换成当前分组可用的模型名。
+
+通用要求：
+
+- `LLM_PROVIDER` 可选 `openai_responses` / `responses` / `openai_compatible`
+- `LLM_API_BASE` 填 API Base，例如 `https://api.openai.com/v1`
 - `LLM_API_KEY` 填你的 API Key
 - `LLM_MODEL` 填支持图片输入的多模态模型
 
-未配置时，主流程仍会完成下载和素材包生成，并在 case 页面提示“大模型 API 未配置”。配置后可以在 case 页面点击“开始 AI 自动拆解”，也可以重新跑单作品主流程自动生成 `analysis_result.json` 和 `analysis_report.md`。
+当前支持官方 OpenAI Responses API 和 OpenAI-compatible `/chat/completions`。AI 自动拆解会把 `contact_sheet.jpg` 和部分关键帧作为图片输入发送给模型，因此建议使用支持图片输入的多模态模型。如果模型不支持图片，可能只能分析标题、元数据和 Prompt，视觉拆解会不准确。
+
+API Key 只放在本地 `.env`，不要提交到 Git；`.env` 已在 `.gitignore` 中排除。接口和页面只显示 API Key 是否存在或脱敏值，不会返回完整 Key。
+
+修改 `.env` 后需要重启本地服务，运行中的 FastAPI 进程才会重新读取配置。
+
+如果浏览器能访问 API 但页面“测试连接”失败，请检查本机代理；当前后端请求可能不会读取系统代理环境变量。
+
+本地 ASR 默认关闭。安装 `requirements-asr.txt` 后，可以启用：
+
+```env
+ASR_PROVIDER=faster_whisper
+ASR_MODEL_SIZE=base
+ASR_DEVICE=auto
+ASR_COMPUTE_TYPE=default
+ASR_LANGUAGE=zh
+```
+
+首次运行 faster-whisper 可能需要下载模型，耗时取决于网络和模型大小。未安装依赖或未启用时，ASR 接口会返回 `ASR_PROVIDER_NOT_CONFIGURED`，但不会影响下载、抽帧、富化归档和 AI 拆解。
+
+本地 OCR 默认关闭。安装 `requirements-ocr.txt` 后，可以启用：
+
+```env
+OCR_PROVIDER=rapidocr
+OCR_LANGUAGE=ch
+OCR_MAX_FRAMES=12
+OCR_SUBTITLE_CROP_RATIO=0.35
+```
+
+OCR 会优先识别关键帧全图和底部字幕区。`OCR_MAX_FRAMES` 控制最多识别多少张关键帧，避免长视频一次处理过慢。未安装依赖或未启用时，OCR 接口会返回 `OCR_PROVIDER_NOT_CONFIGURED`。
+
+未配置时，主流程仍会完成下载和素材包生成，并在首页与 case 页面提示“AI 自动拆解未配置”。配置后可以：
+
+1. 在首页设置区点击“测试连接”，确认模型能返回合法 JSON。
+2. 在 case 页面点击“开始 AI 自动拆解 / 重新分析”。
+3. 在 case 页面重新分析，生成 `analysis_result.json` 和 `analysis_report.md`。
 
 ## 素材包结构
 
@@ -146,13 +238,86 @@ analysis_brief.md
 README.md
 contact_sheet.jpg
 keyframes/
+enrichment/
+  manifest.json
+  asr/
+  ocr/
+  comments/
+  metrics/
+  indexes/
 ```
 
-`analysis_input.json` 是交给大模型的结构化输入；`prompt.md` 是按内容类型生成的爆款案例拆解模板。
+文件作用：
 
-`analysis_result.json` 是大模型自动拆解后的结构化结果；`analysis_report.md` 是对应的可读报告。它们是自动 workflow 的核心产物。
+- `video.mp4`：下载或导入后的本地视频副本，用于抽帧和视觉复盘。
+- `metadata.json`：标题、作者、来源链接、互动数据和导入备注等基础信息。
+- `qualities.json`：视频清晰度候选记录；本地上传模式会标记为 `local`。
+- `ffprobe.json`：ffprobe 读取到的视频参数，包括时长、分辨率、编码、码率和文件大小。
+- `contact_sheet.jpg`：关键帧总览图，用于快速查看视频节奏和画面变化。
+- `keyframes/`：按时间抽取的关键帧图片，适合交给多模态模型做视觉拆解。
+- `analysis_input.json`：交给大模型的结构化输入，聚合元数据、视频参数、关键帧路径、分析重点和 `analysis_enrichment` 富化摘要。
+- `prompt.md`：可复制给 ChatGPT / Claude / Gemini 的人工分析 Prompt。
+- `worksheet.json`：用户手动拆解工作表，保存人工观察和二次判断。
+- `analysis_brief.md`：人工工作表生成的简洁 Markdown 摘要。
+- `analysis_result.json`：大模型返回的结构化拆解结果。
+- `analysis_report.md`：大模型拆解结果渲染后的可读 Markdown 报告。
+- `enrichment/manifest.json`：富化层总清单，记录 ASR、OCR、评论、指标和索引状态。
+- `enrichment/comments/comments_raw.jsonl`：用户导入的原始评论记录，便于追加和追溯。
+- `enrichment/comments/comments_clean.jsonl`：清洗后的评论 JSONL。
+- `enrichment/comments/comment_summary.json`：评论高频词、用户需求和评论区钩子摘要。
+- `enrichment/metrics/snapshots.jsonl`：点赞、评论、分享等指标快照。
+- `enrichment/indexes/case_index.json`：给检索、批处理和后续 Agent 使用的结构化索引。
+- `enrichment/asr/`：语音识别目录。未配置时只写入 provider 状态；启用后可生成以下文件。
+- `enrichment/asr/audio.wav`：从 `video.mp4` 抽出的 16k 单声道音频。
+- `enrichment/asr/transcript.json`：带时间戳的结构化转写结果。
+- `enrichment/asr/transcript.srt`：用于回看和剪辑对齐的字幕文件。
+- `enrichment/asr/transcript.txt`：纯文本转写内容，适合进入后续 LLM 分析。
+- `enrichment/ocr/`：画面文字识别目录。未配置时只写入 provider 状态；启用后可生成以下文件。
+- `enrichment/ocr/frame_ocr.json`：关键帧全图 OCR 结果。
+- `enrichment/ocr/subtitle_ocr.json`：关键帧底部字幕区 OCR 结果。
+- `enrichment/ocr/cover_ocr.json`：封面替代帧 OCR 结果；当前使用第一张关键帧作为封面代理。
+- `enrichment/ocr/crops/`：底部字幕区裁剪图，便于回看 OCR 来源。
 
-`worksheet.json` 是本地人工拆解工作表，用于记录你对前 3 秒钩子、内容结构、类型判断和复刻方案的人工判断。`analysis_brief.md` 是工作表的 Markdown 版本，适合直接复制给 LLM、沉淀到笔记，或在后续 Agent 工作流中作为输入。
+## 进阶用法：单条作品拆解质量闭环
+
+质量校准、ASR、OCR、评论和指标快照属于实验 / 高级能力，不是第一次使用项目必须理解的主路径。当前阶段重点不是批量生产，而是把一条作品拆准、拆透、可复盘。需要做深度校准时，推荐按以下顺序使用：
+
+1. 输入单条作品链接，先生成素材包。
+2. 打开 `/cases/{case_id}`，先看“拆解诊断”，确认这份拆解当前能不能用、阻塞在哪里、下一步最该做什么。诊断卡会把最合适的推荐动作放在第一位；安全动作会直接执行，例如开始 AI 拆解、保存反馈并重跑、保存校准样本，需要人工填写的动作只会定位到对应输入区。
+3. 再看“拆解准备度”，确认基础素材、ASR、OCR、评论、指标和拆解产出是否齐全。
+4. 查看“拆解质量校准”，它会合并 AI 自检、人工验收、准备度缺口和下一步动作。
+5. 在“人工质量验收”中标记这份报告是否可信：
+   - 总结是否符合视频；
+   - 证据是否足够；
+   - 可复刻点是否有用；
+   - 分镜表是否可执行；
+   - 发布包是否可用。
+6. 如果结论是 `需要修正` 或 `不通过`，填写具体原因和下一步处理，例如“评论证据不足”“分镜表凭空扩展”“发布包不可直接执行”。
+7. 点击“保存并重新拆解”或“重新 AI 自动拆解”。系统会把 `quality_acceptance.json` 中的人工反馈带入下一次 prompt，避免重复输出已经被人工指出的问题。
+8. 点击“保存校准样本”，生成 `quality_calibration_record.json`，并更新 `outputs/calibration/quality_calibration_index.json`。
+9. 打开 `/calibration` 查看校准样本库，按校准状态、人工结论、内容类型和关键词筛选样本。
+10. 在校准样本库中查看“常见质量问题”，判断问题是否集中在 ASR/OCR/评论缺失、AI 自检缺口、人工阻塞项或下一步动作。
+11. 使用“复制对比报告”或“下载对比报告”导出当前筛选结果的 Markdown，用于复盘一批样本的系统性问题。
+
+质量相关文件：
+
+- `quality_acceptance.json`：人工质量验收表，记录真实样例下 AI 拆解是否可信。
+- `quality_calibration_record.json`：单条作品校准样本，汇总 AI 自检、人工验收、准备度、顶部诊断快照和下一步修正建议。
+- `rerun_plan.json`：下一轮拆解任务单，汇总当前诊断、人工反馈、缺失证据、重跑约束和推荐动作，可直接交给外部模型或人工复盘。
+- `rerun_plan.md`：`rerun_plan.json` 的人类可读版本，包含执行闸门、阻塞原因、下一步首选动作和证据计划。
+- `analysis_result.json.manual_review_context.rerun_strategy`：带反馈重跑策略，把人工验收阻塞项、禁止重复的问题、必须核对的 ASR/OCR/评论证据和输出要求整理成下一次 AI 拆解的硬约束。
+- `analysis_result.json.enrichment_coverage`：核对 ASR、OCR、评论是否真正进入对应拆解模块，区分“已使用”“可用未使用”“有洞察无证据”“已检测为空”等状态。
+- `/api/cases/{case_id}.case_diagnosis`：页面顶部诊断卡的数据来源，聚合质量分、准备度、富化阻塞、人工阻塞、关键问题和下一步动作。
+- `outputs/calibration/quality_calibration_index.json`：跨 case 的本地校准样本索引。该目录属于运行时产物，已被 `.gitignore` 忽略。
+
+质量状态含义：
+
+- `needs_ai_analysis`：素材包已生成，但还没有 AI 自动拆解报告。
+- `awaiting_review`：AI 已拆解，但还没有人工验收。
+- `needs_rerun`：人工验收指出问题，需要带反馈重跑。
+- `accepted`：人工验收通过，可以作为正样本沉淀。
+
+这套闭环的目标是让每条作品都留下“AI 怎么拆、人工怎么看、下一次怎么修”的证据链。后续调 prompt、调质量闸门或换模型时，可以用校准样本库做回归基准。
 
 生成素材包后，可以打开：
 
@@ -160,15 +325,24 @@ keyframes/
 http://127.0.0.1:8765/cases/{case_id}
 ```
 
-分析视图会展示关键帧总览图、基础信息、内容类型、分析镜头、关键问题、内容占比、AI 自动拆解报告、人工修正工作表、`prompt.md`、`analysis_report.md`、`analysis_brief.md` 和 `analysis_input.json`。
+首页会在任务完成后直接展示关键帧总览、基础信息和 case 入口，不强制跳转。配置大模型并运行 AI 自动拆解后，完整分析视图会展示 `analysis_report.md`；高级区域还包含内容类型、分析镜头、关键问题、内容占比、人工修正工作表、`analysis_brief.md` 等进阶信息。
+
+即使不配置 API，也可以在 case 页面复制 `prompt.md`，下载 `analysis_input.json`，再手动把它们交给 ChatGPT / Claude / Gemini 分析。`analysis_input.json` 会在读取时刷新 `analysis_enrichment`，把 ASR 转写、OCR 文字、评论摘要和指标快照合并为紧凑输入。
 
 推荐使用方式：
 
 1. 在 `.env` 配置支持图片输入的大模型 API。
-2. 输入单条作品链接，点击“按设置下载并自动拆解”。
-3. 系统自动生成素材包，并调用大模型生成 `analysis_result.json` 和 `analysis_report.md`。
-4. 打开 case 页面查看 AI 自动拆解结果。
+2. 输入单条作品链接，点击“下载并生成素材包”。
+3. 系统生成素材包；需要自动拆解时，在 case 页面点击“开始 AI 自动拆解”。
+4. 打开 case 页面查看 AI 自动拆解结果。页面会把报告拆成钩子、视觉、文案、口播、OCR、评论、复刻方案、发布包等卡片，便于直接复盘和执行。
 5. 如需修正，再填写“我的拆解工作表”，保存成人工修正版 `analysis_brief.md`。
+
+如果已运行 ASR / OCR / 评论导入，AI 自动拆解会优先结合：
+
+- `asr.full_text` 和带时间戳 segments：判断口播钩子、金句、脚本结构。
+- `ocr.frame_text` / `ocr.subtitle_text` / `ocr.cover_text`：判断封面承诺、画面字幕和文字节奏。
+- `comments.top_needs` / `comment_hooks` / `top_comments`：判断用户真实反馈、互动钩子和可复刻评论区设计。
+- `metrics.latest_snapshot`：记录当前互动指标来源，避免把缺失数据误判成真实表现。
 
 如果自动推断的内容类型不合适，可以在分析页手动切换，例如：
 
@@ -187,6 +361,7 @@ http://127.0.0.1:8765/cases/{case_id}
 当前可用接口：
 
 - `GET /`
+- `GET /calibration`
 - `POST /api/import/local-video`
 - `POST /api/jobs/build-case`
 - `GET /api/jobs/{job_id}`
@@ -195,7 +370,20 @@ http://127.0.0.1:8765/cases/{case_id}
 - `GET /api/cases/{case_id}`
 - `POST /api/cases/{case_id}/analysis-category`
 - `POST /api/cases/{case_id}/worksheet`
+- `POST /api/cases/{case_id}/quality-acceptance`
+- `POST /api/cases/{case_id}/quality-calibration/record`
+- `GET /api/cases/quality-calibration/records`
+- `GET /api/cases/quality-calibration/report`
 - `GET /api/cases/{case_id}/contact-sheet`
+- `GET /api/cases/{case_id}/analysis-input`
+- `GET /api/cases/{case_id}/enrichment`
+- `POST /api/cases/{case_id}/archive/enrich`
+- `POST /api/cases/{case_id}/comments/import`
+- `POST /api/cases/{case_id}/metrics/snapshot`
+- `POST /api/cases/{case_id}/asr`
+- `POST /api/cases/{case_id}/ocr`
+- `GET /api/settings/llm`
+- `POST /api/settings/llm/test`
 - `POST /api/videos/import-single`
 - `POST /api/videos/qualities`
 - `POST /api/downloads`
@@ -204,6 +392,9 @@ http://127.0.0.1:8765/cases/{case_id}
 - `POST /api/jobs/download-and-build-case`
 - `POST /api/jobs/download-build-analyze-case`
 - `POST /api/jobs/analyze-case`
+- `POST /api/jobs/enrich-case`
+- `POST /api/jobs/asr-case`
+- `POST /api/jobs/ocr-case`
 
 占位接口：
 
@@ -238,6 +429,12 @@ http://127.0.0.1:8765/cases/{case_id}
 - `LLM_REQUEST_FAILED`
 - `LLM_RESPONSE_INVALID`
 - `AUTO_ANALYSIS_FAILED`
+- `ENRICHMENT_FAILED`
+- `COMMENTS_IMPORT_FAILED`
+- `ASR_PROVIDER_NOT_CONFIGURED`
+- `ASR_FAILED`
+- `OCR_PROVIDER_NOT_CONFIGURED`
+- `OCR_FAILED`
 
 下载、主页扫描、Provider 相关错误码已集中定义在 `app/errors.py`，后续接入真实功能时复用。
 

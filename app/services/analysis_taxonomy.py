@@ -339,6 +339,8 @@ def build_prompt(metadata: dict, ffprobe: dict, analysis_context: dict) -> str:
 
 请基于素材包中的 `contact_sheet.jpg`、关键帧、基础元数据和 `analysis_input.json`，分析该短视频为什么值得复盘，并输出适合我账号复刻的方案。
 
+如果 `analysis_input.json` 中存在 `analysis_enrichment`，请优先结合其中的 ASR 转写、OCR 画面文字、评论摘要和指标快照，不要只看关键帧。
+
 注意：如果点赞、评论、分享为空，请明确说明“无法判断真实爆款强度，只能分析内容结构”。
 
 ## 1. 基础信息
@@ -382,11 +384,20 @@ def build_prompt(metadata: dict, ffprobe: dict, analysis_context: dict) -> str:
 
 {prompt_focus}
 
-## 7. 通用复盘清单
+## 7. 富化数据拆解
+
+如果素材包已生成 `analysis_enrichment`，请补充分析：
+
+* ASR 语音转写：开头第一句话、口播钩子、金句密度、脚本结构；
+* OCR 画面文字：封面承诺、字幕节奏、文字和画面的关系；
+* 评论摘要：用户需求、高频词、评论区互动钩子；
+* 指标快照：当前互动数据是否足以判断真实爆款强度。
+
+## 8. 通用复盘清单
 
 {focus}
 
-## 8. 可借鉴点
+## 9. 可借鉴点
 
 请输出：
 
@@ -395,7 +406,7 @@ def build_prompt(metadata: dict, ffprobe: dict, analysis_context: dict) -> str:
 * 哪些点不建议照搬；
 * 哪些点可以低成本替换。
 
-## 9. 可复刻脚本
+## 10. 可复刻脚本
 
 请给出一个适合我账号的改编版本，包括：
 
@@ -408,14 +419,14 @@ def build_prompt(metadata: dict, ffprobe: dict, analysis_context: dict) -> str:
 * 标签；
 * 评论区引导。
 
-## 10. 分镜表
+## 11. 分镜表
 
 请输出表格：
 
 | 时间 | 画面 | 动作 | 字幕 | 音乐/节奏 | 目的 |
 | -- | -- | -- | -- | ----- | -- |
 
-## 11. 发布建议
+## 12. 发布建议
 
 请给出：
 

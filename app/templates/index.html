@@ -8,59 +8,100 @@
 </head>
 <body>
 <header class="site-header">
-    <div>
-        <div class="eyebrow">Local Workflow</div>
-        <h1>短视频爆款分析素材包生成器</h1>
-        <p>输入抖音作品链接，下载最高可用网页画质，再生成可复盘、可交给 LLM 分析的素材包。</p>
+    <div class="header-shell">
+        <div>
+            <div class="eyebrow">Local Workflow</div>
+            <h1>短视频爆款分析素材包生成器</h1>
+            <p>输入抖音作品链接，下载最高可用网页画质，再生成可复盘、可交给 LLM 分析的素材包。</p>
+        </div>
+        <button type="button" id="settings-toggle" class="icon-button" aria-label="打开设置" title="设置">⚙</button>
     </div>
 </header>
 
 <main class="page">
-    <section class="settings-card">
+    <section class="settings-card" id="settings-drawer">
         <div>
-            <h2>设置</h2>
-            <p class="muted">清晰度在这里统一控制，主页面不展示真实下载地址。</p>
+            <div class="settings-title-row">
+                <div>
+                    <div class="entry-label">AI Settings</div>
+                    <h2>AI 配置状态与测试连接</h2>
+                    <p class="muted">没有 API Key 也能生成素材包；配置大模型后，case 页面可启动 AI 自动拆解。API Key 只从本地 .env 读取，页面不提供保存入口。</p>
+                </div>
+                <button type="button" id="settings-close" class="ghost-button">收起</button>
+            </div>
         </div>
-        <label>下载清晰度偏好
-            <select id="quality-preference">
-                <option value="best">最高可用</option>
-                <option value="1080">1080p 优先</option>
-                <option value="720">720p 优先</option>
-            </select>
-        </label>
+        <div class="settings-grid">
+            <div class="settings-panel">
+                <label>下载清晰度偏好
+                    <select id="quality-preference">
+                        <option value="best">最高可用</option>
+                        <option value="1080">1080p 优先</option>
+                        <option value="720">720p 优先</option>
+                    </select>
+                </label>
+                <p class="muted compact-copy">前端只提交 candidate_id，真实下载 URL 只保存在服务端。</p>
+            </div>
+            <div class="settings-panel">
+                <div class="settings-panel-header">
+                    <h3>AI 自动拆解</h3>
+                    <span id="llm-status-badge" class="status-badge">读取中</span>
+                </div>
+                <div id="llm-status-list" class="compact-dl"></div>
+                <div id="llm-config-hint" class="notice hidden">
+                    <div>未配置时素材包仍会正常生成。需要自动拆解时，在 <code>.env</code> 中配置：</div>
+                    <pre class="env-snippet">LLM_PROVIDER=openai_compatible
+LLM_API_BASE=https://api.openai.com/v1
+LLM_API_KEY=你的key
+LLM_MODEL=支持图片输入的模型</pre>
+                </div>
+                <div class="settings-actions">
+                    <button type="button" id="test-llm-button">测试连接</button>
+                    <span id="llm-test-result" class="muted"></span>
+                </div>
+            </div>
+        </div>
     </section>
 
-    <section class="tabs" aria-label="输入入口">
-        <button class="tab active" data-tab="single">单作品导入</button>
-        <button class="tab" data-tab="profile">主页扫描</button>
-    </section>
-
-    <section class="panel hidden" id="tab-profile">
-        <h2>抖音主页 URL 扫描</h2>
-        <p class="muted">P2 接入。当前版本不请求真实抖音主页，避免把 P0 变成不稳定下载器。</p>
-        <form class="disabled-form">
-            <input disabled placeholder="https://www.douyin.com/user/...">
-            <input disabled value="20">
-            <button disabled>扫描主页</button>
-        </form>
-        <div class="notice">如果后续主页接口被风控，页面会返回明确错误，并建议使用单作品导入或本地上传。</div>
-    </section>
-
-    <section class="panel" id="tab-single">
-        <h2>单作品链接 / aweme_id 导入</h2>
-        <p class="muted">通过抖音网页公开 detail 解析最高可用转码候选，当前不使用 KuKuTool。</p>
-        <form id="single-form" class="disabled-form">
-            <input name="value" placeholder="作品链接、分享文本或 aweme_id" required>
-            <button type="submit" id="single-button">导入作品</button>
-        </form>
-        <div id="single-result" class="inline-result hidden"></div>
-        <button type="button" id="download-selected-button" hidden>按设置下载并自动拆解</button>
+    <section class="entry-grid" aria-label="素材入口">
+        <section class="panel primary-entry" id="tab-single">
+            <div class="entry-label">Single Work</div>
+            <h2>输入作品并生成素材包</h2>
+            <p class="muted">粘贴抖音作品链接、分享文本或 aweme_id，系统会直接下载、抽帧并生成素材包；AI 自动拆解可在完整分析页单独启动。</p>
+            <form id="single-form" class="link-form">
+                <input name="value" placeholder="作品链接、分享文本或 aweme_id" required>
+                <button type="submit" id="single-button">下载并生成素材包</button>
+            </form>
+            <div id="single-result" class="inline-result hidden"></div>
+        </section>
     </section>
 
     <section class="result-card hidden" id="result-card">
-        <h2>素材包结果</h2>
+        <div class="entry-label">Latest Case</div>
+        <h2>最近结果 / case 入口</h2>
         <div id="case-summary" class="case-summary"></div>
-        <pre id="upload-result"></pre>
+        <div id="home-case-view" class="home-case-view hidden">
+            <div class="case-view-grid">
+                <div>
+                    <h3>关键帧总览</h3>
+                    <img id="home-contact-sheet" class="contact-sheet-image" alt="关键帧总览图">
+                </div>
+                <div>
+                    <h3>基础信息</h3>
+                    <div id="home-case-meta" class="case-meta"></div>
+                </div>
+            </div>
+            <div class="result-subsection">
+                <h3>AI 自动拆解</h3>
+                <div id="home-ai-status" class="inline-result"></div>
+                <pre id="home-ai-report"></pre>
+            </div>
+            <div class="toolbar-actions">
+                <a id="open-full-case-link" class="button-link" href="#" target="_blank" rel="noreferrer">打开完整分析页</a>
+                <button type="button" id="copy-home-prompt-button">复制 Prompt</button>
+                <button type="button" id="download-home-analysis-input-button">下载 analysis_input.json</button>
+            </div>
+        </div>
+        <pre id="upload-result" class="hidden"></pre>
         <button id="build-case-button" hidden>生成素材包</button>
     </section>
 

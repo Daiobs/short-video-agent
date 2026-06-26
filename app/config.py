@@ -36,6 +36,7 @@ class Settings:
     uploads_dir: Path = output_dir / "uploads"
     cases_dir: Path = output_dir / "cases"
     downloads_dir: Path = output_dir / "downloads"
+    calibration_dir: Path = output_dir / "calibration"
     database_url: str = os.getenv(
         "DATABASE_URL",
         f"sqlite:///{(PROJECT_ROOT / 'short_video_agent.db').as_posix()}",
@@ -64,6 +65,16 @@ class Settings:
     llm_timeout_seconds: float = _float_env("LLM_TIMEOUT_SECONDS", 90.0)
     llm_temperature: float = _float_env("LLM_TEMPERATURE", 0.2)
     llm_max_keyframes: int = _int_env("LLM_MAX_KEYFRAMES", 6)
+    asr_provider: str = os.getenv("ASR_PROVIDER", "disabled").strip().lower()
+    asr_model_size: str = os.getenv("ASR_MODEL_SIZE", "base").strip()
+    asr_device: str = os.getenv("ASR_DEVICE", "auto").strip()
+    asr_compute_type: str = os.getenv("ASR_COMPUTE_TYPE", "default").strip()
+    asr_language: str = os.getenv("ASR_LANGUAGE", "zh").strip()
+    asr_beam_size: int = _int_env("ASR_BEAM_SIZE", 5)
+    ocr_provider: str = os.getenv("OCR_PROVIDER", "disabled").strip().lower()
+    ocr_language: str = os.getenv("OCR_LANGUAGE", "ch").strip()
+    ocr_max_frames: int = _int_env("OCR_MAX_FRAMES", 12)
+    ocr_subtitle_crop_ratio: float = _float_env("OCR_SUBTITLE_CROP_RATIO", 0.35)
 
     def ensure_directories(self) -> None:
         for directory in (
@@ -71,6 +82,7 @@ class Settings:
             self.uploads_dir,
             self.cases_dir,
             self.downloads_dir,
+            self.calibration_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
