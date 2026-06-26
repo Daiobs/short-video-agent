@@ -385,6 +385,7 @@ def analyze_case_artifact(
     artifact: CaseArtifact,
     provider: BaseLLMProvider | None = None,
     progress: ProgressCallback | None = None,
+    mode: str = "deep",
 ) -> dict:
     def report(value: int, message: str) -> None:
         if progress:
@@ -406,41 +407,54 @@ def analyze_case_artifact(
 
         report(35, "调用大模型自动拆解")
         llm = provider or get_llm_provider()
-        prompt = _build_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review)
-        visual_input_mode = _visual_input_mode(artifact, image_paths)
-        try:
-            result = llm.analyze(prompt, image_paths)
-        except AppError as error:
-            if not _should_degrade_llm_error(error) or len(image_paths) <= 1:
-                if _should_degrade_llm_error(error) and image_paths:
-                    report(55, "视觉输入调用失败，降级为文本拆解")
-                    visual_input_mode = "text_only"
-                    result = llm.analyze(
-                        _compact_text_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review),
-                        [],
-                    )
-                else:
-                    raise
-            else:
-                report(45, "首次调用失败，使用轻量视觉输入重试")
-                light_image_paths = image_paths[:1]
-                visual_input_mode = _visual_input_mode(artifact, light_image_paths)
-                light_prompt = (
-                    f"{prompt}\n\n"
-                    "注意：首次多图请求失败，本次只使用 contact_sheet.jpg 进行轻量重试。"
-                    "请基于关键帧总览图和结构化信息完成拆解。"
-                )
-                try:
-                    result = llm.analyze(light_prompt, light_image_paths)
-                except AppError as retry_error:
-                    if not _should_degrade_llm_error(retry_error):
+        if mode == "fast":
+            result, visual_input_mode = _run_fast_analysis(
+                llm,
+                artifact,
+                metadata,
+                ffprobe,
+                analysis_input,
+                analysis_context,
+                manual_review,
+                image_paths,
+                report,
+            )
+        else:
+            prompt = _build_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review)
+            visual_input_mode = _visual_input_mode(artifact, image_paths)
+            try:
+                result = llm.analyze(prompt, image_paths)
+            except AppError as error:
+                if not _should_degrade_llm_error(error) or len(image_paths) <= 1:
+                    if _should_degrade_llm_error(error) and image_paths:
+                        report(55, "视觉输入调用失败，降级为文本拆解")
+                        visual_input_mode = "text_only"
+                        result = llm.analyze(
+                            _compact_text_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review),
+                            [],
+                        )
+                    else:
                         raise
-                    report(55, "轻量视觉输入仍失败，降级为文本拆解")
-                    visual_input_mode = "text_only"
-                    result = llm.analyze(
-                        _compact_text_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review),
-                        [],
+                else:
+                    report(45, "首次调用失败，使用轻量视觉输入重试")
+                    light_image_paths = image_paths[:1]
+                    visual_input_mode = _visual_input_mode(artifact, light_image_paths)
+                    light_prompt = (
+                        f"{prompt}\n\n"
+                        "注意：首次多图请求失败，本次只使用 contact_sheet.jpg 进行轻量重试。"
+                        "请基于关键帧总览图和结构化信息完成拆解。"
                     )
+                    try:
+                        result = llm.analyze(light_prompt, light_image_paths)
+                    except AppError as retry_error:
+                        if not _should_degrade_llm_error(retry_error):
+                            raise
+                        report(55, "轻量视觉输入仍失败，降级为文本拆解")
+                        visual_input_mode = "text_only"
+                        result = llm.analyze(
+                            _compact_text_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review),
+                            [],
+                        )
 
         report(75, "整理自动拆解结果")
         normalized = _normalize_result(
@@ -1042,6 +1056,155 @@ def _conservative_visual_input_mode(existing_mode: str, current_mode: str) -> st
     if current_mode not in rank:
         return existing_mode
     return existing_mode if rank[existing_mode] <= rank[current_mode] else current_mode
+
+
+def _run_fast_analysis(
+    llm: BaseLLMProvider,
+    artifact: CaseArtifact,
+    metadata: dict,
+    ffprobe: dict,
+    analysis_input: dict,
+    analysis_context: dict,
+    manual_review: dict | None,
+    image_paths: list[Path],
+    report: Callable[[int, str], None],
+) -> tuple[dict, str]:
+    contact_sheet = Path(artifact.contact_sheet_path)
+    light_image_paths = [contact_sheet] if contact_sheet.is_file() else image_paths[:1]
+    if light_image_paths:
+        report(35, "调用大模型快速视觉拆解")
+        visual_input_mode = _visual_input_mode(artifact, light_image_paths)
+        try:
+            return (
+                llm.analyze(
+                    _build_fast_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review),
+                    light_image_paths,
+                ),
+                visual_input_mode,
+            )
+        except AppError as error:
+            if not _should_degrade_llm_error(error):
+                raise
+            report(55, "快速视觉失败，改用文本拆解")
+
+    report(60, "调用大模型快速文本拆解")
+    return (
+        llm.analyze(_fast_text_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review), []),
+        "text_only",
+    )
+
+
+def _build_fast_prompt(
+    metadata: dict,
+    ffprobe: dict,
+    analysis_input: dict,
+    analysis_context: dict,
+    manual_review: dict | None = None,
+) -> str:
+    return f"""你是短视频内容策略分析师。请看 contact_sheet.jpg，并快速输出一个简短 JSON。
+
+目标：给用户一个能直接看的短视频拆解摘要，不要生成长报告。总字数控制在 500 字以内。
+
+要求：
+1. 只输出合法 JSON，不要 Markdown。
+2. 每个数组最多 3 条，每条不超过 25 个字。
+3. 重点判断：第一眼吸引、画面/人物气质、可复刻点、风险边界。
+4. 看不到的内容不要编造。
+
+输出 JSON 结构：
+{{
+  "summary": "",
+  "content_category": "{analysis_input.get('content_category') or analysis_context.get('category_id') or 'generic'}",
+  "content_category_label": "{analysis_input.get('content_category_label') or analysis_context.get('label') or '通用短视频'}",
+  "confidence": 0.0,
+  "engagement_data_quality": "ok|missing|partial",
+  "hook_analysis": {{"first_impression": "", "why_stop_scrolling": "", "first_3_seconds": [], "optimization": ""}},
+  "visual_analysis": {{"subject": "", "composition": "", "movement_rhythm": "", "style_keywords": []}},
+  "replication": {{"copyable_points": [], "avoid_copying": [], "remake_angle": "", "opening_3s": ""}},
+  "publish_package": {{"titles": [], "caption": "", "hashtags": []}},
+  "evidence_summary": {{"visual_input_mode": "contact_sheet_only", "visual_evidence": [], "inferred_points": [], "evidence_gaps": []}},
+  "risks": [],
+  "next_actions": []
+}}
+
+输入信息：
+{json.dumps(_fast_prompt_payload(metadata, ffprobe, analysis_input, analysis_context, manual_review), ensure_ascii=False, indent=2)}
+"""
+
+
+def _fast_text_prompt(
+    metadata: dict,
+    ffprobe: dict,
+    analysis_input: dict,
+    analysis_context: dict,
+    manual_review: dict | None = None,
+) -> str:
+    return f"""请做短视频快速文本拆解。本次视觉图片调用失败，只能基于标题、互动数据、视频参数和内容类型输出保守结论。
+
+只输出合法 JSON，不要 Markdown。总字数控制在 400 字以内。数组最多 3 条。
+
+输出字段：
+{{
+  "summary": "",
+  "content_category": "{analysis_input.get('content_category') or analysis_context.get('category_id') or 'generic'}",
+  "content_category_label": "{analysis_input.get('content_category_label') or analysis_context.get('label') or '通用短视频'}",
+  "confidence": 0.35,
+  "engagement_data_quality": "ok|missing|partial",
+  "hook_analysis": {{"first_impression": "文本降级推断，需要复核画面", "why_stop_scrolling": "", "first_3_seconds": [], "optimization": ""}},
+  "visual_analysis": {{"subject": "文本降级，需复核画面", "composition": "", "movement_rhythm": "", "style_keywords": []}},
+  "replication": {{"copyable_points": [], "avoid_copying": ["不要照搬原视频画面和文案"], "remake_angle": "", "opening_3s": ""}},
+  "publish_package": {{"titles": [], "caption": "", "hashtags": []}},
+  "evidence_summary": {{"visual_input_mode": "text_only", "visual_evidence": [], "inferred_points": ["视觉相关结论需要人工复核"], "evidence_gaps": ["缺少可用视觉输入"]}},
+  "risks": ["文本降级拆解不能替代画面判断"],
+  "next_actions": []
+}}
+
+输入信息：
+{json.dumps(_fast_prompt_payload(metadata, ffprobe, analysis_input, analysis_context, manual_review), ensure_ascii=False, indent=2)}
+"""
+
+
+def _fast_prompt_payload(
+    metadata: dict,
+    ffprobe: dict,
+    analysis_input: dict,
+    analysis_context: dict,
+    manual_review: dict | None = None,
+) -> dict:
+    stats = analysis_input.get("stats") or {}
+    video = analysis_input.get("video") or {}
+    enrichment = analysis_input.get("analysis_enrichment") or {}
+    return {
+        "title": metadata.get("title") or analysis_input.get("title") or "",
+        "author": metadata.get("author") or analysis_input.get("author") or "",
+        "source_url": metadata.get("source_url") or analysis_input.get("source_url") or "",
+        "stats": {
+            "like_count": stats.get("like_count", 0),
+            "comment_count": stats.get("comment_count", 0),
+            "share_count": stats.get("share_count", 0),
+            "engagement_score": stats.get("engagement_score", 0),
+        },
+        "video": {
+            "duration": video.get("duration") or ffprobe.get("duration") or 0,
+            "width": video.get("width") or ffprobe.get("width") or 0,
+            "height": video.get("height") or ffprobe.get("height") or 0,
+            "file_size": video.get("file_size") or ffprobe.get("file_size") or 0,
+        },
+        "content_category": analysis_input.get("content_category") or analysis_context.get("category_id") or "generic",
+        "content_category_label": (
+            analysis_input.get("content_category_label") or analysis_context.get("label") or "通用短视频"
+        ),
+        "category_description": analysis_context.get("description", ""),
+        "asr_text": _truncate_text(((enrichment.get("asr") or {}).get("full_text") or ""), 600),
+        "ocr_text": _truncate_text(json.dumps(enrichment.get("ocr") or {}, ensure_ascii=False), 600),
+        "comment_summary": _truncate_text(json.dumps(enrichment.get("comments") or {}, ensure_ascii=False), 600),
+        "manual_notes": _truncate_text(json.dumps(manual_review or {}, ensure_ascii=False), 600),
+    }
+
+
+def _truncate_text(value: str, limit: int) -> str:
+    text = str(value or "").strip()
+    return text if len(text) <= limit else f"{text[:limit]}..."
 
 
 def _build_prompt(

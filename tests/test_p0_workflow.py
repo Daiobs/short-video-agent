@@ -1510,6 +1510,54 @@ def test_auto_analyzer_falls_back_to_text_when_vision_request_fails(tmp_path: Pa
     assert Path(analysis["analysis_report_path"]).is_file()
 
 
+def test_auto_analyzer_fast_mode_uses_contact_sheet_only(tmp_path: Path) -> None:
+    video_path = make_sample_video(tmp_path / "fast-analysis.mp4")
+    local_video = upload_video(video_path, source_url="https://www.douyin.com/video/7651938969785849999")
+    case_response = client.post("/api/cases/build", json={"local_video_id": local_video["local_video_id"]})
+    assert case_response.status_code == 200
+    case_id = case_response.json()["case"]["case_id"]
+
+    class FastProvider:
+        def __init__(self):
+            self.prompt = ""
+            self.image_names = []
+
+        def analyze(self, prompt, image_paths):
+            self.prompt = prompt
+            self.image_names = [Path(path).name for path in image_paths]
+            assert "快速输出一个简短 JSON" in prompt
+            assert "输出必须满足质量门槛" not in prompt
+            assert self.image_names == ["contact_sheet.jpg"]
+            return {
+                "summary": "快速拆解：第一眼靠人物和画面氛围吸引。",
+                "content_category": "beauty_cos",
+                "content_category_label": "美拍 / COS / 颜值向",
+                "confidence": 0.72,
+                "hook_analysis": {
+                    "first_impression": "人物主体明确",
+                    "why_stop_scrolling": "画面氛围直接",
+                    "first_3_seconds": ["0-1s 人物出现", "1-3s 动作延续"],
+                    "optimization": "强化标题点击理由",
+                },
+                "visual_analysis": {"subject": "人物", "movement_rhythm": "轻动作"},
+                "replication": {"copyable_points": ["保留人物居中和妆造氛围"], "avoid_copying": ["不要照搬原片"]},
+                "publish_package": {"titles": ["今天这套氛围感拉满"]},
+            }
+
+    provider = FastProvider()
+    db = SessionLocal()
+    try:
+        artifact = db.get(CaseArtifact, case_id)
+        analysis = analyze_case_artifact(artifact, provider=provider, mode="fast")
+    finally:
+        db.close()
+
+    assert provider.image_names == ["contact_sheet.jpg"]
+    assert analysis["analysis_result"]["summary"].startswith("快速拆解")
+    assert analysis["analysis_result"]["evidence_summary"]["visual_input_mode"] == "contact_sheet_only"
+    assert Path(analysis["analysis_report_path"]).is_file()
+
+
 
 def test_build_case_job_reports_success(tmp_path: Path) -> None:
     video_path = make_sample_video(tmp_path / "job.mp4")
@@ -1598,7 +1646,8 @@ def test_download_build_analyze_case_job_reports_auto_analysis(monkeypatch, tmp_
             "local_video_id": local_video["local_video_id"],
         }
 
-    def fake_analyze_case_artifact(artifact, progress=None):
+    def fake_analyze_case_artifact(artifact, progress=None, mode="deep"):
+        assert mode == "fast"
         if progress:
             progress(100, "自动拆解完成")
         case_dir = Path(artifact.prompt_path).parent
@@ -1659,7 +1708,8 @@ def test_download_build_analyze_case_job_keeps_case_when_ai_fails(monkeypatch, t
             "local_video_id": local_video["local_video_id"],
         }
 
-    def fake_analyze_case_artifact(artifact, progress=None):
+    def fake_analyze_case_artifact(artifact, progress=None, mode="deep"):
+        assert mode == "fast"
         if progress:
             progress(35, "调用大模型自动拆解")
         raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 返回 HTTP 504。")
