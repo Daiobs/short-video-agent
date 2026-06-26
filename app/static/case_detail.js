@@ -59,8 +59,6 @@ const primaryWorkflowSummary = document.getElementById("primary-workflow-summary
 const primaryCaseMeta = document.getElementById("primary-case-meta");
 const primaryArtifactStatus = document.getElementById("primary-artifact-status");
 const primaryAiStatus = document.getElementById("primary-ai-status");
-const caseTabButtons = Array.from(document.querySelectorAll("[data-case-tab]"));
-const caseTabPanels = Array.from(document.querySelectorAll("[data-case-tab-panel]"));
 
 let loadedCase = null;
 
@@ -108,20 +106,6 @@ function renderDefinitionList(element, rows) {
         .join("")}
     </dl>
   `;
-}
-
-function setCaseTab(tab) {
-  const activeTab = ["overview", "ai", "package", "review", "enrichment", "calibration"].includes(tab)
-    ? tab
-    : "overview";
-  caseTabPanels.forEach((panel) => {
-    panel.classList.toggle("hidden", panel.dataset.caseTabPanel !== activeTab);
-  });
-  caseTabButtons.forEach((button) => {
-    const active = button.dataset.caseTab === activeTab;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-current", active ? "page" : "false");
-  });
 }
 
 function syncPrimaryRunButtons(disabled) {
@@ -1901,7 +1885,6 @@ runAutoAnalysisButton.addEventListener("click", async () => {
   if (!loadedCase) {
     return;
   }
-  setCaseTab("ai");
   runAutoAnalysisButton.disabled = true;
   saveQualityAcceptanceAndRerunButton.disabled = true;
   syncPrimaryRunButtons(true);
@@ -1921,27 +1904,12 @@ document.querySelectorAll("[data-primary-action]").forEach((button) => {
   button.addEventListener("click", () => {
     const action = button.dataset.primaryAction;
     if (action === "copy_prompt") {
-      setCaseTab("package");
       copyPromptButton.click();
     } else if (action === "download_input") {
-      setCaseTab("package");
       downloadAnalysisInputButton.click();
     } else if (action === "run_ai") {
-      setCaseTab("ai");
       runAutoAnalysisButton.click();
     }
-  });
-});
-
-caseTabButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    setCaseTab(button.dataset.caseTab);
-  });
-});
-
-document.querySelectorAll('a[href="#auto-analysis-report"]').forEach((link) => {
-  link.addEventListener("click", () => {
-    setCaseTab("ai");
   });
 });
 
@@ -2297,4 +2265,3 @@ saveQualityCalibrationRecordButton.addEventListener("click", async () => {
 });
 
 loadCase();
-setCaseTab("overview");

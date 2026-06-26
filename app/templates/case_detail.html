@@ -51,190 +51,206 @@
         <summary>高级 / 后台材料</summary>
         <p class="muted">下面内容用于调试、复核和后续开发。普通拆解只需要看上方报告。</p>
 
-        <section class="result-card primary-workflow-card">
-            <div class="section-heading-row">
-                <div>
-                    <h2>主路径状态</h2>
-                    <p class="muted">确认素材包是否生成、AI 是否配置，以及下一步该做什么。</p>
+        <details class="advanced-subsection">
+            <summary>素材包与 Prompt</summary>
+
+            <section class="result-card primary-workflow-card">
+                <div class="section-heading-row">
+                    <div>
+                        <h2>主路径状态</h2>
+                        <p class="muted">确认素材包是否生成、AI 是否配置，以及下一步该做什么。</p>
+                    </div>
                 </div>
-            </div>
-            <div id="primary-workflow-summary" class="primary-workflow-summary"></div>
-            <div class="primary-workflow-grid">
-                <div>
-                    <h3>当前 case 基础信息</h3>
-                    <div id="primary-case-meta" class="case-meta"></div>
+                <div id="primary-workflow-summary" class="primary-workflow-summary"></div>
+                <div class="primary-workflow-grid">
+                    <div>
+                        <h3>当前 case 基础信息</h3>
+                        <div id="primary-case-meta" class="case-meta"></div>
+                    </div>
+                    <div>
+                        <h3>素材包状态</h3>
+                        <div id="primary-artifact-status" class="inline-result"></div>
+                        <h3>AI 状态</h3>
+                        <div id="primary-ai-status" class="inline-result"></div>
+                    </div>
                 </div>
-                <div>
-                    <h3>素材包状态</h3>
-                    <div id="primary-artifact-status" class="inline-result"></div>
-                    <h3>AI 状态</h3>
-                    <div id="primary-ai-status" class="inline-result"></div>
+                <div class="toolbar-actions primary-actions">
+                    <button type="button" data-primary-action="copy_prompt">复制 Prompt</button>
+                    <button type="button" data-primary-action="download_input">下载 analysis_input.json</button>
+                    <button type="button" data-primary-action="run_ai">开始 / 重新 AI 拆解</button>
                 </div>
-            </div>
-            <div class="toolbar-actions primary-actions">
-                <button type="button" data-primary-action="copy_prompt">复制 Prompt</button>
-                <button type="button" data-primary-action="download_input">下载 analysis_input.json</button>
-                <button type="button" data-primary-action="run_ai">开始 / 重新 AI 拆解</button>
-            </div>
-        </section>
+            </section>
 
-        <section class="result-card">
-            <h2>AI 配置状态</h2>
-            <div id="case-llm-status" class="inline-result"></div>
-            <pre id="auto-analysis-report"></pre>
-        </section>
+            <section class="result-card">
+                <h2>AI 配置状态</h2>
+                <div id="case-llm-status" class="inline-result"></div>
+                <pre id="auto-analysis-report"></pre>
+            </section>
 
-        <section class="result-card">
-            <h2>分析类型</h2>
-            <div class="analysis-category-control">
-                <label>选择拆解角度
-                    <select id="analysis-category-select"></select>
-                </label>
-                <button type="button" id="update-category-button">应用类型</button>
-            </div>
-            <p id="category-description" class="muted"></p>
-            <div id="category-status" class="inline-result hidden"></div>
-        </section>
-
-        <section class="result-card">
-            <h2>素材包文件</h2>
-            <p class="muted">素材包是后续 AI 或人工拆解的输入目录。视频只用于抽帧和视觉观察；点赞、评论、分享等信息以原链接解析到的 metadata / analysis_input 为准。</p>
-            <div id="artifact-overview" class="artifact-grid"></div>
-        </section>
-
-        <section class="result-card">
-            <h2>关键帧时间线</h2>
-            <p class="muted">先看 0-3 秒，再看后续是否有动作、表情、景别或字幕变化。点击图片可在新标签打开。</p>
-            <div id="keyframe-strip" class="keyframe-strip"></div>
-        </section>
-
-        <section class="case-two-column">
-            <div class="result-card">
-                <h2>prompt.md</h2>
-                <p class="muted">不配置 API 时，也可以复制这段 Prompt，连同 contact_sheet.jpg / keyframes 一起交给 ChatGPT、Claude 或 Gemini 手动分析。</p>
-                <button type="button" id="copy-prompt-button">复制 prompt.md</button>
-                <pre id="prompt-text"></pre>
-            </div>
-
-            <div class="result-card">
-                <h2>analysis_input.json</h2>
-                <button type="button" id="download-analysis-input-button">下载 analysis_input.json</button>
-                <pre id="analysis-json"></pre>
-            </div>
-        </section>
-
-        <section class="result-card">
-            <h2>人工质量验收</h2>
-            <p class="muted">用真实样例校准 AI 拆解质量。这里记录“这份报告是否符合人的直觉”，不会覆盖 AI 原始结果。</p>
-            <div id="quality-acceptance-summary" class="quality-acceptance-summary"></div>
-            <div id="rerun-strategy-panel" class="rerun-strategy-panel"></div>
-            <div class="quality-acceptance-form">
-                <label>验收结论
-                    <select id="quality-acceptance-verdict">
-                        <option value="pending">待验收</option>
-                        <option value="pass">通过，可作为样例</option>
-                        <option value="needs_fix">需要修正</option>
-                        <option value="reject">不通过</option>
-                    </select>
-                </label>
-                <label>人工评分
-                    <input id="quality-acceptance-score" type="number" min="0" max="100" placeholder="0-100">
-                </label>
-                <label>验收人
-                    <input id="quality-acceptance-reviewer" type="text" placeholder="可选">
-                </label>
-                <label>一句话验收意见
-                    <textarea id="quality-acceptance-summary-input" rows="3" placeholder="例如：钩子判断准确，但分镜表有两处凭空扩展。"></textarea>
-                </label>
-                <div id="quality-acceptance-checks" class="quality-acceptance-checks"></div>
-                <label>详细备注
-                    <textarea id="quality-acceptance-notes" rows="4" placeholder="记录哪些判断符合直觉，哪些需要调规则。"></textarea>
-                </label>
-                <label>下一步处理
-                    <textarea id="quality-acceptance-next-actions" rows="3" placeholder="例如：补评论后重跑；放松/收紧某个质量闸门。"></textarea>
-                </label>
-            </div>
-            <div class="worksheet-actions">
-                <button type="button" id="save-quality-acceptance-button">保存质量验收</button>
-                <button type="button" id="save-quality-acceptance-and-rerun-button">保存并重新拆解</button>
-                <span id="quality-acceptance-status" class="muted"></span>
-            </div>
-        </section>
-
-        <section class="result-card">
-            <h2>我的拆解工作表</h2>
-            <p class="muted">这里保存你的人工修正和二次判断。AI 自动拆解是主流程，工作表用于校对、补充和沉淀。</p>
-            <div id="worksheet-review" class="worksheet-review"></div>
-            <label>一句话总结
-                <textarea id="worksheet-summary" rows="3" placeholder="这条视频最值得学习的是..."></textarea>
-            </label>
-            <div id="worksheet-sections" class="worksheet-sections"></div>
-            <div class="worksheet-actions">
-                <button type="button" id="save-worksheet-button">保存工作表</button>
-                <span id="worksheet-status" class="muted"></span>
-            </div>
-        </section>
-
-        <section class="result-card">
-            <h2>analysis_brief.md</h2>
-            <button type="button" id="copy-brief-button">复制分析工作表</button>
-            <pre id="analysis-brief-text"></pre>
-        </section>
-
-        <section class="result-card">
-            <h2>高级富化</h2>
-            <p class="muted">ASR、OCR、评论导入和指标快照是可选 / 高级功能，用于深度复盘，不是生成素材包和 AI 拆解的必经步骤。</p>
-            <div class="toolbar-actions enrichment-actions">
-                <button type="button" id="run-enrichment-button">生成富化归档</button>
-                <button type="button" id="metric-snapshot-button">记录指标快照</button>
-                <button type="button" id="asr-placeholder-button">运行 ASR</button>
-                <button type="button" id="ocr-placeholder-button">运行 OCR</button>
-            </div>
-            <div id="enrichment-status" class="inline-result"></div>
-            <div id="enrichment-summary" class="enrichment-summary"></div>
-            <div class="comments-import-panel">
-                <label>导入评论文本
-                    <textarea id="comments-import-text" rows="5" placeholder="每行一条评论；也支持每行一个 JSON 对象，例如 {&quot;text&quot;:&quot;接好运&quot;,&quot;likes&quot;:204}"></textarea>
-                </label>
-                <div class="toolbar-actions">
-                    <button type="button" id="import-comments-button">导入评论</button>
-                    <span id="comments-status" class="muted"></span>
+            <section class="result-card">
+                <h2>分析类型</h2>
+                <div class="analysis-category-control">
+                    <label>选择拆解角度
+                        <select id="analysis-category-select"></select>
+                    </label>
+                    <button type="button" id="update-category-button">应用类型</button>
                 </div>
-                <div id="metric-status" class="muted"></div>
-            </div>
-        </section>
+                <p id="category-description" class="muted"></p>
+                <div id="category-status" class="inline-result hidden"></div>
+            </section>
 
-        <section class="result-card case-diagnosis-card">
-            <div class="section-heading-row">
-                <div>
-                    <h2>拆解诊断</h2>
-                    <p class="muted">用于校准 AI 输出质量和下一轮重跑策略。</p>
+            <section class="result-card">
+                <h2>素材包文件</h2>
+                <p class="muted">素材包是后续 AI 或人工拆解的输入目录。视频只用于抽帧和视觉观察；点赞、评论、分享等信息以原链接解析到的 metadata / analysis_input 为准。</p>
+                <div id="artifact-overview" class="artifact-grid"></div>
+            </section>
+
+            <section class="result-card">
+                <h2>关键帧时间线</h2>
+                <p class="muted">先看 0-3 秒，再看后续是否有动作、表情、景别或字幕变化。点击图片可在新标签打开。</p>
+                <div id="keyframe-strip" class="keyframe-strip"></div>
+            </section>
+
+            <section class="case-two-column">
+                <div class="result-card">
+                    <h2>prompt.md</h2>
+                    <p class="muted">不配置 API 时，也可以复制这段 Prompt，连同 contact_sheet.jpg / keyframes 一起交给 ChatGPT、Claude 或 Gemini 手动分析。</p>
+                    <button type="button" id="copy-prompt-button">复制 prompt.md</button>
+                    <pre id="prompt-text"></pre>
                 </div>
-            </div>
-            <div id="case-diagnosis-summary" class="case-diagnosis-summary"></div>
-        </section>
 
-        <section class="result-card quality-calibration-card">
-            <div class="section-heading-row">
-                <div>
-                    <h2>校准样本</h2>
-                    <p class="muted">保存质量校准样本、查看 rerun_plan 和跳转校准样本库。</p>
+                <div class="result-card">
+                    <h2>analysis_input.json</h2>
+                    <button type="button" id="download-analysis-input-button">下载 analysis_input.json</button>
+                    <pre id="analysis-json"></pre>
                 </div>
-            </div>
-            <div id="quality-calibration-summary" class="quality-calibration-summary"></div>
-            <div class="worksheet-actions">
-                <button type="button" id="save-quality-calibration-record-button">保存校准样本</button>
-                <a class="text-link" href="/calibration">打开校准样本库</a>
-                <button type="button" id="download-rerun-plan-button">下载 rerun_plan.json</button>
-                <button type="button" id="download-rerun-plan-markdown-button">下载 rerun_plan.md</button>
-                <span id="quality-calibration-record-status" class="muted"></span>
-            </div>
-        </section>
+            </section>
+        </details>
 
-        <section class="result-card readiness-card">
-            <h2>拆解准备度</h2>
-            <div id="readiness-summary" class="readiness-summary"></div>
-        </section>
+        <details class="advanced-subsection">
+            <summary>人工验收与工作表</summary>
+
+            <section class="result-card">
+                <h2>人工质量验收</h2>
+                <p class="muted">用真实样例校准 AI 拆解质量。这里记录“这份报告是否符合人的直觉”，不会覆盖 AI 原始结果。</p>
+                <div id="quality-acceptance-summary" class="quality-acceptance-summary"></div>
+                <div id="rerun-strategy-panel" class="rerun-strategy-panel"></div>
+                <div class="quality-acceptance-form">
+                    <label>验收结论
+                        <select id="quality-acceptance-verdict">
+                            <option value="pending">待验收</option>
+                            <option value="pass">通过，可作为样例</option>
+                            <option value="needs_fix">需要修正</option>
+                            <option value="reject">不通过</option>
+                        </select>
+                    </label>
+                    <label>人工评分
+                        <input id="quality-acceptance-score" type="number" min="0" max="100" placeholder="0-100">
+                    </label>
+                    <label>验收人
+                        <input id="quality-acceptance-reviewer" type="text" placeholder="可选">
+                    </label>
+                    <label>一句话验收意见
+                        <textarea id="quality-acceptance-summary-input" rows="3" placeholder="例如：钩子判断准确，但分镜表有两处凭空扩展。"></textarea>
+                    </label>
+                    <div id="quality-acceptance-checks" class="quality-acceptance-checks"></div>
+                    <label>详细备注
+                        <textarea id="quality-acceptance-notes" rows="4" placeholder="记录哪些判断符合直觉，哪些需要调规则。"></textarea>
+                    </label>
+                    <label>下一步处理
+                        <textarea id="quality-acceptance-next-actions" rows="3" placeholder="例如：补评论后重跑；放松/收紧某个质量闸门。"></textarea>
+                    </label>
+                </div>
+                <div class="worksheet-actions">
+                    <button type="button" id="save-quality-acceptance-button">保存质量验收</button>
+                    <button type="button" id="save-quality-acceptance-and-rerun-button">保存并重新拆解</button>
+                    <span id="quality-acceptance-status" class="muted"></span>
+                </div>
+            </section>
+
+            <section class="result-card">
+                <h2>我的拆解工作表</h2>
+                <p class="muted">这里保存你的人工修正和二次判断。AI 自动拆解是主流程，工作表用于校对、补充和沉淀。</p>
+                <div id="worksheet-review" class="worksheet-review"></div>
+                <label>一句话总结
+                    <textarea id="worksheet-summary" rows="3" placeholder="这条视频最值得学习的是..."></textarea>
+                </label>
+                <div id="worksheet-sections" class="worksheet-sections"></div>
+                <div class="worksheet-actions">
+                    <button type="button" id="save-worksheet-button">保存工作表</button>
+                    <span id="worksheet-status" class="muted"></span>
+                </div>
+            </section>
+
+            <section class="result-card">
+                <h2>analysis_brief.md</h2>
+                <button type="button" id="copy-brief-button">复制分析工作表</button>
+                <pre id="analysis-brief-text"></pre>
+            </section>
+        </details>
+
+        <details class="advanced-subsection">
+            <summary>富化数据：ASR / OCR / 评论 / 指标</summary>
+
+            <section class="result-card">
+                <h2>高级富化</h2>
+                <p class="muted">ASR、OCR、评论导入和指标快照是可选 / 高级功能，用于深度复盘，不是生成素材包和 AI 拆解的必经步骤。</p>
+                <div class="toolbar-actions enrichment-actions">
+                    <button type="button" id="run-enrichment-button">生成富化归档</button>
+                    <button type="button" id="metric-snapshot-button">记录指标快照</button>
+                    <button type="button" id="asr-placeholder-button">运行 ASR</button>
+                    <button type="button" id="ocr-placeholder-button">运行 OCR</button>
+                </div>
+                <div id="enrichment-status" class="inline-result"></div>
+                <div id="enrichment-summary" class="enrichment-summary"></div>
+                <div class="comments-import-panel">
+                    <label>导入评论文本
+                        <textarea id="comments-import-text" rows="5" placeholder="每行一条评论；也支持每行一个 JSON 对象，例如 {&quot;text&quot;:&quot;接好运&quot;,&quot;likes&quot;:204}"></textarea>
+                    </label>
+                    <div class="toolbar-actions">
+                        <button type="button" id="import-comments-button">导入评论</button>
+                        <span id="comments-status" class="muted"></span>
+                    </div>
+                    <div id="metric-status" class="muted"></div>
+                </div>
+            </section>
+        </details>
+
+        <details class="advanced-subsection">
+            <summary>质量校准：诊断 / rerun_plan / 样本库</summary>
+
+            <section class="result-card case-diagnosis-card">
+                <div class="section-heading-row">
+                    <div>
+                        <h2>拆解诊断</h2>
+                        <p class="muted">用于校准 AI 输出质量和下一轮重跑策略。</p>
+                    </div>
+                </div>
+                <div id="case-diagnosis-summary" class="case-diagnosis-summary"></div>
+            </section>
+
+            <section class="result-card quality-calibration-card">
+                <div class="section-heading-row">
+                    <div>
+                        <h2>校准样本</h2>
+                        <p class="muted">保存质量校准样本、查看 rerun_plan 和跳转校准样本库。</p>
+                    </div>
+                </div>
+                <div id="quality-calibration-summary" class="quality-calibration-summary"></div>
+                <div class="worksheet-actions">
+                    <button type="button" id="save-quality-calibration-record-button">保存校准样本</button>
+                    <a class="text-link" href="/calibration">打开校准样本库</a>
+                    <button type="button" id="download-rerun-plan-button">下载 rerun_plan.json</button>
+                    <button type="button" id="download-rerun-plan-markdown-button">下载 rerun_plan.md</button>
+                    <span id="quality-calibration-record-status" class="muted"></span>
+                </div>
+            </section>
+
+            <section class="result-card readiness-card">
+                <h2>拆解准备度</h2>
+                <div id="readiness-summary" class="readiness-summary"></div>
+            </section>
+        </details>
     </details>
 </main>
 
