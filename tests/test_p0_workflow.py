@@ -6091,12 +6091,14 @@ def test_case_detail_renders_top_diagnosis_panel() -> None:
     assert 'data-primary-action="download_input"' in template
     assert 'data-primary-action="run_ai"' in template
     assert 'data-case-tab="' not in template
+    assert 'data-case-tab-panel' not in template
     assert "完整分析" in template
     assert "高级 / 后台材料" in template
     assert "素材包与 Prompt" in template
     assert "人工验收与工作表" in template
     assert "富化数据：ASR / OCR / 评论 / 指标" in template
     assert "质量校准：诊断 / rerun_plan / 样本库" in template
+    assert '<details class="advanced-subsection" open>' not in template
     assert "高级富化" in template
     assert template.index("高级富化") < template.index('id="asr-placeholder-button"')
     assert template.index("高级富化") < template.index('id="ocr-placeholder-button"')
