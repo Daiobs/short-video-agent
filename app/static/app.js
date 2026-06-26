@@ -1,9 +1,9 @@
 const settingsToggle = document.getElementById("settings-toggle");
+const settingsModal = document.getElementById("settings-modal");
 const settingsDrawer = document.getElementById("settings-drawer");
 const settingsClose = document.getElementById("settings-close");
 const singleForm = document.getElementById("single-form");
 const singleButton = document.getElementById("single-button");
-const downloadSelectedButton = document.getElementById("download-selected-button");
 const singleResult = document.getElementById("single-result");
 const qualityPreference = document.getElementById("quality-preference");
 const parseStatus = document.getElementById("parse-status");
@@ -16,7 +16,6 @@ const llmConfigHint = document.getElementById("llm-config-hint");
 const testLlmButton = document.getElementById("test-llm-button");
 const llmTestResult = document.getElementById("llm-test-result");
 const resultCard = document.getElementById("result-card");
-const recentEmptyState = document.getElementById("recent-empty-state");
 const caseSummary = document.getElementById("case-summary");
 const homeCaseView = document.getElementById("home-case-view");
 const homeContactSheet = document.getElementById("home-contact-sheet");
@@ -47,7 +46,7 @@ function setStatus(element, value) {
 }
 
 function setHomeRoute(route, updateHash = true) {
-  const activeRoute = ["single", "profile", "cases", "settings"].includes(route) ? route : "single";
+  const activeRoute = ["single", "profile"].includes(route) ? route : "single";
   homePanels.forEach((panel) => {
     panel.classList.toggle("hidden", panel.dataset.homePanel !== activeRoute);
   });
@@ -152,7 +151,7 @@ function renderWorkflowResult(result) {
   const rows = [
     ["素材包 ID", caseId || ""],
     ["素材包状态", "已生成"],
-    ["AI 自动拆解", result.analysis_status === "success" ? "已生成" : "未运行，可在 case 详情页启动"],
+    ["AI 自动拆解", result.analysis_status === "success" ? "已生成" : "未配置或未完成，可在 case 详情页重试"],
   ].filter(([, value]) => value);
 
   caseSummary.innerHTML = `
@@ -161,7 +160,6 @@ function renderWorkflowResult(result) {
       ${rows.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}
     </dl>
   `;
-  recentEmptyState.classList.add("hidden");
   uploadResult.classList.add("hidden");
   uploadResult.textContent = JSON.stringify(result, null, 2);
 }
@@ -182,32 +180,26 @@ function renderHomeCase(data) {
   const metadata = data.metadata || {};
   const analysisInput = data.analysis_input || {};
   const stats = analysisInput.stats || {};
-  const video = analysisInput.video || {};
-  const ffprobe = data.ffprobe || {};
   const report = data.analysis_report || "";
+  const analysisResult = data.analysis_result || null;
   const caseUrl = `/cases/${data.case_id}`;
 
   homeCaseView.classList.remove("hidden");
   homeContactSheet.src = `${data.artifact_urls.contact_sheet}?v=${Date.now()}`;
   openFullCaseLink.href = caseUrl;
   renderDefinitionList(homeCaseMeta, [
-    ["作品 ID", metadata.aweme_id || analysisInput.aweme_id],
     ["标题", metadata.title],
     ["作者", metadata.author],
     ["点赞", formatNumber(stats.like_count)],
     ["评论", formatNumber(stats.comment_count)],
     ["分享", formatNumber(stats.share_count)],
-    ["互动分", formatNumber(stats.engagement_score)],
-    ["时长", formatSeconds(video.duration || ffprobe.duration)],
-    ["分辨率", `${video.width || ffprobe.width || 0}x${video.height || ffprobe.height || 0}`],
-    ["文件大小", formatBytes(video.file_size || ffprobe.file_size)],
   ]);
 
-  if (data.analysis_result) {
+  if (analysisResult) {
     homeAiStatus.textContent = "AI 自动拆解已生成。可以在完整分析页继续修改类型、工作表或重新分析。";
-    homeAiReport.textContent = report || JSON.stringify(data.analysis_result, null, 2);
+    homeAiReport.textContent = analysisResult.summary || report.split("\n").slice(0, 12).join("\n") || JSON.stringify(analysisResult, null, 2);
   } else {
-    homeAiStatus.textContent = "素材包已生成，但 AI 自动拆解未运行。可以打开完整分析页手动启动，或复制 Prompt 手动分析。";
+    homeAiStatus.textContent = "素材包已生成，但 AI 自动拆解未启用或未完成。可以打开完整 case 后手动启动或查看素材包。";
     homeAiReport.textContent = "";
   }
 }
@@ -237,11 +229,17 @@ async function readJsonResponse(response) {
 }
 
 settingsToggle.addEventListener("click", () => {
-  setHomeRoute("settings");
+  settingsModal.classList.remove("hidden");
 });
 
 settingsClose.addEventListener("click", () => {
-  setHomeRoute("single");
+  settingsModal.classList.add("hidden");
+});
+
+settingsModal.addEventListener("click", (event) => {
+  if (event.target === settingsModal) {
+    settingsModal.classList.add("hidden");
+  }
 });
 
 homeRouteButtons.forEach((button) => {
@@ -271,8 +269,7 @@ testLlmButton.addEventListener("click", async () => {
 singleForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   singleButton.disabled = true;
-  singleButton.textContent = "处理中...";
-  downloadSelectedButton.disabled = true;
+  singleButton.textContent = "解析中...";
   selectedCandidate = null;
   currentLocalVideoId = "";
   homeCaseView.classList.add("hidden");
@@ -293,15 +290,20 @@ singleForm.addEventListener("submit", async (event) => {
     singleResult.classList.remove("hidden");
     singleResult.textContent = `已导入作品：${currentAwemeId}，正在解析可用清晰度...`;
     await resolveQualities([currentAwemeId]);
+    if (selectedCandidate) {
+      await downloadCandidate(selectedCandidate);
+    }
   } catch (error) {
     singleResult.classList.remove("hidden");
     singleResult.textContent = `${error.error_code || "ERROR"}：${error.message || "导入失败"}`;
     setStatus(parseStatus, "失败");
     singleButton.disabled = false;
-    singleButton.textContent = "解析作品";
+    singleButton.textContent = "解析";
   } finally {
-    singleButton.disabled = false;
-    singleButton.textContent = "解析作品";
+    if (!selectedCandidate) {
+      singleButton.disabled = false;
+      singleButton.textContent = "解析";
+    }
   }
 });
 
@@ -327,7 +329,6 @@ async function resolveQualities(awemeIds) {
     : "未知码率";
   singleResult.textContent = `已按设置选择：${selectedCandidate.quality_label || "网页候选"} · ${sizeMb} MB · ${bitrate}`;
   setStatus(parseStatus, "已解析");
-  downloadSelectedButton.disabled = false;
 }
 
 function chooseCandidate(candidates) {
@@ -349,20 +350,19 @@ async function downloadCandidate(candidate) {
   jobMessage.textContent = "创建下载和素材包任务...";
   setStatus(downloadStatus, "等待任务");
   setStatus(packageStatus, "等待生成");
-  setStatus(analysisStatus, "未运行");
+  setStatus(analysisStatus, "等待自动拆解");
   jobResult.textContent = "";
   caseSummary.innerHTML = "";
   resultCard.classList.add("hidden");
   buildCaseButton.hidden = true;
-  downloadSelectedButton.disabled = true;
   try {
-    const response = await fetch("/api/jobs/download-and-build-case", {
+    const response = await fetch("/api/jobs/download-build-analyze-case", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({aweme_id: currentAwemeId, candidate_id: candidate.candidate_id}),
     });
     const payload = await readJsonResponse(response);
-    pollJob(payload.job_id, async (job) => {
+    return pollJob(payload.job_id, async (job) => {
       if (job.status === "success" && job.result_json.local_video_id) {
         currentLocalVideoId = job.result_json.local_video_id;
         resultCard.classList.remove("hidden");
@@ -370,9 +370,13 @@ async function downloadCandidate(candidate) {
         renderWorkflowResult(job.result_json);
         setStatus(downloadStatus, "完成");
         setStatus(packageStatus, "已生成");
-        setStatus(analysisStatus, "未运行，可到 case 页启动");
+        setStatus(
+          analysisStatus,
+          job.result_json.analysis_status === "success"
+            ? "已生成"
+            : "未配置或未完成，可到 case 页重试",
+        );
         if (await showAnalysisInline(job.result_json)) {
-          setHomeRoute("cases");
           return;
         }
       }
@@ -382,17 +386,9 @@ async function downloadCandidate(candidate) {
     jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "任务创建失败"}`;
     setStatus(downloadStatus, "失败");
     singleButton.disabled = false;
-    singleButton.textContent = "解析作品";
-    downloadSelectedButton.disabled = !selectedCandidate;
+    singleButton.textContent = "解析";
   }
 }
-
-downloadSelectedButton.addEventListener("click", async () => {
-  if (!selectedCandidate) {
-    return;
-  }
-  await downloadCandidate(selectedCandidate);
-});
 
 buildCaseButton.addEventListener("click", async () => {
   if (!currentLocalVideoId) {
@@ -435,8 +431,7 @@ async function pollJob(jobId, onSuccess) {
       }
       buildCaseButton.disabled = false;
       singleButton.disabled = false;
-      singleButton.textContent = "解析作品";
-      downloadSelectedButton.disabled = !selectedCandidate;
+      singleButton.textContent = "解析";
       return;
     }
     if (job.status === "failed") {
@@ -446,18 +441,19 @@ async function pollJob(jobId, onSuccess) {
       setStatus(downloadStatus, "失败");
       buildCaseButton.disabled = false;
       singleButton.disabled = false;
-      singleButton.textContent = "解析作品";
-      downloadSelectedButton.disabled = !selectedCandidate;
+      singleButton.textContent = "解析";
       return;
     }
-    window.setTimeout(() => pollJob(jobId, onSuccess), 700);
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 700);
+    });
+    return pollJob(jobId, onSuccess);
   } catch (error) {
     jobMessage.className = "job-message failed";
     jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "查询任务失败"}`;
     buildCaseButton.disabled = false;
     singleButton.disabled = false;
-    singleButton.textContent = "解析作品";
-    downloadSelectedButton.disabled = !selectedCandidate;
+    singleButton.textContent = "解析";
   }
 }
 

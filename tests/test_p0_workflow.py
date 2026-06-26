@@ -196,15 +196,16 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "单作品解析" in response.text
     assert "主页扫描" in response.text
     assert "主页扫描将在 P2 阶段实现。当前请先使用单作品解析。" in response.text
-    assert "案例库 / 最近案例" in response.text
-    assert "AI 配置状态与测试连接" in response.text
+    assert "API 与解析设置" in response.text
     assert 'id="test-llm-button"' in response.text
-    assert "最近结果 / case 入口" in response.text
+    assert "解析结果" in response.text
     assert 'data-home-route="single"' in response.text
     assert 'data-home-route="profile"' in response.text
-    assert 'data-home-route="cases"' in response.text
-    assert 'data-home-route="settings"' in response.text
-    assert 'id="download-selected-button"' in response.text
+    assert 'data-home-route="cases"' not in response.text
+    assert 'data-home-route="settings"' not in response.text
+    assert 'id="settings-modal"' in response.text
+    assert 'id="download-selected-button"' not in response.text
+    assert "下载并生成素材包" not in response.text
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:
@@ -225,7 +226,7 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "主页扫描在页面中只保留入口和占位说明" in readme
     assert "`/api/profile/scan` 与 `/api/jobs/profile-scan` 仍返回 `NOT_IMPLEMENTED`" in readme
     assert "默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型" in readme
-    assert "单作品主流程已串联为：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。" in readme
+    assert "单作品主流程已收敛为一个“解析”按钮：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。" in readme
     assert "如果浏览器能访问 API 但页面“测试连接”失败，请检查本机代理" in readme
     assert "自动调用大模型" not in readme
     assert "按设置下载并自动拆解" not in readme

@@ -161,9 +161,21 @@ button:disabled {
     gap: 18px;
 }
 
-.settings-drawer {
-    position: relative;
-    margin-top: -10px;
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: grid;
+    place-items: start center;
+    padding: 72px 24px 24px;
+    overflow: auto;
+    background: rgba(15, 23, 42, .36);
+}
+
+.settings-modal-card {
+    width: min(960px, 100%);
+    margin: 0;
+    box-shadow: 0 24px 80px rgba(15, 23, 42, .24);
 }
 
 .settings-title-row {
@@ -217,13 +229,13 @@ button:disabled {
 
 .single-workbench-form {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 14px;
     align-items: end;
 }
 
 .single-workbench-form .toolbar-actions {
-    grid-column: 1 / -1;
+    align-items: end;
 }
 
 .task-status-grid {

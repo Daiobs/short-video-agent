@@ -19,10 +19,53 @@
     <nav class="primary-nav" aria-label="一级功能导航">
         <button type="button" class="primary-nav-button" data-home-route="single">单作品解析</button>
         <button type="button" class="primary-nav-button" data-home-route="profile">主页扫描</button>
-        <button type="button" class="primary-nav-button" data-home-route="cases">案例库 / 最近案例</button>
-        <button type="button" class="primary-nav-button" data-home-route="settings">设置</button>
     </nav>
 </header>
+
+<div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <section class="settings-card settings-modal-card" id="settings-drawer">
+        <div>
+            <div class="settings-title-row">
+                <div>
+                    <div class="entry-label">Settings</div>
+                    <h2 id="settings-title">API 与解析设置</h2>
+                    <p class="muted">API Key 只从本地 .env 读取，页面不提供保存入口。没有 API Key 也能完成下载和素材包生成。</p>
+                </div>
+                <button type="button" id="settings-close" class="ghost-button">关闭</button>
+            </div>
+        </div>
+        <div class="settings-grid">
+            <div class="settings-panel">
+                <label>默认清晰度偏好
+                    <select id="quality-preference">
+                        <option value="best">最高可用</option>
+                        <option value="1080">1080p 优先</option>
+                        <option value="720">720p 优先</option>
+                    </select>
+                </label>
+                <p class="muted compact-copy">单作品解析会自动选择该偏好下的候选资源，真实下载 URL 只保存在服务端。</p>
+            </div>
+            <div class="settings-panel">
+                <div class="settings-panel-header">
+                    <h3>AI 自动拆解</h3>
+                    <span id="llm-status-badge" class="status-badge">读取中</span>
+                </div>
+                <div id="llm-status-list" class="compact-dl"></div>
+                <div id="llm-config-hint" class="notice hidden">
+                    <div>未配置时素材包仍会正常生成。需要自动拆解时，在 <code>.env</code> 中配置：</div>
+                    <pre class="env-snippet">LLM_PROVIDER=openai_compatible
+LLM_API_BASE=https://api.openai.com/v1
+LLM_API_KEY=你的key
+LLM_MODEL=支持图片输入的模型</pre>
+                </div>
+                <div class="settings-actions">
+                    <button type="button" id="test-llm-button">测试连接</button>
+                    <span id="llm-test-result" class="muted"></span>
+                </div>
+            </div>
+        </div>
+    </section>
+</div>
 
 <main class="page">
     <section class="home-panel" id="home-single" data-home-panel="single">
@@ -34,16 +77,8 @@
                 <label>单条作品链接 / aweme_id
                     <input name="value" placeholder="作品链接、分享文本或 aweme_id" required>
                 </label>
-                <label>清晰度偏好
-                    <select id="quality-preference">
-                        <option value="best">最高可用</option>
-                        <option value="1080">1080p 优先</option>
-                        <option value="720">720p 优先</option>
-                    </select>
-                </label>
                 <div class="toolbar-actions">
-                    <button type="submit" id="single-button">解析作品</button>
-                    <button type="button" id="download-selected-button" disabled>下载并生成素材包</button>
+                    <button type="submit" id="single-button">解析</button>
                 </div>
             </form>
             <div class="task-status-grid" aria-label="当前任务状态">
@@ -66,6 +101,36 @@
             </div>
             <div id="single-result" class="inline-result hidden"></div>
         </section>
+
+        <section class="result-card hidden" id="result-card">
+            <div class="entry-label">Result</div>
+            <h2>解析结果</h2>
+            <div id="case-summary" class="case-summary"></div>
+            <div id="home-case-view" class="home-case-view hidden">
+                <div class="case-view-grid">
+                    <div>
+                        <h3>关键帧总览</h3>
+                        <img id="home-contact-sheet" class="contact-sheet-image" alt="关键帧总览图">
+                    </div>
+                    <div>
+                        <h3>作品信息</h3>
+                        <div id="home-case-meta" class="case-meta"></div>
+                    </div>
+                </div>
+                <div class="result-subsection">
+                    <h3>AI 摘要</h3>
+                    <div id="home-ai-status" class="inline-result"></div>
+                    <pre id="home-ai-report"></pre>
+                </div>
+                <div class="toolbar-actions">
+                    <a id="open-full-case-link" class="button-link" href="#" target="_blank" rel="noreferrer">打开完整 case</a>
+                    <button type="button" id="copy-home-prompt-button" class="hidden" aria-hidden="true" tabindex="-1">复制 Prompt</button>
+                    <button type="button" id="download-home-analysis-input-button" class="hidden" aria-hidden="true" tabindex="-1">下载 analysis_input.json</button>
+                </div>
+            </div>
+            <pre id="upload-result" class="hidden"></pre>
+            <button id="build-case-button" hidden>生成素材包</button>
+        </section>
     </section>
 
     <section class="home-panel hidden" id="home-profile" data-home-panel="profile">
@@ -75,84 +140,6 @@
             <p class="muted">主页扫描将在 P2 阶段实现。当前请先使用单作品解析。</p>
             <div class="notice">这里未来会输入抖音主页 URL，按点赞、评论、分享和综合互动分筛选 Top N 作品；本轮不实现真实扫描，也不接入爬虫或风控绕过逻辑。</div>
         </section>
-    </section>
-
-    <section class="home-panel hidden" id="home-settings" data-home-panel="settings">
-    <section class="settings-card" id="settings-drawer">
-        <div>
-            <div class="settings-title-row">
-                <div>
-                    <div class="entry-label">AI Settings</div>
-                    <h2>AI 配置状态与测试连接</h2>
-                    <p class="muted">没有 API Key 也能生成素材包；配置大模型后，case 页面可启动 AI 自动拆解。API Key 只从本地 .env 读取，页面不提供保存入口。</p>
-                </div>
-                <button type="button" id="settings-close" class="ghost-button">收起</button>
-            </div>
-        </div>
-        <div class="settings-grid">
-            <div class="settings-panel">
-                <label>下载清晰度偏好
-                    <span class="muted compact-copy">清晰度偏好已放在“单作品解析”输入区。</span>
-                </label>
-                <p class="muted compact-copy">前端只提交 candidate_id，真实下载 URL 只保存在服务端。</p>
-            </div>
-            <div class="settings-panel">
-                <div class="settings-panel-header">
-                    <h3>AI 自动拆解</h3>
-                    <span id="llm-status-badge" class="status-badge">读取中</span>
-                </div>
-                <div id="llm-status-list" class="compact-dl"></div>
-                <div id="llm-config-hint" class="notice hidden">
-                    <div>未配置时素材包仍会正常生成。需要自动拆解时，在 <code>.env</code> 中配置：</div>
-                    <pre class="env-snippet">LLM_PROVIDER=openai_compatible
-LLM_API_BASE=https://api.openai.com/v1
-LLM_API_KEY=你的key
-LLM_MODEL=支持图片输入的模型</pre>
-                </div>
-                <div class="settings-actions">
-                    <button type="button" id="test-llm-button">测试连接</button>
-                    <span id="llm-test-result" class="muted"></span>
-                </div>
-            </div>
-        </div>
-    </section>
-    </section>
-
-    <section class="home-panel hidden" id="home-cases" data-home-panel="cases">
-    <section class="result-card" id="recent-empty-state">
-        <div class="entry-label">Recent Cases</div>
-        <h2>案例库 / 最近案例</h2>
-        <p class="muted">当前页面先展示本次生成的最近 case。完整案例库会在后续阶段继续完善。</p>
-    </section>
-    <section class="result-card hidden" id="result-card">
-        <div class="entry-label">Latest Case</div>
-        <h2>最近结果 / case 入口</h2>
-        <div id="case-summary" class="case-summary"></div>
-        <div id="home-case-view" class="home-case-view hidden">
-            <div class="case-view-grid">
-                <div>
-                    <h3>关键帧总览</h3>
-                    <img id="home-contact-sheet" class="contact-sheet-image" alt="关键帧总览图">
-                </div>
-                <div>
-                    <h3>基础信息</h3>
-                    <div id="home-case-meta" class="case-meta"></div>
-                </div>
-            </div>
-            <div class="result-subsection">
-                <h3>AI 自动拆解</h3>
-                <div id="home-ai-status" class="inline-result"></div>
-                <pre id="home-ai-report"></pre>
-            </div>
-            <div class="toolbar-actions">
-                <a id="open-full-case-link" class="button-link" href="#" target="_blank" rel="noreferrer">打开完整分析页</a>
-                <button type="button" id="copy-home-prompt-button" class="hidden" aria-hidden="true" tabindex="-1">复制 Prompt</button>
-                <button type="button" id="download-home-analysis-input-button" class="hidden" aria-hidden="true" tabindex="-1">下载 analysis_input.json</button>
-            </div>
-        </div>
-        <pre id="upload-result" class="hidden"></pre>
-        <button id="build-case-button" hidden>生成素材包</button>
-    </section>
     </section>
 
     <section class="result-card hidden" id="job-card">
