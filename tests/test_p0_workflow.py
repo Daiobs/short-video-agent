@@ -193,11 +193,18 @@ def test_home_uses_versioned_static_assets() -> None:
     assert response.status_code == 200
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
-    assert "输入作品并生成素材包" in response.text
+    assert "单作品解析" in response.text
+    assert "主页扫描" in response.text
+    assert "主页扫描将在 P2 阶段实现。当前请先使用单作品解析。" in response.text
+    assert "案例库 / 最近案例" in response.text
     assert "AI 配置状态与测试连接" in response.text
     assert 'id="test-llm-button"' in response.text
     assert "最近结果 / case 入口" in response.text
-    assert "主页扫描" not in response.text
+    assert 'data-home-route="single"' in response.text
+    assert 'data-home-route="profile"' in response.text
+    assert 'data-home-route="cases"' in response.text
+    assert 'data-home-route="settings"' in response.text
+    assert 'id="download-selected-button"' in response.text
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:
@@ -212,6 +219,11 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
 
     assert "没有 API Key 也能生成" in readme
+    assert "## 业务模块规划" in readme
+    assert "单作品解析：当前可用" in readme
+    assert "主页扫描：P2 阶段实现" in readme
+    assert "主页扫描在页面中只保留入口和占位说明" in readme
+    assert "`/api/profile/scan` 与 `/api/jobs/profile-scan` 仍返回 `NOT_IMPLEMENTED`" in readme
     assert "默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型" in readme
     assert "单作品主流程已串联为：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。" in readme
     assert "如果浏览器能访问 API 但页面“测试连接”失败，请检查本机代理" in readme
@@ -763,7 +775,12 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
     assert detail_response.status_code == 200
     assert "素材包分析视图" in detail_response.text
     assert "primary-workflow-summary" in detail_response.text
-    assert "高级拆解 / 实验功能" in detail_response.text
+    assert "概览" in detail_response.text
+    assert "AI 拆解" in detail_response.text
+    assert "素材包" in detail_response.text
+    assert "人工验收" in detail_response.text
+    assert "高级富化" in detail_response.text
+    assert "校准样本" in detail_response.text
     assert "case-diagnosis-summary" in detail_response.text
     assert "auto-analysis-cards" in detail_response.text
     assert "readiness-summary" in detail_response.text
@@ -5843,14 +5860,26 @@ def test_case_detail_renders_top_diagnosis_panel() -> None:
     assert 'data-primary-action="copy_prompt"' in template
     assert 'data-primary-action="download_input"' in template
     assert 'data-primary-action="run_ai"' in template
-    assert "高级拆解 / 实验功能" in template
+    assert 'data-case-tab="overview"' in template
+    assert 'data-case-tab="ai"' in template
+    assert 'data-case-tab="package"' in template
+    assert 'data-case-tab="review"' in template
+    assert 'data-case-tab="enrichment"' in template
+    assert 'data-case-tab="calibration"' in template
+    assert "高级富化" in template
+    assert template.index('data-case-tab-panel="enrichment"') < template.index('id="asr-placeholder-button"')
+    assert template.index('data-case-tab-panel="enrichment"') < template.index('id="ocr-placeholder-button"')
+    assert template.index('data-case-tab-panel="enrichment"') < template.index('id="comments-import-text"')
+    assert "function setCaseTab(tab)" in script
+    assert "caseTabButtons" in script
+    assert ".case-tab-nav" in stylesheet
+    assert ".case-tab-button.active" in stylesheet
     assert "function renderPrimaryWorkflow(data)" in script
     assert "data.primary_workflow" in script
     assert ".primary-workflow-card" in stylesheet
-    assert ".advanced-section" in stylesheet
     assert 'id="case-diagnosis-summary"' in template
     assert "拆解诊断" in template
-    assert "这份拆解能不能用" in template
+    assert "用于校准 AI 输出质量" in template
     assert "const caseDiagnosisSummary" in script
     assert "function renderCaseDiagnosis(data)" in script
     assert "function renderDiagnosisActions(actions)" in script
@@ -5974,7 +6003,7 @@ def test_case_detail_renders_quality_calibration_panel() -> None:
 
     assert 'id="quality-calibration-summary"' in template
     assert 'id="save-quality-calibration-record-button"' in template
-    assert "拆解质量校准" in template
+    assert "校准样本" in template
     assert "function renderQualityCalibration(data)" in script
     assert "function renderRecommendationList(recommendations)" in script
     assert "item.source_issue_ids" in script
