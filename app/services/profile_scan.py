@@ -96,6 +96,11 @@ class DouyinPublicProfileProvider:
 
         items = extract_profile_items_from_html(response.text, sec_user_id=sec_user_id)
         if not items:
+            if _is_douyin_risk_control_page(response.text):
+                raise AppError(
+                    ErrorCode.DOUYIN_RISK_CONTROL,
+                    "主页扫描失败：抖音返回了浏览器校验脚本。当前不登录、不使用 Cookie、不绕风控，请改用多作品链接粘贴或单作品解析。",
+                )
             if _has_aweme_payload_marker(response.text):
                 raise AppError(ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED)
             raise AppError(ErrorCode.PROFILE_SCAN_NEEDS_FALLBACK)
@@ -314,6 +319,12 @@ def _extract_json_payloads(text: str) -> list:
 
 def _has_aweme_payload_marker(text: str) -> bool:
     return "aweme_list" in (text or "") or "awemeList" in (text or "")
+
+
+def _is_douyin_risk_control_page(text: str) -> bool:
+    value = text or ""
+    markers = ("_$jsvmprt", "byted_acrawler", "__ac_nonce", "secsdk-captcha")
+    return any(marker in value for marker in markers)
 
 
 def _extract_profile_items_from_links(text: str, sec_user_id: str = "") -> list[ProfileVideoItem]:

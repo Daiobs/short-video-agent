@@ -6655,6 +6655,34 @@ def test_douyin_public_profile_provider_returns_fallback_error(monkeypatch) -> N
     assert raised.value.code == "PROFILE_SCAN_NEEDS_FALLBACK"
 
 
+def test_douyin_public_profile_provider_reports_risk_control_page(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+        text = "<html><body></body><script>window._$jsvmprt = {}; byted_acrawler.init()</script></html>"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+    provider = DouyinPublicProfileProvider()
+
+    with pytest.raises(AppError) as raised:
+        provider.scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
+
+    assert raised.value.code == "DOUYIN_RISK_CONTROL"
+    assert "浏览器校验" in raised.value.message
+
+
 def test_douyin_public_profile_provider_reports_structure_changed(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200
