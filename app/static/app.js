@@ -86,6 +86,11 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function firstUrlFromText(value) {
+  const match = String(value || "").match(/https?:\/\/[^\s]+/i);
+  return match ? match[0] : "";
+}
+
 function showJson(element, payload) {
   element.textContent = JSON.stringify(payload, null, 2);
 }
@@ -354,7 +359,8 @@ async function scanProfile() {
   profileResultsCard.classList.add("hidden");
   try {
     const formData = new FormData(profileForm);
-    const profileValue = String(formData.get("profile_url") || "").trim();
+    const rawProfileValue = String(formData.get("profile_url") || "").trim();
+    const profileValue = firstUrlFromText(rawProfileValue) || rawProfileValue;
     const isUrl = /^https?:\/\//i.test(profileValue);
     const payload = {
       profile_url: isUrl ? profileValue : "",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import json
 import re
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 
@@ -149,11 +149,19 @@ def scan_profile(request: ProfileScanRequest) -> ProfileScanResult:
 
 def normalize_profile_url(profile_url: str | None, sec_user_id: str | None) -> str:
     if profile_url:
-        value = profile_url.strip()
+        value = extract_first_url(profile_url) or profile_url.strip()
         parsed = urlparse(value)
         if not parsed.scheme or not parsed.netloc:
             raise AppError(ErrorCode.INVALID_PROFILE_URL)
-        if "douyin.com" not in parsed.netloc.lower():
+        host = parsed.netloc.lower()
+        if host.endswith("v.douyin.com"):
+            return _resolve_douyin_short_profile_url(value)
+        if host.endswith("iesdouyin.com"):
+            shared_profile_url = _profile_url_from_share_url(value)
+            if shared_profile_url:
+                return shared_profile_url
+            raise AppError(ErrorCode.INVALID_PROFILE_URL, "该短链不是主页链接。请改用单作品解析或多作品链接粘贴。")
+        if not (host == "douyin.com" or host.endswith(".douyin.com")):
             raise AppError(ErrorCode.INVALID_PROFILE_URL, "仅支持抖音主页 URL。")
         return value
     if sec_user_id and SEC_USER_ID_RE.fullmatch(sec_user_id.strip()):
@@ -170,10 +178,58 @@ def extract_sec_user_id(profile_url: str | None, explicit_sec_user_id: str | Non
     parts = [part for part in parsed.path.split("/") if part]
     if len(parts) >= 2 and parts[0] == "user" and SEC_USER_ID_RE.fullmatch(parts[1]):
         return parts[1]
-    query_match = re.search(r"(?:sec_user_id|sec_uid)=([A-Za-z0-9_\-]+)", parsed.query)
-    if query_match:
-        return query_match.group(1)
+    if len(parts) >= 2 and parts[0] == "share" and parts[1] == "user":
+        query_sec_uid = (parse_qs(parsed.query).get("sec_uid") or [""])[0]
+        candidate = query_sec_uid or (parts[2] if len(parts) >= 3 else "")
+        if SEC_USER_ID_RE.fullmatch(candidate):
+            return candidate
+    query_sec_uid = (parse_qs(parsed.query).get("sec_user_id") or parse_qs(parsed.query).get("sec_uid") or [""])[0]
+    if SEC_USER_ID_RE.fullmatch(query_sec_uid):
+        return query_sec_uid
     return ""
+
+
+def _resolve_douyin_short_profile_url(url: str) -> str:
+    try:
+        with httpx.Client(timeout=5.0, follow_redirects=False, trust_env=False) as client:
+            response = client.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 short-video-agent profile scan",
+                    "Accept": "text/html,application/xhtml+xml",
+                },
+            )
+    except httpx.HTTPError as error:
+        raise AppError(ErrorCode.INVALID_PROFILE_URL, f"短链解析失败：{str(error)[:160]}") from error
+
+    location = response.headers.get("location", "")
+    if not location and response.is_redirect:
+        location = response.headers.get("Location", "")
+    if not location:
+        raise AppError(ErrorCode.INVALID_PROFILE_URL, "短链没有返回主页跳转地址。请粘贴完整主页 URL。")
+    target = urljoin(url, location)
+    shared_profile_url = _profile_url_from_share_url(target)
+    if shared_profile_url:
+        return shared_profile_url
+    parsed = urlparse(target)
+    if "/video/" in parsed.path or "/note/" in parsed.path:
+        raise AppError(ErrorCode.INVALID_PROFILE_URL, "这是作品链接，不是主页链接。请使用单作品解析或多作品链接粘贴。")
+    raise AppError(ErrorCode.INVALID_PROFILE_URL, "短链未跳转到可识别的抖音主页。")
+
+
+def _profile_url_from_share_url(url: str) -> str:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if not host.endswith("iesdouyin.com"):
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2 or parts[0] != "share" or parts[1] != "user":
+        return ""
+    query_sec_uid = (parse_qs(parsed.query).get("sec_uid") or [""])[0]
+    sec_uid = query_sec_uid or (parts[2] if len(parts) >= 3 else "")
+    if not SEC_USER_ID_RE.fullmatch(sec_uid):
+        return ""
+    return f"https://www.douyin.com/user/{sec_uid}"
 
 
 def extract_profile_items_from_html(html_text: str, sec_user_id: str = "") -> list[ProfileVideoItem]:

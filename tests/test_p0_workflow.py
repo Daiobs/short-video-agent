@@ -27,7 +27,9 @@ from app.services.douyin_url_parser import extract_aweme_id
 from app.services.profile_scan import (
     DouyinPublicProfileProvider,
     ManualLinksProfileProvider,
+    extract_sec_user_id,
     extract_profile_items_from_html,
+    normalize_profile_url,
     scan_profile,
 )
 from app.services.quality_resolver import resolve_quality_candidates
@@ -255,6 +257,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "不使用 Cookie、不登录、不绕风控" in response.text
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     script = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert "function firstUrlFromText" in script
+    assert "const rawProfileValue" in script
     assert ".profile-media-type.image" in stylesheet
     assert "图文/照片" in script
     assert "暂不能直接生成视频素材包" in script
@@ -6554,6 +6558,74 @@ def test_profile_items_sort_by_metrics() -> None:
     assert sorted_profile_items(items, "share_count")[0].aweme_id == "100000000000000003"
     assert sorted_profile_items(items, "engagement_score")[0].aweme_id == "100000000000000003"
     assert sorted_profile_items(items, "create_time")[0].aweme_id == "100000000000000002"
+
+
+def test_profile_share_url_normalizes_to_douyin_profile_url() -> None:
+    sec_uid = "MS4wLjABAAAAhlyWuh2hl4qtSRklFBUXI2OeIFZHcSVT8gAwdYEVEER_BL6pkbRCLoyncMBeVWwV"
+    share_url = f"https://www.iesdouyin.com/share/user/{sec_uid}?sec_uid={sec_uid}&from_aid=6383"
+
+    normalized = normalize_profile_url(share_url, None)
+
+    assert normalized == f"https://www.douyin.com/user/{sec_uid}"
+    assert extract_sec_user_id(normalized) == sec_uid
+
+
+def test_profile_short_share_text_normalizes_to_douyin_profile_url(monkeypatch) -> None:
+    sec_uid = "MS4wLjABAAAAhlyWuh2hl4qtSRklFBUXI2OeIFZHcSVT8gAwdYEVEER_BL6pkbRCLoyncMBeVWwV"
+
+    class FakeResponse:
+        status_code = 302
+        is_redirect = True
+        headers = {
+            "location": f"https://www.iesdouyin.com/share/user/{sec_uid}?sec_uid={sec_uid}",
+        }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+    normalized = normalize_profile_url("长按复制此条消息，打开抖音搜索。 https://v.douyin.com/RufqmHm2wSk/", None)
+
+    assert normalized == f"https://www.douyin.com/user/{sec_uid}"
+    assert extract_sec_user_id(normalized) == sec_uid
+
+
+def test_profile_short_url_rejects_video_redirect(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 302
+        is_redirect = True
+        headers = {"location": "https://www.douyin.com/video/7622653084993647603"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    with pytest.raises(AppError) as raised:
+        normalize_profile_url("https://v.douyin.com/workShortLink/", None)
+
+    assert raised.value.code == "INVALID_PROFILE_URL"
+    assert "作品链接" in raised.value.message
 
 
 def test_douyin_public_profile_provider_returns_fallback_error(monkeypatch) -> None:
