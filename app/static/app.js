@@ -321,6 +321,9 @@ function renderProfileTable() {
       const image = item.cover_url
         ? `<img src="${escapeHtml(item.cover_url)}" alt="" class="profile-cover">`
         : '<div class="profile-cover placeholder">无封面</div>';
+      const typeLabel = {video: "视频", image: "图文/照片", unknown: "未知"}[item.media_type] || "未知";
+      const buildDisabled = item.can_build_case === false ? " disabled" : "";
+      const buildTitle = item.can_build_case === false ? ' title="图文/照片作品暂不能走视频素材包流程，请先用单作品解析确认支持情况。"' : "";
       return `
         <tr>
           <td><input type="checkbox" data-profile-select value="${escapeHtml(item.aweme_id)}"></td>
@@ -328,6 +331,7 @@ function renderProfileTable() {
           <td>
             <strong>${escapeHtml(item.title || item.desc || item.aweme_id)}</strong>
             <p>${escapeHtml(item.desc || item.webpage_url || "")}</p>
+            <span class="profile-media-type ${escapeHtml(item.media_type || "unknown")}">${escapeHtml(typeLabel)}</span>
           </td>
           <td>${formatNumber(item.like_count)}</td>
           <td>${formatNumber(item.comment_count)}</td>
@@ -336,7 +340,7 @@ function renderProfileTable() {
           <td>${escapeHtml(item.create_time || "未知")}</td>
           <td>
             <button type="button" data-profile-import="${escapeHtml(item.aweme_id)}">进入解析</button>
-            <button type="button" data-profile-build="${escapeHtml(item.aweme_id)}">生成素材包</button>
+            <button type="button" data-profile-build="${escapeHtml(item.aweme_id)}"${buildDisabled}${buildTitle}>生成素材包</button>
           </td>
         </tr>
       `;
@@ -397,6 +401,10 @@ function importProfileItem(item) {
 async function buildProfileItem(item) {
   const value = profileItemValue(item);
   if (!value) {
+    return;
+  }
+  if (item.can_build_case === false) {
+    profileScanStatus.textContent = "图文/照片作品暂不能直接生成视频素材包，请先进入单作品解析确认支持情况。";
     return;
   }
   singleForm.querySelector('[name="value"]').value = value;
@@ -656,6 +664,10 @@ profileSelectedBuildButton.addEventListener("click", async () => {
   }
   if (selected.length > 1) {
     profileScanStatus.textContent = "P2.0 不自动批量下载或批量 AI 拆解，请先选择 1 条作品。";
+    return;
+  }
+  if (selected[0].can_build_case === false) {
+    profileScanStatus.textContent = "选中的图文/照片作品暂不能直接生成视频素材包，请先进入单作品解析确认支持情况。";
     return;
   }
   await buildProfileItem(selected[0]);

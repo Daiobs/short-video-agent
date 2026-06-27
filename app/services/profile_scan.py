@@ -42,12 +42,14 @@ class ManualLinksProfileProvider:
                 continue
             seen.add(aweme_id)
             source_url = extract_first_url(value) or f"https://www.douyin.com/video/{aweme_id}"
+            media_type = _media_type_from_url(source_url) or "unknown"
             items.append(
                 ProfileVideoItem(
                     aweme_id=aweme_id,
                     title=f"抖音作品 {aweme_id}",
                     desc=value[:180],
                     webpage_url=source_url,
+                    media_type=media_type,
                     source_provider=self.name,
                 )
             )
@@ -186,6 +188,12 @@ def extract_profile_items_from_html(html_text: str, sec_user_id: str = "") -> li
                 continue
             seen.add(item.aweme_id)
             items.append(item)
+    if not items:
+        for item in _extract_profile_items_from_links(decoded, sec_user_id=sec_user_id):
+            if item.aweme_id in seen:
+                continue
+            seen.add(item.aweme_id)
+            items.append(item)
     return items
 
 
@@ -197,8 +205,18 @@ def normalize_profile_video_item(raw: dict, sec_user_id: str = "") -> ProfileVid
     author = raw.get("author") if isinstance(raw.get("author"), dict) else {}
     statistics = raw.get("statistics") if isinstance(raw.get("statistics"), dict) else {}
     video = raw.get("video") if isinstance(raw.get("video"), dict) else {}
+    images = raw.get("images") or raw.get("image_infos") or raw.get("imageInfos") or []
+    image_post = raw.get("image_post_info") if isinstance(raw.get("image_post_info"), dict) else {}
     cover = raw.get("cover") if isinstance(raw.get("cover"), dict) else {}
-    cover_url = _first_url(video.get("cover")) or _first_url(video.get("origin_cover")) or _first_url(cover) or str(raw.get("cover_url") or "")
+    media_type = _media_type_from_aweme(raw, video, images, image_post)
+    cover_url = (
+        _first_url(video.get("cover"))
+        or _first_url(video.get("origin_cover"))
+        or _first_url(image_post.get("cover"))
+        or _first_url(images)
+        or _first_url(cover)
+        or str(raw.get("cover_url") or "")
+    )
     item_sec_user_id = str(author.get("sec_uid") or author.get("sec_user_id") or sec_user_id or "")
     return ProfileVideoItem(
         aweme_id=aweme_id,
@@ -213,7 +231,8 @@ def normalize_profile_video_item(raw: dict, sec_user_id: str = "") -> ProfileVid
         share_count=_safe_int(statistics.get("share_count") or raw.get("share_count")),
         collect_count=_safe_int(statistics.get("collect_count") or raw.get("collect_count")),
         duration=_safe_int(video.get("duration") or raw.get("duration")),
-        webpage_url=f"https://www.douyin.com/video/{aweme_id}",
+        webpage_url=f"https://www.douyin.com/{'note' if media_type == 'image' else 'video'}/{aweme_id}",
+        media_type=media_type,
         source_provider=DouyinPublicProfileProvider.name,
     )
 
@@ -239,6 +258,35 @@ def _extract_json_payloads(text: str) -> list:
 
 def _has_aweme_payload_marker(text: str) -> bool:
     return "aweme_list" in (text or "") or "awemeList" in (text or "")
+
+
+def _extract_profile_items_from_links(text: str, sec_user_id: str = "") -> list[ProfileVideoItem]:
+    items: list[ProfileVideoItem] = []
+    patterns = (
+        (re.compile(r"https?://(?:www\.)?douyin\.com/video/(\d{15,22})", re.I), "video"),
+        (re.compile(r"https?://(?:www\.)?douyin\.com/note/(\d{15,22})", re.I), "image"),
+        (re.compile(r"/video/(\d{15,22})", re.I), "video"),
+        (re.compile(r"/note/(\d{15,22})", re.I), "image"),
+    )
+    seen: set[str] = set()
+    for pattern, media_type in patterns:
+        for match in pattern.finditer(text or ""):
+            aweme_id = match.group(1)
+            if aweme_id in seen:
+                continue
+            seen.add(aweme_id)
+            items.append(
+                ProfileVideoItem(
+                    aweme_id=aweme_id,
+                    title=f"抖音作品 {aweme_id}",
+                    desc="公开主页链接提取，互动数据待进入单作品解析后补齐。",
+                    sec_user_id=sec_user_id,
+                    webpage_url=f"https://www.douyin.com/{'note' if media_type == 'image' else 'video'}/{aweme_id}",
+                    media_type=media_type,
+                    source_provider=DouyinPublicProfileProvider.name,
+                )
+            )
+    return items
 
 
 def _walk_aweme_items(value) -> list[dict]:
@@ -317,6 +365,28 @@ def _first_url(value) -> str:
             if result:
                 return result
     return ""
+
+
+def _media_type_from_url(url: str) -> str:
+    parsed = urlparse(url or "")
+    if "/note/" in parsed.path:
+        return "image"
+    if "/video/" in parsed.path:
+        return "video"
+    return ""
+
+
+def _media_type_from_aweme(raw: dict, video: dict, images, image_post: dict) -> str:
+    if isinstance(images, list) and images:
+        return "image"
+    if image_post:
+        return "image"
+    aweme_type = str(raw.get("aweme_type") or raw.get("awemeType") or "")
+    if aweme_type in {"68", "150"}:
+        return "image"
+    if video and any(video.get(key) for key in ("play_addr", "play_addr_h264", "play_addr_265", "bit_rate", "duration")):
+        return "video"
+    return "unknown"
 
 
 def _safe_int(value) -> int:

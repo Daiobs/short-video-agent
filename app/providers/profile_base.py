@@ -37,11 +37,16 @@ class ProfileVideoItem:
     collect_count: int = 0
     duration: int = 0
     webpage_url: str = ""
+    media_type: str = "unknown"
     source_provider: str = ""
 
     @property
     def engagement_score(self) -> int:
         return profile_engagement_score(self.like_count, self.comment_count, self.share_count)
+
+    @property
+    def can_build_case(self) -> bool:
+        return self.media_type in {"video", "unknown"}
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +63,8 @@ class ProfileVideoItem:
             "collect_count": self.collect_count,
             "duration": self.duration,
             "webpage_url": self.webpage_url or f"https://www.douyin.com/video/{self.aweme_id}",
+            "media_type": self.media_type,
+            "can_build_case": self.can_build_case,
             "engagement_score": self.engagement_score,
             "source_provider": self.source_provider,
         }
@@ -181,7 +188,7 @@ def build_profile_summary(result: ProfileScanResult) -> ProfileScanSummary:
         profile_url=result.profile_url,
         sec_user_id=result.sec_user_id,
         scanned_count=scanned_count,
-        video_count=scanned_count,
+        video_count=sum(1 for item in items if item.media_type == "video"),
         top_items=top_items,
         avg_like_count=round(sum(like_counts) / scanned_count, 2),
         avg_comment_count=round(sum(comment_counts) / scanned_count, 2),

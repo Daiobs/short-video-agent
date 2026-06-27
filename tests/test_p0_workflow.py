@@ -253,6 +253,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-sort"' in response.text
     assert 'id="profile-results-body"' in response.text
     assert "不使用 Cookie、不登录、不绕风控" in response.text
+    stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
+    script = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert ".profile-media-type.image" in stylesheet
+    assert "图文/照片" in script
+    assert "暂不能直接生成视频素材包" in script
     assert "API 与解析设置" in response.text
     assert 'id="test-llm-button"' in response.text
     assert "解析结果" in response.text
@@ -6637,6 +6642,59 @@ def test_extract_profile_items_from_public_html_payload() -> None:
     assert items[0].collect_count == 11
     assert items[0].engagement_score == 367
     assert items[0].cover_url == "https://example.com/cover.jpg"
+    assert items[0].media_type == "video"
+    assert items[0].can_build_case is True
+
+
+def test_extract_profile_items_keeps_image_posts_from_payload() -> None:
+    payload = {
+        "aweme_list": [
+            {
+                "aweme_id": "7622653084993647604",
+                "desc": "图文照片作品",
+                "author": {"nickname": "图文作者"},
+                "statistics": {"digg_count": 20},
+                "images": [{"url_list": ["https://example.com/photo.jpg"]}],
+                "create_time": 1780000001,
+            }
+        ]
+    }
+    html = f'<script id="RENDER_DATA" type="application/json">{json.dumps(payload)}</script>'
+
+    items = extract_profile_items_from_html(html)
+
+    assert len(items) == 1
+    assert items[0].aweme_id == "7622653084993647604"
+    assert items[0].media_type == "image"
+    assert items[0].can_build_case is False
+    assert items[0].webpage_url == "https://www.douyin.com/note/7622653084993647604"
+    assert items[0].cover_url == "https://example.com/photo.jpg"
+
+
+def test_extract_profile_items_from_note_links() -> None:
+    html = '<a href="https://www.douyin.com/note/7622653084993647605">图文</a>'
+
+    items = extract_profile_items_from_html(html, sec_user_id="MS4wLjABAAAAabc12345")
+
+    assert len(items) == 1
+    assert items[0].aweme_id == "7622653084993647605"
+    assert items[0].media_type == "image"
+    assert items[0].can_build_case is False
+    assert items[0].sec_user_id == "MS4wLjABAAAAabc12345"
+
+
+def test_manual_links_profile_provider_marks_note_as_image() -> None:
+    provider = ManualLinksProfileProvider()
+    result = provider.scan(
+        ProfileScanRequest(
+            manual_links="https://www.douyin.com/note/7622653084993647605",
+            count=20,
+            sort_by="like_count",
+        )
+    )
+
+    assert result.items[0].media_type == "image"
+    assert result.items[0].can_build_case is False
 
 
 def test_profile_scan_endpoint_returns_manual_items() -> None:

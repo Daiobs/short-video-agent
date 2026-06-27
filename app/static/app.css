@@ -288,6 +288,29 @@ button:disabled {
     font-size: 13px;
 }
 
+.profile-media-type {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    margin-top: 8px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #3730a3;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.profile-media-type.image {
+    background: #fff7ed;
+    color: #9a3412;
+}
+
+.profile-media-type.unknown {
+    background: #f3f4f6;
+    color: var(--muted);
+}
+
 .profile-cover {
     display: grid;
     place-items: center;
