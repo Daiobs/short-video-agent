@@ -209,7 +209,14 @@ def _configured_provider() -> OCRProvider:
     if provider_name in {"", "disabled", "none", "off"}:
         raise AppError(
             ErrorCode.OCR_PROVIDER_NOT_CONFIGURED,
-            "OCR 未启用。请在 .env 中设置 OCR_PROVIDER=rapidocr，并安装 requirements-ocr.txt。",
+            "OCR 未启用。请在 .env 中设置 OCR_PROVIDER=auto 或 OCR_PROVIDER=rapidocr，并安装 requirements-ocr.txt。",
+        )
+    if provider_name == "auto":
+        if importlib.util.find_spec("rapidocr_onnxruntime") or importlib.util.find_spec("rapidocr"):
+            return RapidOCRProvider()
+        raise AppError(
+            ErrorCode.OCR_PROVIDER_NOT_CONFIGURED,
+            "OCR_PROVIDER=auto 但未检测到 rapidocr-onnxruntime。请安装 requirements-ocr.txt，或将 OCR_PROVIDER 设为 disabled。",
         )
     if provider_name in {"rapidocr", "rapidocr_onnxruntime", "rapidocr-onnxruntime"}:
         return RapidOCRProvider()

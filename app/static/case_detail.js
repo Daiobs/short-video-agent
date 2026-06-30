@@ -62,6 +62,19 @@ const primaryAiStatus = document.getElementById("primary-ai-status");
 
 let loadedCase = null;
 
+document.querySelectorAll(".summary-actions").forEach((container) => {
+  container.addEventListener("click", (event) => {
+    const action = event.target.closest("button, a");
+    if (!action) {
+      return;
+    }
+    if (action.tagName === "BUTTON") {
+      event.preventDefault();
+    }
+    event.stopPropagation();
+  });
+});
+
 function wait(ms) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);

@@ -37,6 +37,7 @@ class Settings:
     cases_dir: Path = output_dir / "cases"
     downloads_dir: Path = output_dir / "downloads"
     calibration_dir: Path = output_dir / "calibration"
+    creator_clones_dir: Path = output_dir / "creator_clones"
     database_url: str = os.getenv(
         "DATABASE_URL",
         f"sqlite:///{(PROJECT_ROOT / 'short_video_agent.db').as_posix()}",
@@ -56,6 +57,11 @@ class Settings:
     candidate_probe_enabled: bool = os.getenv("CANDIDATE_PROBE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     candidate_probe_timeout_seconds: float = _float_env("CANDIDATE_PROBE_TIMEOUT_SECONDS", 1.2)
     candidate_probe_max_candidates: int = _int_env("CANDIDATE_PROBE_MAX_CANDIDATES", 3)
+    profile_scan_provider: str = os.getenv("PROFILE_SCAN_PROVIDER", "public").strip().lower()
+    profile_scan_api_base: str = os.getenv("PROFILE_SCAN_API_BASE", "").rstrip("/")
+    profile_scan_max_pages: int = _int_env("PROFILE_SCAN_MAX_PAGES", 1)
+    profile_scan_count_per_page: int = _int_env("PROFILE_SCAN_COUNT_PER_PAGE", 20)
+    profile_build_max_items: int = _int_env("PROFILE_BUILD_MAX_ITEMS", 10)
     keyframe_max_count: int = _int_env("KEYFRAME_MAX_COUNT", 30)
     keyframe_interval_seconds: float = _float_env("KEYFRAME_INTERVAL_SECONDS", 1.0)
     llm_provider: str = os.getenv("LLM_PROVIDER", "disabled").strip().lower()
@@ -78,6 +84,8 @@ class Settings:
     ocr_language: str = os.getenv("OCR_LANGUAGE", "ch").strip()
     ocr_max_frames: int = _int_env("OCR_MAX_FRAMES", 12)
     ocr_subtitle_crop_ratio: float = _float_env("OCR_SUBTITLE_CROP_RATIO", 0.35)
+    local_chrome_profile_mode: str = os.getenv("LOCAL_CHROME_PROFILE_MODE", "dedicated").strip().lower()
+    local_chrome_user_data_dir: str = os.getenv("LOCAL_CHROME_USER_DATA_DIR", "").strip()
 
     def ensure_directories(self) -> None:
         for directory in (
@@ -86,6 +94,7 @@ class Settings:
             self.cases_dir,
             self.downloads_dir,
             self.calibration_dir,
+            self.creator_clones_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
 

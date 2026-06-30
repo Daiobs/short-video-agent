@@ -2,7 +2,7 @@
 
 本项目是一个本地短视频爆款分析素材包生成器，不是抖音下载器。
 
-当前目标是把已授权的本地视频或单条抖音作品整理成稳定、可复用、可扩展的分析输入包：解析作品元数据、下载视频用于抽帧、生成素材包；配置大模型后，可在 case 页面自动拆解并输出选题/脚本/分镜所需的结构化结果。
+当前目标是把已授权的本地视频、单条作品或一组对标素材整理成稳定、可复用、可扩展的分析输入包：解析作品元数据、下载视频用于抽帧、生成素材包；配置大模型后，可在 case 页面或 Creator Clone Lab 中自动拆解并输出选题/脚本/分镜/创作者克隆规则所需的结构化结果。
 
 ## 合规和使用边界
 
@@ -20,16 +20,70 @@
 
 1. 首页输入单条作品链接或 aweme_id，生成本地素材包。
 2. 没有 API Key 也能生成 `video.mp4`、`contact_sheet.jpg`、`keyframes/`、`analysis_input.json` 和 `prompt.md`。
-3. 配置大模型后，可以在 case 页面点击“开始 AI 自动拆解 / 重新分析”，生成 `analysis_result.json` 和 `analysis_report.md`。
+3. 配置大模型后，可以在 case 页面生成单条作品拆解，也可以在“创作者克隆实验室”中选择 N 条对标样本，蒸馏账号级创作者规律。
 
 ## 业务模块规划
 
-项目未来会拆成两个一级主功能：
+项目当前拆成两个一级主功能：
 
 1. 单作品解析：当前可用。围绕一条视频完成链接输入、解析、下载、生成素材包、AI 拆解和 case 查看。
-2. 主页扫描：P2 阶段实现。未来用于输入主页 URL、筛选 Top N 作品，再复用“单作品解析”的素材包与 AI 拆解流程。
+2. 创作者克隆实验室：P3.0 当前推进中。用于导入一个创作者或账号的对标素材，自由选择 N 条样本，通过大模型蒸馏出选题规则、表达方式、爆款公式和 AI 创作者克隆规则。
 
-当前阶段只解决单作品解析闭环。主页扫描在页面中只保留入口和占位说明，接口 `/api/profile/scan` 与 `/api/jobs/profile-scan` 仍返回 `NOT_IMPLEMENTED`；本阶段不实现真实扫描、不接入爬虫、不绕风控。
+当前阶段的创作者克隆实验室是“公开主页扫描 + 素材池导入 + 自由选样 + 大模型蒸馏工作流”：默认不使用 Cookie、不登录、不绕风控；公开主页扫描是上线主入口，公开主页如果无法解析，会提示改用多作品链接粘贴、JSON / CSV 导入或已有 Case 导入。系统不会自动下载全部作品，也不会自动发布；选中作品后才进入素材包或蒸馏流程。
+
+## Creator Clone Lab / 创作者克隆实验室
+
+它替代原“主页扫描”作为账号级分析入口。目标不是爬取主页，而是把 `creator-clone-lab` 的方法产品化：
+
+```text
+导入素材池 -> 自由选择 N 条样本 -> 生成/复用素材包证据 -> 大模型蒸馏 -> 可视化展示 Creator Clone
+```
+
+当前导入优先级：
+
+- 公开主页扫描：优先入口。输入主页 URL 或 sec_user_id，系统先尝试不登录读取公开作品列表，成功后形成可排序筛选的素材池。能读取多少取决于平台公开返回内容。
+- 多作品链接粘贴：稳定兜底。支持一行一个链接、整段分享文案、纯 aweme_id 和混合输入，会自动去重。
+- JSON / CSV 导入：支持 `items`、`samples`、`aweme_list`、`awemeList`，兼容 `aweme_id / awemeId / id`、`title / desc`、`author / nickname`、`cover_url / cover`、`statistics.digg_count` 等字段。
+- 已有 Case 导入：轻量版支持粘贴 `case_id`，把已有素材包作为更高理解度样本参与蒸馏。
+
+样本选择：
+
+- 可勾选任意 N 条素材。
+- 支持选择全部可解析视频、综合分 Top 3、高评论样本和低表现样本。
+- 蒸馏最多选择 20 条；少于 2 条会提示“样本过少，结果仅供参考”。
+- 每条样本会显示理解状态：完整、部分、仅元数据。
+- 点击“确认样本并富化”后，系统会对选中视频逐条解析清晰度、下载、生成 Case、写入 enrichment 归档，并尝试运行 ASR / OCR。ASR 或 OCR 未配置时只记录 `provider_missing`，不会阻断素材包生成。
+- 点击“大模型蒸馏”会创建后台 Job，页面轮询进度；LLM 未配置或请求失败时会降级生成 `distill_prompt.md`，素材池和富化证据不会丢失。
+
+蒸馏输出：
+
+- `outputs/creator_clones/{set_id}/samples.json`
+- `outputs/creator_clones/{set_id}/distill_prompt.md`
+- `outputs/creator_clones/{set_id}/creator_clone_result.json`
+- `outputs/creator_clones/{set_id}/creator_clone.md`
+
+页面会把结果渲染成可读模块，而不是只显示 JSON：
+
+- 顶部总览与蒸馏置信度；
+- 样本分层；
+- 选题桶；
+- 表达模式；
+- 可复用公式；
+- AI Creator Clone 规则；
+- 候选选题；
+- 证据缺口与下一步建议。
+
+未配置 LLM 时仍会生成 `distill_prompt.md`，页面提供“复制蒸馏 Prompt”用于手动给外部大模型分析。
+
+主页扫描已知限制：
+
+- 部分抖音主页即使 URL 有效，公开 HTTP 请求也只会返回浏览器校验脚本，例如包含 `_$jsvmprt`、`byted_acrawler`、`__ac_nonce` 或验证码标记。此时系统会返回 `DOUYIN_RISK_CONTROL`。
+- `DOUYIN_RISK_CONTROL` 代表平台没有返回公开作品列表，不是主页 URL 格式错误，也不是图文/照片作品导致。
+- 当前项目边界是不登录、不使用 Cookie、不绕风控；公开主页扫描优先执行，遇到风控或结构不可解析时，推荐改用“多作品链接粘贴”“JSON / CSV 导入”或“已有 Case 导入”继续整理素材池。
+- 多作品粘贴是当前账号级分析的稳定入口；支持一行一个作品链接、整段分享文案、纯 aweme_id 和混合输入，并会显示识别、去重、忽略无效内容的统计。
+- 作品池队列默认一次最多处理 10 条，可通过 `PROFILE_BUILD_MAX_ITEMS` 调整，避免误批量下载。每条作品会逐条复用单作品解析、下载、素材包生成、enrichment 归档、可选 ASR/OCR 和可选 AI 拆解流程；某条失败不影响后续条目。
+- 后续如果确认要增强账号级扫描，可以单独评估 Cookie 模式、浏览器导出模式或授权数据源，但这会改变当前的合规和实现边界。
+- 后续再继续做更多平台适配器、浏览器辅助的本地版采集、评论导入联动和更完整的案例库策略层。
 
 核心功能：
 
@@ -40,6 +94,8 @@
 - 清晰度偏好在右上角设置弹窗中统一配置，主流程不展示候选直链。
 - 同清晰度 CDN 候选会做轻量 Range 测速，默认选择响应更快的 host。
 - 单作品主流程已收敛为一个“解析”按钮：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。
+- 创作者克隆实验室可整理素材池，支持点赞、评论、分享、综合分和发布时间排序，并显示基础素材概览。
+- 素材池可全选、取消选择、推荐组合、高赞 Top 3、高评 Top 3、高分享 Top 3、最新 Top 3 和低表现样本；“富化选中样本”默认最多 10 条，蒸馏最多选择 20 条。
 - 解析结果区会先展示本地拆解底稿：规则判断内容类型、命中原因、优先观察点、关键问题和内容占比，再继续展示 AI 摘要。
 - 右上角设置弹窗可查看 AI 是否配置，并可测试连接。
 - Case 页面默认展示创作者可读报告；素材包、`prompt.md`、`analysis_input.json`、人工验收、富化数据和质量校准功能收纳在“高级 / 后台材料”中。
@@ -61,7 +117,8 @@
 
 当前不包含：
 
-- 真实抖音主页扫描；
+- 批量下载主页全部作品；
+- 自动爬取和批量下载完整主页；
 - ZIP 导出；
 - TTS；
 - 自动字幕；
@@ -92,6 +149,8 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
+`requirements.txt` 包含网页服务、SQLite、Chrome DevTools websocket、基础素材包处理和 `yt-dlp`。其中 yt-dlp 用于后续公开视频解析 / 下载能力；如果预检显示缺失，请重新执行上面的安装命令。
+
 如果本机默认 `python3` 低于 3.10，请改用 PyCharm 或其他 Python 3.10+ 解释器。
 
 ASR 是可选重依赖，默认不安装。需要本地语音识别时再安装：
@@ -119,6 +178,80 @@ http://127.0.0.1:8765/
 ```
 
 开发启动脚本默认开启 `reload=True`，并监听 `app/` 目录。修改 Python 路由、服务、模型等模块后，Uvicorn 会自动重启进程；如果只改静态文件或模板，刷新浏览器即可。
+
+## 自用版本机 Chrome 辅助采集
+
+公开主页扫描是上线主路径：先尝试不登录、不使用 Cookie、不绕验证码地读取平台公开返回内容。抖音主页如果返回浏览器校验脚本，可以使用“本机 Chrome 辅助采集”作为自用兜底。
+
+首页只保留两个主动作：“扫描主页”和“插件辅助采集”。如果公开主页读取受限，先在本机打开带 DevTools 端口的 Chrome，再回到页面点击“插件辅助采集”。
+
+默认模式使用专用本地 profile：`outputs/local_chrome_profile/`。这样不会碰你的日常 Chrome 登录态，但第一次使用时需要在这个 Chrome 窗口里自行登录或过验证。可以手动执行：
+
+```bash
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+  --remote-debugging-port=9222 \
+  --remote-allow-origins=http://127.0.0.1:8765,http://127.0.0.1:9222 \
+  --user-data-dir="$(pwd)/outputs/local_chrome_profile" \
+  --no-first-run \
+  --no-default-browser-check \
+  https://www.douyin.com/
+```
+
+如果你希望复用日常 Chrome 里已经登录的抖音账号，可以在 `.env` 中显式打开高级模式：
+
+```env
+LOCAL_CHROME_PROFILE_MODE=existing
+# 可选：不填时 macOS 默认使用 ~/Library/Application Support/Google/Chrome
+LOCAL_CHROME_USER_DATA_DIR=
+```
+
+然后请先完全退出普通 Chrome，再按页面“本地工作流预检”里给出的命令启动带 DevTools 的 Chrome。否则 Chrome 可能复用已运行进程并忽略 `remote-debugging-port`，页面仍然检测不到调试端口。这个模式适合自用机，风险更高：调试端口能访问当前 Chrome 页面，所以仍然只允许 `127.0.0.1`，并且扫描必须经过页面确认和一次性 token。
+
+然后：
+
+1. 在这个 Chrome 中打开目标抖音主页，必要时自行登录或完成平台验证。
+2. 回到 `http://127.0.0.1:8765/` 的“创作者克隆实验室”。
+3. 输入主页 URL / sec_user_id。
+4. 勾选本机辅助采集确认。
+5. 点击“插件辅助采集”。
+6. 页面会弹出确认框；确认后系统会申请一次性 token，连接 `127.0.0.1:9222`，在当前标签页内进行几轮受控滚动，读取 DOM 中可见的作品列表和元数据，生成素材池。
+
+安全边界：
+
+- 后端自用版会拒绝非本机来源请求，只允许 `127.0.0.1` / `localhost`。
+- 即使误把服务绑定到 `0.0.0.0`，应用层也会拒绝非 loopback 客户端、非 loopback Host，以及非本机 Origin / Referer 发起的写操作。
+- 本机助手接口每次启动 Chrome、打开主页、扫描或清理辅助 profile 都需要一次性 token；首页主流程只暴露“插件辅助采集”，调试动作保留为设置预检提示、内部 API 或手动命令。
+- 启动 Chrome、打开主页、扫描主页和清理辅助 profile 除了 token 之外还需要页面确认；直接调接口但没有确认字段会被拒绝。
+- Chrome 辅助采集不读取 Cookie、不返回 Cookie、不写 Cookie 日志。
+- 返回前会过滤敏感字段，并移除作品链接、封面链接和标签页 URL 中的 query / fragment，避免泄露签名参数或临时 token。
+- 启动 Chrome 的子进程使用最小环境变量，不继承 Django 的 API Key、数据库地址或其他敏感配置。
+- 专用 Chrome profile 位于 `outputs/local_chrome_profile/`，已加入 `.gitignore`，不要提交该目录；需要清理时可删除该目录，或调用 `POST /api/local-helper/chrome/clear-profile`。该接口同样需要一次性 token 和页面确认，且只清理专用 profile，不影响普通 Chrome 用户资料。
+- 采集结果只保留账号资料、作品链接、标题、封面、可见点赞/评论/分享/收藏等元数据。
+- 请求由你的本机 Chrome 和本机 IP 发起；公开网站版不应该接收用户 Cookie。
+- 公开网站 / 本机助手模式的目标边界是：用户本机插件或助手读取本机 Chrome 登录态，用用户本机 IP 请求平台；公开网站只接收净化后的 `handoff_manifest.json`，继续做素材池筛选、富化和大模型蒸馏。
+- `handoff_manifest.json` 必须带有安全契约声明；缺少声明，或声明包含 Cookie、登录 token、签名媒体 URL、原始请求头等风险字段时，导入接口会拒绝。
+- 如果页面没有加载作品列表，或 Chrome 未以 remote debugging 模式启动，接口会返回明确错误。
+- 每次成功采集会在 `outputs/creator_clones/{set_id}/capture_audit.json` 记录最近一次采集审计，并追加到 `capture_audits.jsonl`。审计只包含采集方式、滚动轮数、样本数、安全声明和已过滤的标签页信息，不包含 Cookie、签名 URL 或登录 token。
+- `outputs/creator_clones/` 和 `samples/` 都属于本地采集 / 蒸馏运行时产物，默认已加入 `.gitignore`。这些文件可能包含账号素材清单、标题、可见互动数据、Prompt 或本地研究样本，不建议提交到 Git。
+
+## 本地工作流预检
+
+设置弹窗中的“本地工作流预检”会只读检查当前机器是否具备完整工作流能力：
+
+- 本机 Chrome 助手：是否可连接 `127.0.0.1:9222`，是否已打开抖音主页标签页；状态检查只返回匿名标签页数量和就绪状态，不返回标签页标题、URL 或作品数据。
+- Chrome DevTools websocket：本机浏览器辅助采集是否能连接到已打开的 Chrome。
+- `yt-dlp`：公开视频解析 / 下载能力是否可用。
+- `ffmpeg` / `ffprobe`：素材包抽帧、音频提取和媒体信息读取是否可用。
+- ASR：根据 `.env` 中的 `ASR_PROVIDER` 判断是否启用，并检查 `faster-whisper` 模块是否可用。
+- OCR：根据 `.env` 中的 `OCR_PROVIDER` 判断是否启用，并检查 `rapidocr-onnxruntime` / `rapidocr` 模块是否可用。
+- 大模型：复用 LLM 配置状态，只显示是否配置，不返回 API Key。
+- 本机访问防护：确认应用层启用 loopback / Host / Origin / Referer 防护。
+- 开发服务监听地址：确认 `scripts/dev_server.py` 固定监听 `127.0.0.1`，避免用 `0.0.0.0` 暴露自用版接口。
+- 助手确认门槛：确认 Chrome 启动、打开主页、扫描主页和清理辅助 profile 都需要一次性 token 和页面确认。
+- 公开站 / 本机助手边界：确认公开网站只接收净化后的账号素材清单，本机请求由用户 Chrome / 本机 IP 发起，Cookie、登录 token、签名媒体 URL 和原始请求头不会进入交接包。
+- 运行产物忽略：确认 `outputs/creator_clones/`、`outputs/local_chrome_profile/`、`samples/` 已被 `.gitignore` 排除。
+
+预检接口不会读取 Cookie，不会发起平台扫描，也不会调用大模型；它只用于告诉用户当前本机环境能跑到哪一步。真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的“插件辅助采集”。
 
 ## 配置
 
@@ -404,24 +537,31 @@ http://127.0.0.1:8765/cases/{case_id}
 - `POST /api/cases/{case_id}/ocr`
 - `GET /api/settings/llm`
 - `POST /api/settings/llm/test`
+- `GET /api/settings/preflight`
 - `POST /api/videos/import-single`
 - `POST /api/videos/qualities`
+- `POST /api/profile/scan`
+- `POST /api/creator-clone/import`
+- `GET /api/creator-clone/sets/{set_id}`
+- `POST /api/creator-clone/distill`
+- `GET /api/creator-clone/sets/{set_id}/files/{filename}`
+- `GET /api/local-helper/chrome/status`
+- `POST /api/local-helper/chrome/scan-token`
+- `POST /api/local-helper/chrome/launch`
+- `POST /api/local-helper/chrome/open-profile`
+- `POST /api/local-helper/chrome/scan-profile`
+- `POST /api/local-helper/chrome/clear-profile`
 - `POST /api/downloads`
+- `POST /api/jobs/profile-scan`
 - `POST /api/jobs/resolve-qualities`
 - `POST /api/jobs/download`
 - `POST /api/jobs/download-and-build-case`
+- `POST /api/jobs/creator-clone-distill`
 - `POST /api/jobs/download-build-analyze-case`
 - `POST /api/jobs/analyze-case`
 - `POST /api/jobs/enrich-case`
 - `POST /api/jobs/asr-case`
 - `POST /api/jobs/ocr-case`
-
-占位接口：
-
-- `POST /api/profile/scan`
-- `POST /api/jobs/profile-scan`
-
-占位接口会返回 `NOT_IMPLEMENTED`，不假装成功。
 
 ## 错误码
 
@@ -451,12 +591,15 @@ http://127.0.0.1:8765/cases/{case_id}
 - `AUTO_ANALYSIS_FAILED`
 - `ENRICHMENT_FAILED`
 - `COMMENTS_IMPORT_FAILED`
+- `UNSUPPORTED_PROFILE_ITEM`
+- `PROFILE_BUILD_QUEUE_LIMIT`
+- `PROFILE_BUILD_ITEM_FAILED`
 - `ASR_PROVIDER_NOT_CONFIGURED`
 - `ASR_FAILED`
 - `OCR_PROVIDER_NOT_CONFIGURED`
 - `OCR_FAILED`
 
-下载、主页扫描、Provider 相关错误码已集中定义在 `app/errors.py`，后续接入真实功能时复用。
+下载、素材池导入、主页扫描、Provider 相关错误码已集中定义在 `app/errors.py`，后续接入真实功能时复用。
 
 ## 测试
 
@@ -468,5 +611,6 @@ pytest -q
 
 ## 后续路线
 
-- P2：抖音主页 HTTP 扫描、Top N 点赞排序、作品表格、排序切换。
-- P3：ZIP 导出、完整错误提示、README 扩展、下载安全测试补齐。
+- P3.1：把已有 Case 列表做成可视化导入器，减少手动粘贴 `case_id`。
+- P3.2：把 ASR / OCR / 评论富化摘要自动并入 Creator Clone 蒸馏输入。
+- P3.3：补更多平台 adapter 和本地研究模式，不把公开主页扫描作为唯一入口。
