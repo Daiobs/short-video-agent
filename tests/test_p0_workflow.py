@@ -9399,6 +9399,13 @@ def test_creator_clone_distill_job_unconfigured_returns_prompt(monkeypatch) -> N
 def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) -> None:
     class FakeProvider:
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            if "单条 Map 拆解助手" in prompt:
+                return {
+                    "one_line_summary": "单条样本短拆解",
+                    "content_category": "light_story",
+                    "hook": {"first_impression": "标题判断题带动停留"},
+                    "copyable_points": ["判断题标题"],
+                }
             assert "高赞样本" in prompt
             return {
                 "summary": "用轻剧情和标题判断题驱动停留。",
@@ -9438,7 +9445,11 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
 
 def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> None:
     class FakeProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            self.calls += 1
             assert "Map 摘要" in prompt
             assert "case_analysis_report_excerpt" not in prompt
             return {
@@ -9447,8 +9458,9 @@ def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> N
                 "creator_clone_spec": {"taste": "证据优先"},
             }
 
+    provider = FakeProvider()
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: FakeProvider())
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
     response = client.post(
         "/api/creator-clone/distill",
         json={
@@ -9470,6 +9482,7 @@ def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> N
     map_summaries = json.loads(Path(payload["exports"]["map_summaries_json"]).read_text(encoding="utf-8"))
     assert len(map_summaries) == 2
     assert map_summaries[0]["sample_id"] == "sample_retry_a"
+    assert provider.calls == 1
 
 
 def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) -> None:
@@ -9479,8 +9492,8 @@ def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) ->
 
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
             self.prompts.append(prompt)
-            assert "Map 摘要" in prompt
-            assert "Reduce 阶段" in prompt
+            assert "样本摘要" in prompt
+            assert "极简合法 JSON" in prompt
             assert "请严格返回这个 JSON 结构" not in prompt
             assert "case_analysis_report_excerpt" not in prompt
             return {
@@ -9510,13 +9523,21 @@ def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) ->
     assert payload["result"]["sample_overview"]["selected_count"] == 3
     assert payload["map_reduce"]["enabled"] is True
     assert len(provider.prompts) == 1
-    assert len(provider.prompts[0]) < 7000
+    assert len(provider.prompts[-1]) < 2500
     assert Path(payload["exports"]["map_summaries_json"]).is_file()
+    assert Path(payload["exports"]["distill_prompt_micro_md"]).is_file()
 
 
 def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch) -> None:
     class FakeProvider:
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            if "单条 Map 拆解助手" in prompt:
+                return {
+                    "one_line_summary": "后台任务单条 Map 完成",
+                    "content_category": "workflow",
+                    "hook": {"first_impression": "先看高赞高评"},
+                    "copyable_points": ["按表现分层"],
+                }
             assert "高赞样本" in prompt
             return {
                 "summary": "后台任务蒸馏完成。",
