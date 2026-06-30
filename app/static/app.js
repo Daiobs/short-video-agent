@@ -725,9 +725,10 @@ function setCreatorCloneStep(step = getCreatorCloneWizardState()) {
   const state = step || getCreatorCloneWizardState();
   const selected = selectedProfileItems();
   const hasSelected = selected.length > 0;
-  const canDistill = hasSelected && selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES;
+  const canSingleDistill = hasSelected && selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES;
+  const canBatchDistill = hasSelected && selected.length <= PROFILE_BUILD_MAX_ITEMS;
   profileEnrichmentSection?.classList.toggle("hidden", !hasSelected && !["ENRICH_READY", "ENRICHING"].includes(state));
-  profileDistillationSection?.classList.toggle("hidden", !canDistill && !["DISTILL_READY", "DISTILLING", "EXPORT_READY"].includes(state));
+  profileDistillationSection?.classList.toggle("hidden", !canSingleDistill && !canBatchDistill && !["DISTILL_READY", "DISTILLING", "EXPORT_READY"].includes(state));
   renderCreatorCloneNextAction();
 }
 
@@ -742,9 +743,11 @@ function renderCreatorCloneOverview(summary = {}) {
   const nextAction = !profileItems.length
     ? "先导入一组对标素材"
     : !selected.length
-      ? "选择 3-20 条代表样本"
+      ? `选择 3-${PROFILE_BUILD_MAX_ITEMS} 条样本`
       : selectedBuildable.some((item) => !item.has_frames)
       ? "开始富化证据"
+      : selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
+        ? "可以开始分批大模型蒸馏"
         : "可以开始大模型蒸馏";
   const total = summary.scanned_count || profileItems.length;
   profileSummary.innerHTML = `
@@ -771,7 +774,7 @@ function updateCreatorCloneSelectionStatus() {
     {full: 0, partial: 0, metadata_only: 0},
   );
   if (creatorCloneSelectionStatus) {
-    creatorCloneSelectionStatus.textContent = `已选 ${selected.length} 条；可富化 ${buildable.length}/${PROFILE_BUILD_MAX_ITEMS} 条；不可富化 ${unbuildableCount} 条；单次蒸馏最多 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条。完整 ${counts.full || 0}，部分 ${counts.partial || 0}，仅元数据 ${counts.metadata_only || 0}。`;
+    creatorCloneSelectionStatus.textContent = `已选 ${selected.length} 条；可富化 ${buildable.length}/${PROFILE_BUILD_MAX_ITEMS} 条；不可富化 ${unbuildableCount} 条；单次蒸馏最多 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条，分批蒸馏最多 ${PROFILE_BUILD_MAX_ITEMS} 条。完整 ${counts.full || 0}，部分 ${counts.partial || 0}，仅元数据 ${counts.metadata_only || 0}。`;
   }
   renderProfileSelectionBasket(selected);
   if (profileSelectedBuildButton) {
@@ -837,7 +840,7 @@ function renderProfileSelectionBasket(selected) {
   profileSelectionBasket.innerHTML = `
     <div class="selection-basket-head">
       <strong>本轮样本篮</strong>
-      <span>${selected.length}/${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条</span>
+      <span>${selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES ? `${selected.length}/${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条` : `已选 ${selected.length} 条 · 分批上限 ${PROFILE_BUILD_MAX_ITEMS}`}</span>
     </div>
     <div class="selection-basket-list">
       ${selected
@@ -902,7 +905,7 @@ function renderProfileEnrichmentPlan(selected, buildable) {
     ? `可下载视频超过当前富化上限 ${PROFILE_BUILD_MAX_ITEMS} 条，请减少视频样本，避免误批量下载。`
     : "";
   const distillLimitNote = selectedItems.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
-    ? `本轮可先富化全部样本；大模型蒸馏仍建议从中选择 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条代表样本，避免上下文过长。`
+    ? `本轮可先富化全部样本；单次蒸馏上限 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条，超过后请使用“分批蒸馏已选样本”做账号级汇总。`
     : "";
   const providerNote = [
     counts.asrProviderMissing ? `ASR provider 未配置 ${counts.asrProviderMissing} 条` : "",
@@ -2096,11 +2099,17 @@ async function pollProfileQueue(jobId) {
     }
     updateCreatorCloneSelectionStatus();
     if (profileAutoDistill?.checked) {
-      profileScanStatus.textContent = "样本富化队列完成，正在继续进行大模型蒸馏...";
-      await distillSelectedCreatorClone({confirmReadiness: false, triggeredByQueue: true});
+      const selected = selectedProfileItems();
+      if (selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES) {
+        profileScanStatus.textContent = "样本富化队列完成，正在继续进行分批大模型蒸馏...";
+        await batchDistillSelectedCreatorClone({confirm: false, triggeredByQueue: true});
+      } else {
+        profileScanStatus.textContent = "样本富化队列完成，正在继续进行大模型蒸馏...";
+        await distillSelectedCreatorClone({confirmReadiness: false, triggeredByQueue: true});
+      }
       return;
     }
-    profileScanStatus.textContent = "样本富化队列完成。请确认代表样本仍然勾选，然后点击“大模型蒸馏”。";
+    profileScanStatus.textContent = "样本富化队列完成。请确认样本仍然勾选，然后点击“大模型蒸馏”或“分批蒸馏已选样本”。";
     return;
   }
   if (job.status === "failed") {
@@ -2751,7 +2760,7 @@ async function distillSelectedCreatorClone(options = {}) {
   }
 }
 
-async function batchDistillSelectedCreatorClone() {
+async function batchDistillSelectedCreatorClone(options = {}) {
   const selected = selectedProfileItems();
   if (!selected.length) {
     profileScanStatus.textContent = "请先选择要分批蒸馏的样本。";
@@ -2761,9 +2770,11 @@ async function batchDistillSelectedCreatorClone() {
     profileScanStatus.textContent = `当前分批蒸馏最多支持 ${PROFILE_BUILD_MAX_ITEMS} 条样本。`;
     return;
   }
-  const shouldContinue = window.confirm(
-    `将把 ${selected.length} 条样本按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批进行蒸馏，最后再汇总为账号级报告。这个过程可能会多次调用大模型并耗时较久。确认开始？`,
-  );
+  const shouldContinue = options.confirm === false
+    ? true
+    : window.confirm(
+      `将把 ${selected.length} 条样本按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批进行蒸馏，最后再汇总为账号级报告。这个过程可能会多次调用大模型并耗时较久。确认开始？`,
+    );
   if (!shouldContinue) {
     profileScanStatus.textContent = "已取消分批蒸馏。";
     return;
@@ -2777,7 +2788,7 @@ async function batchDistillSelectedCreatorClone() {
     jobCard.classList.remove("hidden");
     progressBar.style.width = "0%";
     jobMessage.className = "job-message";
-    jobMessage.textContent = "正在创建分批蒸馏任务...";
+    jobMessage.textContent = options.triggeredByQueue ? "富化完成，正在创建分批蒸馏任务..." : "正在创建分批蒸馏任务...";
     jobResult.textContent = "";
     const response = await fetch("/api/jobs/creator-clone-batch-distill", {
       method: "POST",

@@ -535,6 +535,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "/api/jobs/creator-clone-batch-distill" in script
     assert "function batchDistillSelectedCreatorClone" in script
     assert "按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批" in script
+    assert "const canBatchDistill = hasSelected && selected.length <= PROFILE_BUILD_MAX_ITEMS" in script
+    assert "await batchDistillSelectedCreatorClone({confirm: false, triggeredByQueue: true})" in script
+    assert "分批蒸馏最多 ${PROFILE_BUILD_MAX_ITEMS} 条" in script
     assert 'fetch("/api/creator-clone/distill"' not in script
     assert "function profileEvidenceCounts" in script
     assert "富化计划" in script
