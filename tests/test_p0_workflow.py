@@ -9345,10 +9345,12 @@ def test_creator_clone_distill_llm_request_failure_returns_prompt_recovery(monke
     assert payload["error_code"] == "LLM_REQUEST_FAILED"
     assert payload["recovery"] == "prompt_only"
     assert "prompt" in payload
-    assert "本地预分层样本" in payload["prompt"]
+    assert "Map 摘要" in payload["prompt"]
+    assert payload["map_reduce"]["enabled"] is True
     assert "7622653084993647603" in payload["prompt"]
     assert payload["set"]["set_id"] == set_id
     assert Path(payload["exports"]["distill_prompt_md"]).is_file()
+    assert Path(payload["exports"]["map_summaries_json"]).is_file()
     assert "sk-" not in Path(payload["exports"]["distill_prompt_md"]).read_text(encoding="utf-8")
 
 
@@ -9434,25 +9436,19 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
 
 
-def test_creator_clone_distill_retries_with_compact_prompt_after_llm_failure(monkeypatch) -> None:
-    class FlakyProvider:
-        def __init__(self) -> None:
-            self.calls = 0
-
+def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> None:
+    class FakeProvider:
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
-            self.calls += 1
-            if self.calls == 1:
-                raise AppError(ErrorCode.LLM_REQUEST_FAILED, "上下文过长或网关超时。")
+            assert "Map 摘要" in prompt
             assert "case_analysis_report_excerpt" not in prompt
             return {
-                "summary": "精简证据包蒸馏成功。",
+                "summary": "Map-Reduce 蒸馏成功。",
                 "creator_positioning": {"what_the_creator_sells": "稳定审美"},
                 "creator_clone_spec": {"taste": "证据优先"},
             }
 
-    provider = FlakyProvider()
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: FakeProvider())
     response = client.post(
         "/api/creator-clone/distill",
         json={
@@ -9467,24 +9463,28 @@ def test_creator_clone_distill_retries_with_compact_prompt_after_llm_failure(mon
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["result"]["summary"] == "精简证据包蒸馏成功。"
+    assert payload["result"]["summary"] == "Map-Reduce 蒸馏成功。"
     assert payload["result"]["sample_overview"]["selected_count"] == 2
-    assert any("精简证据包重试成功" in warning for warning in payload["result"]["sample_overview"]["warnings"])
-    assert provider.calls == 2
+    assert payload["map_reduce"]["enabled"] is True
+    assert payload["map_reduce"]["map_summary_count"] == 2
+    map_summaries = json.loads(Path(payload["exports"]["map_summaries_json"]).read_text(encoding="utf-8"))
+    assert len(map_summaries) == 2
+    assert map_summaries[0]["sample_id"] == "sample_retry_a"
 
 
-def test_creator_clone_distill_uses_lite_prompt_for_three_samples(monkeypatch) -> None:
+def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) -> None:
     class FakeProvider:
         def __init__(self) -> None:
             self.prompts: list[str] = []
 
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
             self.prompts.append(prompt)
-            assert "返回 JSON 字段" in prompt
+            assert "Map 摘要" in prompt
+            assert "Reduce 阶段" in prompt
             assert "请严格返回这个 JSON 结构" not in prompt
             assert "case_analysis_report_excerpt" not in prompt
             return {
-                "summary": "三条样本轻量蒸馏成功。",
+                "summary": "三条样本 Map-Reduce 蒸馏成功。",
                 "creator_positioning": {"what_the_creator_sells": "美拍氛围和人物吸引"},
                 "creator_clone_spec": {"taste": "短、准、视觉先行"},
             }
@@ -9506,10 +9506,12 @@ def test_creator_clone_distill_uses_lite_prompt_for_three_samples(monkeypatch) -
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["result"]["summary"] == "三条样本轻量蒸馏成功。"
+    assert payload["result"]["summary"] == "三条样本 Map-Reduce 蒸馏成功。"
     assert payload["result"]["sample_overview"]["selected_count"] == 3
+    assert payload["map_reduce"]["enabled"] is True
     assert len(provider.prompts) == 1
     assert len(provider.prompts[0]) < 7000
+    assert Path(payload["exports"]["map_summaries_json"]).is_file()
 
 
 def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch) -> None:

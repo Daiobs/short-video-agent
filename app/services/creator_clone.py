@@ -792,6 +792,186 @@ def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list
 """
 
 
+def build_sample_map_summaries(selected_samples: list[CloneSample]) -> list[dict]:
+    return [sample_map_summary(sample) for sample in selected_samples]
+
+
+def sample_map_summary(sample: CloneSample) -> dict:
+    summary = {
+        "sample_id": sample.sample_id,
+        "aweme_id": sample.aweme_id,
+        "case_id": sample.case_id,
+        "title": _truncate_text(sample.title or sample.desc or "", 140),
+        "author": _truncate_text(sample.author, 80),
+        "media_type": sample.media_type,
+        "metrics": {
+            "like_count": sample.like_count,
+            "comment_count": sample.comment_count,
+            "share_count": sample.share_count,
+            "collect_count": sample.collect_count,
+            "engagement_score": sample.engagement_score,
+        },
+        "evidence_status": _sample_evidence_status(sample),
+        "map_source": "metadata",
+        "one_line_summary": _truncate_text(sample.notes or sample.title or "仅有元数据，不能判断画面和表达结构。", 180),
+        "content_category": "",
+        "hook": {},
+        "visual": {},
+        "content_ratio": [],
+        "copyable_points": [],
+        "avoid_copying": [],
+        "remake_angle": "",
+        "evidence": {},
+        "risks": [],
+        "next_actions": [],
+    }
+    if sample.case_id:
+        case_summary = _case_map_summary(_case_dir_from_sample(sample))
+        summary.update(case_summary)
+    return _drop_empty_prompt_values(summary)
+
+
+def _case_map_summary(case_dir: Path) -> dict:
+    analysis_result = _read_json(case_dir / "analysis_result.json")
+    analysis_input = _read_json(case_dir / "analysis_input.json")
+    evidence_pack = _case_prompt_evidence_pack(case_dir)
+    if not analysis_result:
+        fallback = {
+            "map_source": "case_evidence",
+            "one_line_summary": _truncate_text(
+                analysis_input.get("title") or analysis_input.get("source_url") or "素材包已生成，但尚未完成单条 AI 拆解。",
+                180,
+            ),
+            "content_category": analysis_input.get("content_category") or "",
+            "content_category_label": analysis_input.get("content_category_label") or "",
+            "video": analysis_input.get("video") if isinstance(analysis_input.get("video"), dict) else {},
+            "evidence": evidence_pack,
+            "next_actions": ["先完成单条视频拆解，再做创作者规律蒸馏。"],
+        }
+        return _drop_empty_prompt_values(fallback)
+
+    hook = analysis_result.get("hook_analysis") if isinstance(analysis_result.get("hook_analysis"), dict) else {}
+    visual = analysis_result.get("visual_analysis") if isinstance(analysis_result.get("visual_analysis"), dict) else {}
+    replication = analysis_result.get("replication") if isinstance(analysis_result.get("replication"), dict) else {}
+    evidence_summary = analysis_result.get("evidence_summary") if isinstance(analysis_result.get("evidence_summary"), dict) else {}
+    publish_package = analysis_result.get("publish_package") if isinstance(analysis_result.get("publish_package"), dict) else {}
+    copywriting = analysis_result.get("copywriting_analysis") if isinstance(analysis_result.get("copywriting_analysis"), dict) else {}
+    speech = analysis_result.get("speech_analysis") if isinstance(analysis_result.get("speech_analysis"), dict) else {}
+    screen_text = analysis_result.get("screen_text_analysis") if isinstance(analysis_result.get("screen_text_analysis"), dict) else {}
+    comments = analysis_result.get("comment_insights") if isinstance(analysis_result.get("comment_insights"), dict) else {}
+    return _drop_empty_prompt_values(
+        {
+            "map_source": "analysis_result",
+            "one_line_summary": _truncate_text(analysis_result.get("summary") or "", 220),
+            "content_category": analysis_result.get("content_category") or analysis_input.get("content_category") or "",
+            "content_category_label": analysis_result.get("content_category_label")
+            or analysis_input.get("content_category_label")
+            or "",
+            "confidence": analysis_result.get("confidence"),
+            "hook": {
+                "first_impression": _truncate_text(hook.get("first_impression") or "", 120),
+                "why_stop_scrolling": _truncate_text(hook.get("why_stop_scrolling") or "", 160),
+                "first_3_seconds": _short_list(hook.get("first_3_seconds"), 4, 120),
+                "optimization": _truncate_text(hook.get("optimization") or "", 140),
+            },
+            "visual": {
+                "scene": _truncate_text(visual.get("scene") or "", 80),
+                "subject": _truncate_text(visual.get("subject") or "", 120),
+                "composition": _truncate_text(visual.get("composition") or "", 100),
+                "lighting_color": _truncate_text(visual.get("lighting_color") or "", 100),
+                "movement_rhythm": _truncate_text(visual.get("movement_rhythm") or "", 140),
+                "style_keywords": _short_list(visual.get("style_keywords"), 8, 40),
+            },
+            "copywriting": {
+                "title_click_reason": _truncate_text(copywriting.get("title_click_reason") or "", 140),
+                "comment_trigger": _truncate_text(copywriting.get("comment_trigger") or "", 120),
+                "reusable_patterns": _short_list(copywriting.get("reusable_patterns"), 4, 100),
+            },
+            "speech": {
+                "has_speech": bool(speech.get("has_speech")),
+                "opening_line": _truncate_text(speech.get("opening_line") or "", 140),
+                "spoken_hook": _truncate_text(speech.get("spoken_hook") or "", 140),
+                "script_structure": _truncate_text(speech.get("script_structure") or "", 180),
+            },
+            "screen_text": {
+                "cover_text": _truncate_text(screen_text.get("cover_text") or "", 120),
+                "subtitle_role": _truncate_text(screen_text.get("subtitle_role") or "", 140),
+                "key_phrases": _short_list(screen_text.get("key_phrases"), 5, 60),
+            },
+            "comments": {
+                "audience_needs": _short_list(comments.get("audience_needs"), 5, 80),
+                "comment_hooks": _short_list(comments.get("comment_hooks"), 5, 80),
+            },
+            "content_ratio": _short_content_ratio(analysis_result.get("content_ratio")),
+            "emotion_path": _short_list(analysis_result.get("emotion_path"), 4, 120),
+            "copyable_points": _short_list(replication.get("copyable_points"), 5, 140),
+            "avoid_copying": _short_list(replication.get("avoid_copying"), 5, 140),
+            "remake_angle": _truncate_text(replication.get("remake_angle") or "", 180),
+            "opening_3s": _truncate_text(replication.get("opening_3s") or "", 180),
+            "publish_package": {
+                "title": _truncate_text(publish_package.get("title") or "", 100),
+                "caption": _truncate_text(publish_package.get("caption") or "", 160),
+                "hashtags": _short_list(publish_package.get("hashtags"), 8, 40),
+            },
+            "evidence": {
+                "visual_input_mode": evidence_summary.get("visual_input_mode") or "",
+                "visual_evidence": _short_evidence_list(evidence_summary.get("visual_evidence")),
+                "asr_evidence": _short_evidence_list(evidence_summary.get("asr_evidence")),
+                "ocr_evidence": _short_evidence_list(evidence_summary.get("ocr_evidence")),
+                "comment_evidence": _short_evidence_list(evidence_summary.get("comment_evidence")),
+                "evidence_gaps": _short_list(evidence_summary.get("evidence_gaps"), 5, 120),
+            },
+            "risks": _short_list(analysis_result.get("risks"), 5, 120),
+            "next_actions": _short_list(analysis_result.get("next_actions"), 5, 120),
+        }
+    )
+
+
+def build_reduce_distill_prompt(
+    sample_set: CloneSampleSet,
+    selected_samples: list[CloneSample],
+    map_summaries: list[dict],
+    distill_mode: str = "quick",
+) -> str:
+    segments = performance_segments(selected_samples)
+    evidence_matrix = selected_evidence_matrix(selected_samples)
+    evidence_constraints = selected_evidence_constraints(selected_samples)
+    return f"""你是 Creator Clone Lab 的 Reduce 蒸馏助手。请只基于下面的单条视频 Map 摘要做跨样本归纳，输出合法 JSON，不要 Markdown。
+
+工作方式：
+- Map 阶段已经完成单条视频短拆解；你不要重新分析原视频，也不要要求更多原始素材。
+- Reduce 阶段只负责找 2-3 条样本之间反复出现的内容规律、流量来源、可复刻公式和风险边界。
+- 如果证据不足，写进 evidence_gaps；不要把没有 ASR/OCR/评论的部分说死。
+- 美拍/COS/颜值类优先归纳：第一眼吸引、人物人设、动作节奏、妆造/光线/构图、标题话题和互动引导。
+- 输出短、稳、可展示，避免长篇泛化。
+
+返回 JSON 字段：
+{{
+  "summary": "",
+  "creator_positioning": {{"what_the_creator_sells": "", "audience_promise": "", "hidden_genre": "", "audience_assumption": ""}},
+  "performance_segments": {{"highest_like_samples": [], "highest_comment_samples": [], "highest_share_samples": [], "highest_collect_samples": [], "weak_or_reference_samples": []}},
+  "topic_buckets": [],
+  "thinking_patterns": {{"assumptions": [], "tension_sources": [], "detail_selection_rules": [], "novelty_vs_familiarity": ""}},
+  "expression_patterns": {{"opening_hooks": [], "scene_order": [], "shot_types": [], "subtitle_voice": [], "visual_style": [], "ending_patterns": []}},
+  "transferable_formulas": [],
+  "creator_clone_spec": {{"taste": "", "topic_selection_rules": [], "structure_rules": [], "expression_rules": [], "visual_rules": [], "caption_voice": "", "ending_rules": [], "anti_patterns": [], "self_check_rubric": []}},
+  "candidate_ideas": [],
+  "evidence_gaps": [],
+  "next_actions": []
+}}
+
+蒸馏模式：{distill_mode}
+素材池标题：{sample_set.title}
+创作者：{sample_set.creator_name or "未知"}
+平台：{sample_set.source_platform}
+账号可见资料：{json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False)}
+证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
+证据约束：{json.dumps(evidence_constraints, ensure_ascii=False)}
+本地分层：{json.dumps(segments, ensure_ascii=False)}
+Map 摘要：{json.dumps(map_summaries, ensure_ascii=False)}
+"""
+
+
 def _lite_sample_prompt_payload(sample: CloneSample) -> dict:
     return {
         "sample_id": sample.sample_id,
@@ -968,6 +1148,77 @@ def _truncate_text(value: str, limit: int) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _short_list(value, limit: int = 5, item_limit: int = 120) -> list:
+    if value is None:
+        return []
+    rows = value if isinstance(value, list) else [value]
+    result: list = []
+    for item in rows[:limit]:
+        if isinstance(item, dict):
+            result.append(_short_dict(item, item_limit=item_limit))
+        else:
+            text = _truncate_text(str(item), item_limit)
+            if text:
+                result.append(text)
+    return result
+
+
+def _short_dict(value: dict, item_limit: int = 120) -> dict:
+    shortened = {}
+    for key, item in value.items():
+        if isinstance(item, str):
+            shortened[key] = _truncate_text(item, item_limit)
+        elif isinstance(item, list):
+            shortened[key] = _short_list(item, 4, max(40, item_limit // 2))
+        elif isinstance(item, dict):
+            shortened[key] = _short_dict(item, item_limit=max(40, item_limit // 2))
+        else:
+            shortened[key] = item
+    return _drop_empty_prompt_values(shortened)
+
+
+def _short_content_ratio(value) -> list[dict]:
+    ratios = value if isinstance(value, list) else []
+    result: list[dict] = []
+    for item in ratios[:5]:
+        if isinstance(item, dict):
+            result.append(
+                _drop_empty_prompt_values(
+                    {
+                        "name": _truncate_text(item.get("name") or item.get("label") or "", 40),
+                        "percent": item.get("percent"),
+                        "reason": _truncate_text(item.get("reason") or item.get("description") or "", 100),
+                    }
+                )
+            )
+        else:
+            text = _truncate_text(str(item), 100)
+            if text:
+                result.append({"name": text})
+    return [item for item in result if item]
+
+
+def _short_evidence_list(value) -> list[dict]:
+    rows = value if isinstance(value, list) else []
+    result: list[dict] = []
+    for item in rows[:4]:
+        if isinstance(item, dict):
+            result.append(
+                _drop_empty_prompt_values(
+                    {
+                        "claim": _truncate_text(item.get("claim") or "", 100),
+                        "evidence": _truncate_text(item.get("evidence") or "", 140),
+                        "confidence": item.get("confidence") or "",
+                    }
+                )
+            )
+        else:
+            text = _truncate_text(str(item), 120)
+            if text:
+                result.append({"evidence": text})
+    return [item for item in result if item]
+
+
 def _drop_empty_prompt_values(value):
     if isinstance(value, dict):
         return {
@@ -994,13 +1245,16 @@ def distill_creator_clone(
         sample.selected = sample.sample_id in set(sample_set.selected_sample_ids)
     save_sample_set(sample_set)
 
-    use_lite_prompt = len(selected_samples) >= 3
+    use_map_reduce = len(selected_samples) >= 2
+    output_dir = creator_clone_dir(sample_set.set_id)
+    map_summaries = build_sample_map_summaries(selected_samples) if use_map_reduce else []
+    if map_summaries:
+        _write_json(output_dir / "map_summaries.json", map_summaries)
     prompt = (
-        build_lite_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode)
-        if use_lite_prompt
+        build_reduce_distill_prompt(sample_set, selected_samples, map_summaries, distill_mode=distill_mode)
+        if use_map_reduce
         else build_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode, include_case_reports=include_case_reports)
     )
-    output_dir = creator_clone_dir(sample_set.set_id)
     (output_dir / "distill_prompt.md").write_text(prompt, encoding="utf-8")
 
     if not llm_is_configured():
@@ -1010,7 +1264,7 @@ def distill_creator_clone(
     try:
         result = llm.analyze(prompt, [])
     except AppError as error:
-        if error.code not in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID} or not include_case_reports or use_lite_prompt:
+        if error.code not in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID} or not include_case_reports or use_map_reduce:
             raise
         compact_prompt = build_distill_prompt(
             sample_set,
@@ -1032,6 +1286,10 @@ def distill_creator_clone(
         "result": normalized,
         "exports": export_paths(sample_set.set_id),
         "warnings": warnings,
+        "map_reduce": {
+            "enabled": use_map_reduce,
+            "map_summary_count": len(map_summaries),
+        },
     }
 
 
@@ -1041,14 +1299,26 @@ def prompt_only_result(sample_set: CloneSampleSet, selected_sample_ids: list[str
     for sample in sample_set.samples:
         sample.selected = sample.sample_id in set(sample_set.selected_sample_ids)
     save_sample_set(sample_set)
-    prompt = build_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode, include_case_reports=include_case_reports)
     output_dir = creator_clone_dir(sample_set.set_id)
+    use_map_reduce = len(selected_samples) >= 2
+    map_summaries = build_sample_map_summaries(selected_samples) if use_map_reduce else []
+    if map_summaries:
+        _write_json(output_dir / "map_summaries.json", map_summaries)
+    prompt = (
+        build_reduce_distill_prompt(sample_set, selected_samples, map_summaries, distill_mode=distill_mode)
+        if use_map_reduce
+        else build_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode, include_case_reports=include_case_reports)
+    )
     (output_dir / "distill_prompt.md").write_text(prompt, encoding="utf-8")
     return {
         "set": sample_set.to_dict(),
         "prompt": prompt,
         "exports": export_paths(sample_set.set_id),
         "warnings": warnings,
+        "map_reduce": {
+            "enabled": use_map_reduce,
+            "map_summary_count": len(map_summaries),
+        },
     }
 
 
@@ -1183,6 +1453,7 @@ def export_paths(set_id: str) -> dict:
     return {
         "samples_json": str(base / "samples.json"),
         "handoff_manifest_json": str(base / "handoff_manifest.json"),
+        "map_summaries_json": str(base / "map_summaries.json"),
         "distill_prompt_md": str(base / "distill_prompt.md"),
         "creator_clone_result_json": str(base / "creator_clone_result.json"),
         "creator_clone_md": str(base / "creator_clone.md"),
