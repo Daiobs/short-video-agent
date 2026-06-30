@@ -137,11 +137,11 @@ def _chrome_status() -> dict:
     if diagnostics.get("ready_for_profile_scan"):
         status = "ready"
         message = diagnostics.get("status_message") or "已检测到可扫描的抖音标签页。"
-        action_hint = "可以回到创作者克隆实验室，确认安全边界后点击“插件辅助采集”。"
+        action_hint = "可以回到创作者克隆实验室，确认安全边界后点击“本机 Chrome 辅助入口”。"
     elif diagnostics.get("chrome_available"):
         status = "partial"
         message = diagnostics.get("status_message") or "Chrome DevTools 可用，但还没有抖音主页标签页。"
-        action_hint = "请在调试 Chrome 中手动打开目标抖音主页；状态检查只匿名统计标签页，读取作品列表仍需回到页面点击“插件辅助采集”确认。"
+        action_hint = "请在调试 Chrome 中手动打开目标抖音主页；状态检查只匿名统计标签页，读取作品列表仍需回到页面点击“本机 Chrome 辅助入口”确认。"
     else:
         status = "missing"
         message = diagnostics.get("status_message") or "未检测到 Chrome DevTools。"

@@ -288,10 +288,12 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="creator-clone-current-step"' in response.text
     assert 'id="creator-clone-next-summary"' in response.text
     assert 'id="creator-clone-next-button"' in response.text
+    assert 'class="primary-cta"' in response.text
     assert "当前步骤：导入素材" in response.text
-    assert "Start Creator Analysis" in response.text
-    assert "数据源设置" in response.text
-    assert "备用动作" in response.text
+    assert "下一步：开始导入素材" in response.text
+    assert "高级操作" in response.text
+    assert "输入主页 URL、作品链接、aweme_id 或粘贴多条分享文案" in response.text
+    assert "换一种导入方式" in response.text
     assert "粘贴作品链接" in response.text
     assert 'id="profile-scan-button"' in response.text
     assert 'id="profile-sort"' in response.text
@@ -317,7 +319,22 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'accept=".json,application/json"' in response.text
     assert 'id="profile-handoff-manifest"' in response.text
     assert "公开主页扫描（优先）" not in response.text
-    assert "公开主页扫描（实验）" in response.text
+    assert "公开主页扫描（实验）" not in response.text
+    assert "公开扫描实验入口" in response.text
+    next_bar = response.text[
+        response.text.index('id="creator-clone-next-bar"') : response.text.index('<form id="profile-form"')
+    ]
+    assert "插件辅助采集" not in next_bar
+    assert "公开主页扫描（实验）" not in next_bar
+    data_source_details = response.text[
+        response.text.index('id="profile-data-source-details"') : response.text.index('id="profile-fallback-hint"')
+    ]
+    assert "换一种导入方式" in data_source_details
+    assert 'data-profile-import-mode="browser"' in data_source_details
+    assert 'data-profile-import-mode="manual"' in data_source_details
+    assert 'data-profile-import-mode="structured"' in data_source_details
+    assert 'data-profile-import-mode="case"' in data_source_details
+    assert 'data-profile-import-mode="handoff"' in data_source_details
     public_section = response.text[
         response.text.index('id="profile-public-section"') : response.text.index('id="profile-manual-section"')
     ]
@@ -325,12 +342,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "公开主页扫描（实验）" not in public_section
     assert 'id="profile-chrome-status"' in public_section
     assert "主页 URL / sec_user_id" in public_section
-    assert "插件辅助采集" in response.text
+    assert "本机 Chrome 辅助入口" in response.text
     assert "素材池概览" in response.text
     assert "样本选择" in response.text
     assert "证据富化" in response.text
     assert "可视化输出" in response.text
-    assert "插件辅助采集" in response.text
     assert 'id="profile-chrome-status"' in response.text
     assert 'id="profile-helper-tools"' in response.text
     assert 'id="profile-chrome-confirm"' in response.text
@@ -344,6 +360,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "本机 Chrome 辅助状态：尚未检测" in response.text
     assert "本地文件导入（后续接入）" in response.text
     assert "手动调整样本" in response.text
+    assert '<details class="manual-sample-adjustments">' in response.text
+    assert '<details class="profile-material-details">' in response.text
+    assert "推荐样本篮" in response.text
+    assert "使用推荐样本继续" in Path("app/static/app.js").read_text(encoding="utf-8")
     assert "全选" in response.text
     assert "推荐组合" in response.text
     assert "高赞 Top 3" in response.text
@@ -356,6 +376,16 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'data-profile-preset="top_shares"' in response.text
     assert 'data-profile-preset="low_performance"' in response.text
     assert "继续采集更多" in response.text
+    enrich_button = response.text[
+        response.text.index('id="profile-selected-build-button"') - 80 : response.text.index('id="profile-selected-build-button"') + 180
+    ]
+    distill_button = response.text[
+        response.text.index('id="creator-clone-distill-button"') - 80 : response.text.index('id="creator-clone-distill-button"') + 180
+    ]
+    assert "primary-cta" not in enrich_button
+    assert "primary-cta" not in distill_button
+    assert "subdued-module-action" in enrich_button
+    assert "subdued-module-action" in distill_button
     assert "检测 Chrome" not in response.text
     assert "启动 Chrome" not in response.text
     assert "复制启动命令" not in response.text
@@ -381,7 +411,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "<th>理解状态</th>" in response.text
     assert "<th>处理状态</th>" in response.text
     assert "<th>操作</th>" in response.text
-    assert "确认样本并富化" in response.text
+    assert "高级：仅富化当前样本" in response.text
     assert 'id="profile-selection-basket"' in response.text
     assert "本轮样本篮" in Path("app/static/app.js").read_text(encoding="utf-8")
     assert 'id="profile-auto-distill"' in response.text
@@ -410,11 +440,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function useRecommendedProfileSamples" in script
     assert "creatorCloneExportActions.open = true" in script
     assert "下一步：使用推荐样本继续" in script
-    assert "下一步：确认样本并富化" in script
+    assert "下一步：开始富化证据" in script
     assert "下一步：开始大模型蒸馏" in script
     assert "下一步：下载报告" in script
-    assert "SAMPLE_POOL" in script
-    assert "ENRICH" in script
+    assert "POOL_READY" in script
+    assert "ENRICH_READY" in script
     assert "/api/settings/data-sources" in script
     assert "dataset.creatorCloneAction" in script
     assert "ready_for_profile_scan" in script
@@ -438,7 +468,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function firstUrlFromText" in script
     assert "function loadChromeHelperStatus" in script
     assert "function chromeHelperNextAction" in script
-    assert "下一步：点击“插件辅助采集”" in script
+    assert "下一步：点击“本机 Chrome 辅助入口”" in script
     assert "一次性 token" in script
     assert "helper-readiness" in script
     assert "returned_data_scope" in script
@@ -457,7 +487,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "profileDecisionBoard?.addEventListener" in script
     assert "本机辅助采集边界通过" in script
     assert "请求由用户本机 Chrome / 本机 IP 发起" in script
-    assert "确认样本并富化" in script
+    assert "开始富化证据" in script
     assert "capture-audit-verdict" in script
     assert "tab.label" in script
     assert "tab.title || tab.url" not in script
@@ -598,7 +628,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "当前选样证据不足" in script
     assert "混合格式样本" in script
     assert "只能作为封面、标题或元数据参考" in script
-    assert "确认样本并富化" in script
+    assert "开始富化证据" in script
     assert "profileAutoDistill?.checked" in script
     assert "样本富化完成，正在调用大模型蒸馏创作者规则" in script
     assert "function renderProfileQueuePipeline" in script
@@ -745,7 +775,7 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "公开站 / 本机助手边界" in readme
     assert "Creator Clone Lab 首页只保留一个主动作" in readme
     assert "状态检查只返回匿名标签页数量和就绪状态" in readme
-    assert "真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的“插件辅助采集”" in readme
+    assert "真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的“本机 Chrome 辅助入口”" in readme
     assert "扫描主页和清理辅助 profile 除了 token 之外还需要页面确认" in readme
     assert "多作品粘贴是当前账号级分析的稳定入口" in readme
     assert "作品池队列默认一次最多处理 10 条" in readme
@@ -8294,10 +8324,11 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "导入一组对标素材" in response.text
     assert "主页 URL / sec_user_id" in response.text
     assert "浏览器辅助采集" in response.text
-    assert "插件辅助采集" in response.text
-    assert "Start Creator Analysis" in response.text
-    assert "数据源设置" in response.text
-    assert "备用动作" in response.text
+    assert "插件辅助采集" not in response.text
+    assert "Start Creator Analysis" not in response.text
+    assert "下一步：开始导入素材" in response.text
+    assert "换一种导入方式" in response.text
+    assert "高级操作" in response.text
     assert "手动调整样本" in response.text
     assert "素材明细" in response.text
     assert "主页扫描</button>" not in response.text
@@ -8307,7 +8338,7 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "JSON / CSV 导入" in response.text
     assert "已有 Case 导入" in response.text
     assert "本地文件导入（后续接入）" in response.text
-    assert "确认样本并富化" in response.text
+    assert "开始富化证据" in Path("app/static/app.js").read_text(encoding="utf-8")
     assert "构建素材池" in response.text
     assert "选择 N 条样本" in response.text
     assert "素材池概览" in response.text
@@ -8333,6 +8364,19 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert script.count("resetProfileChromeConfirmation();") >= 4
     assert "recommendedProfileSampleMix" in script
     assert "dedupeProfileItems" in script
+    assert "function getCreatorCloneWizardState()" in script
+    assert "function renderWizardPrimaryAction" in script
+    assert "function handleWizardPrimaryAction" in script
+    assert "IMPORT_EMPTY" in script
+    assert "POOL_READY" in script
+    assert "ENRICH_READY" in script
+    assert "DISTILL_READY" in script
+    assert "EXPORT_READY" in script
+    assert "下一步：开始导入素材" in script
+    assert "下一步：使用推荐样本继续" in script
+    assert "下一步：开始富化证据" in script
+    assert "下一步：开始大模型蒸馏" in script
+    assert "下一步：下载报告" in script
 
 
 def test_creator_clone_import_manual_links_generates_sample_set() -> None:
@@ -10151,7 +10195,7 @@ def test_local_chrome_status_reports_diagnostics_without_sensitive_fields(monkey
     assert payload["security_contract"]["requests_from_user_machine"] is True
     assert payload["security_contract"]["cookie_read"] is False
     assert "signed media URL" in payload["security_contract"]["handoff_excludes"]
-    assert "插件辅助采集" in payload["next_action"]
+    assert "本机 Chrome 辅助入口" in payload["next_action"]
     payload_text = json.dumps(payload, ensure_ascii=False).lower()
     assert "sessionid" not in payload_text
     assert "mstoken" not in payload_text

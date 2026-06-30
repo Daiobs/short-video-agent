@@ -418,11 +418,47 @@ button:disabled {
 }
 
 .advanced-action-list button,
+.advanced-action-list a,
 .secondary-button {
     border-color: rgba(15, 23, 42, .14);
     background: #fff;
     color: #334155;
     box-shadow: none;
+}
+
+.advanced-action-list p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.advanced-action-list a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid rgba(15, 23, 42, .14);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 800;
+    text-decoration: none;
+}
+
+.creator-clone-task-input {
+    display: grid;
+    gap: 8px;
+    margin: 14px 0;
+    padding: 16px;
+    border: 1px solid rgba(37, 99, 235, .14);
+    border-radius: 10px;
+    background: linear-gradient(180deg, #fff, #f8fbff);
+}
+
+.creator-clone-task-input textarea {
+    min-height: 118px;
+    resize: vertical;
 }
 
 .profile-import-mode-grid {
@@ -541,6 +577,63 @@ button:disabled {
     color: #475569;
     font-size: 14px;
     line-height: 1.55;
+}
+
+.recommendation-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.recommendation-heading strong {
+    display: block;
+    color: var(--text);
+    font-size: 18px;
+}
+
+.recommended-sample-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.recommended-sample-card {
+    display: grid;
+    gap: 6px;
+    padding: 12px;
+    border: 1px solid rgba(124, 58, 237, .12);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.recommended-sample-card span {
+    color: #7c3aed;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.recommended-sample-card strong {
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.35;
+}
+
+.recommended-sample-card p,
+.recommendation-empty {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.subdued-module-action {
+    opacity: .68;
+}
+
+.subdued-module-action:not(:disabled):hover {
+    opacity: 1;
 }
 
 .profile-more-stats {

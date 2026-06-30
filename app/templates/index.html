@@ -224,19 +224,28 @@ LLM_MODEL=支持图片输入的模型</pre>
                     <strong id="creator-clone-next-summary">粘贴作品链接或填写主页 URL 后，点击主按钮开始分析。</strong>
                 </div>
                 <div class="creator-clone-next-actions">
-                    <button type="button" id="creator-clone-next-button" class="primary-cta">Start Creator Analysis</button>
+                    <button type="button" id="creator-clone-next-button" class="primary-cta">下一步：开始导入素材</button>
                     <details class="creator-clone-advanced-actions">
-                        <summary>备用动作</summary>
+                        <summary>高级操作</summary>
                         <div class="advanced-action-list">
-                            <button type="button" id="profile-browser-helper-button">插件辅助采集</button>
-                            <button type="submit" form="profile-form" id="profile-scan-button" data-profile-source="public">公开主页扫描（实验）</button>
+                            <p>主按钮会按输入内容自动选择导入方式。需要指定数据源、实验扫描、复制 Prompt 或下载 JSON 时，再展开对应区域。</p>
+                            <button type="button" id="profile-browser-helper-button">本机 Chrome 辅助入口</button>
+                            <button type="submit" form="profile-form" id="profile-scan-button" data-profile-source="public">公开扫描实验入口</button>
+                            <a href="#profile-data-source-details">切换数据源</a>
+                            <a href="#creator-clone-export-actions">复制 Prompt / 下载 JSON</a>
                         </div>
                     </details>
                 </div>
             </section>
             <form id="profile-form" class="profile-scan-form">
-                <details class="profile-data-source-details">
-                    <summary>数据源设置（默认会按当前填写内容自动选择）</summary>
+                <section class="creator-clone-task-input">
+                    <label>输入主页 URL、作品链接、aweme_id 或粘贴多条分享文案
+                        <textarea id="profile-quick-input" rows="5" placeholder="可粘贴抖音主页 URL、单条/多条作品链接、aweme_id，或完整分享文案。主按钮会自动判断导入方式。"></textarea>
+                    </label>
+                    <p class="muted compact-copy">一个入口即可开始：主页会优先尝试本机 Chrome / Cookie / 公开扫描；多条作品链接会自动进入作品清单；已有 case_id、JSON/CSV 可在下方切换导入方式。</p>
+                </section>
+                <details class="profile-data-source-details" id="profile-data-source-details">
+                    <summary>换一种导入方式</summary>
                     <div class="profile-import-mode-grid" aria-label="导入方式">
                         <button type="button" class="profile-import-card active" data-profile-import-mode="browser">
                             <strong>主页 / 浏览器辅助</strong>
@@ -390,7 +399,7 @@ https://v.douyin.com/xxxxxx/
                     </div>
                 </div>
                 <div id="creator-clone-recommendation" class="creator-clone-recommendation">
-                    导入素材后，系统会推荐高赞 / 高评 / 高分享 / 最新 / 低表现混合样本。
+                    <div class="recommendation-empty">导入素材后，系统会生成推荐样本篮：高赞 / 高评 / 高分享 / 最新 / 低表现混合。</div>
                 </div>
                 <details class="manual-sample-adjustments">
                     <summary>手动调整样本</summary>
@@ -437,7 +446,7 @@ https://v.douyin.com/xxxxxx/
                         <span class="entry-label">C. Evidence</span>
                         <h3>证据富化</h3>
                     </div>
-                    <button type="button" id="profile-selected-build-button" class="secondary-button">确认样本并富化</button>
+                    <button type="button" id="profile-selected-build-button" class="secondary-button subdued-module-action">高级：仅富化当前样本</button>
                 </div>
                 <div id="profile-evidence-status" class="profile-evidence-status">
                     先从素材池选择代表样本；富化后会回填视频、关键帧、OCR、ASR 等证据。
@@ -464,7 +473,7 @@ https://v.douyin.com/xxxxxx/
                         <span class="entry-label">D. Distillation</span>
                         <h3>大模型蒸馏</h3>
                     </div>
-                    <button type="button" id="creator-clone-distill-button" class="secondary-button">大模型蒸馏</button>
+                    <button type="button" id="creator-clone-distill-button" class="secondary-button subdued-module-action">高级：仅执行蒸馏</button>
                 </div>
                 <div id="profile-distill-readiness" class="profile-distill-readiness">
                     先选择代表样本。系统会根据样本数量、关键帧和证据完整度提示是否适合蒸馏。
