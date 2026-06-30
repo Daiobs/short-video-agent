@@ -6,9 +6,10 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 
+from app.config import settings
 from app.database import SessionLocal
 from app.errors import AppError, ErrorCode
-from app.models import CaseArtifact, Job, utc_now
+from app.models import CaseArtifact, DouyinVideoItem, Job, utc_now
 from app.providers.profile_base import ProfileScanRequest
 from app.routes.common import error_response
 from app.services.asr import run_case_asr
@@ -20,6 +21,18 @@ from app.services.enrichment import build_enrichment_archive
 from app.services.ocr import run_case_ocr
 from app.services.quality_resolver import resolve_quality_candidates
 from app.services.profile_scan import scan_profile
+from app.services.creator_clone import (
+    CloneSampleSet,
+    MAX_DISTILL_SAMPLES,
+    dedupe_samples,
+    distill_creator_clone,
+    load_sample_set,
+    prompt_only_result,
+    sample_from_dict,
+    save_sample_set,
+    update_sample_set_selection,
+    update_sample_set_with_case_artifacts,
+)
 
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -42,9 +55,43 @@ class ProfileScanJobRequest(BaseModel):
     profile_url: str = ""
     sec_user_id: str = ""
     manual_links: str = ""
+    structured_items: str = ""
     count: int = 20
     max_pages: int = 1
     sort_by: str = "like_count"
+
+
+class ProfileBuildCaseItem(BaseModel):
+    aweme_id: str = ""
+    sample_id: str = ""
+    case_id: str = ""
+    source_url: str = ""
+    webpage_url: str = ""
+    title: str = ""
+    media_type: str = "unknown"
+
+
+class ProfileBuildCasesJobRequest(BaseModel):
+    items: list[ProfileBuildCaseItem]
+    selected_sample_ids: list[str] = []
+    auto_enrich: bool = True
+    auto_asr: bool = True
+    auto_ocr: bool = True
+    auto_analyze: bool = False
+    quality_preference: str = "best"
+    sample_set_id: str = ""
+
+
+class CreatorCloneDistillJobRequest(BaseModel):
+    sample_set_id: str = ""
+    samples: list[dict] = []
+    selected_sample_ids: list[str] = []
+    distill_mode: str = "quick"
+    include_case_reports: bool = True
+    max_samples: int = MAX_DISTILL_SAMPLES
+    title: str = ""
+    creator_name: str = ""
+    source_platform: str = "unknown"
 
 
 class AnalyzeCaseJobRequest(BaseModel):
@@ -545,6 +592,488 @@ def _run_download_build_analyze_case_job(job_id: str, aweme_id: str, candidate_i
         db.close()
 
 
+def _choose_profile_queue_candidate(candidates: list[dict], preference: str) -> dict:
+    if not candidates:
+        raise AppError(ErrorCode.QUALITY_NOT_FOUND)
+    preference = (preference or "best").lower()
+    if preference == "1080":
+        return next((candidate for candidate in candidates if "1080" in str(candidate.get("quality_label", ""))), candidates[0])
+    if preference == "720":
+        return next((candidate for candidate in candidates if "720" in str(candidate.get("quality_label", ""))), candidates[0])
+    return candidates[0]
+
+
+def _profile_queue_counts(items: list[dict]) -> dict:
+    reference_only_count = sum(
+        1
+        for item in items
+        if item.get("status") == "skipped" and item.get("error_code") == ErrorCode.UNSUPPORTED_PROFILE_ITEM
+    )
+    return {
+        "completed_count": sum(1 for item in items if item.get("status") == "completed"),
+        "failed_count": sum(1 for item in items if item.get("status") == "failed"),
+        "skipped_count": sum(1 for item in items if item.get("status") == "skipped"),
+        "reference_only_count": reference_only_count,
+        "downloadable_count": sum(1 for item in items if _is_profile_queue_downloadable(item)),
+    }
+
+
+def _is_profile_queue_downloadable(item: dict) -> bool:
+    return bool(str(item.get("aweme_id") or "").strip()) and str(item.get("media_type") or "unknown") not in {"image", "text"}
+
+
+def _profile_queue_result(items: list[dict]) -> dict:
+    counts = _profile_queue_counts(items)
+    return {"items": items, **counts, "pipeline_summary": _profile_pipeline_summary(items)}
+
+
+def _profile_pipeline_summary(items: list[dict]) -> dict:
+    counts = _profile_queue_counts(items)
+    selected_count = len(items)
+    downloadable_count = counts["downloadable_count"]
+    processable_items = [item for item in items if _is_profile_queue_downloadable(item)]
+    requested_stages = {
+        "download": downloadable_count > 0,
+        "build_case": downloadable_count > 0,
+        "enrichment": any(item.get("enrichment_status") != "skipped" for item in processable_items),
+        "asr": any(item.get("asr_status") != "skipped" for item in processable_items),
+        "ocr": any(item.get("ocr_status") != "skipped" for item in processable_items),
+        "llm_analysis": any(item.get("analysis_status") != "skipped" for item in processable_items),
+    }
+    downloaded_count = sum(1 for item in items if item.get("local_video_id"))
+    case_count = sum(1 for item in items if item.get("case_id"))
+    enriched_count = sum(1 for item in items if item.get("enrichment_status") == "success")
+    asr_success_count = sum(1 for item in items if item.get("asr_status") in {"success", "no_speech"})
+    ocr_success_count = sum(1 for item in items if item.get("ocr_status") in {"success", "no_text"})
+    asr_provider_missing_count = sum(1 for item in items if item.get("asr_status") == "provider_missing")
+    ocr_provider_missing_count = sum(1 for item in items if item.get("ocr_status") == "provider_missing")
+    failed_count = counts["failed_count"]
+    ready_for_distill_count = sum(
+        1
+        for item in items
+        if item.get("status") != "failed"
+        and (
+            item.get("case_id")
+            or (item.get("status") == "skipped" and item.get("error_code") == ErrorCode.UNSUPPORTED_PROFILE_ITEM)
+        )
+    )
+    notes: list[str] = []
+    next_actions: list[str] = []
+    if case_count:
+        notes.append(f"已生成 {case_count} 个素材包，可作为创作者蒸馏证据。")
+    if counts["reference_only_count"]:
+        notes.append(f"{counts['reference_only_count']} 条图文/元数据样本已保留为参考证据。")
+    if selected_count:
+        notes.append(
+            f"本轮选中 {selected_count} 条：{downloadable_count} 条进入下载/素材包流水线，{counts['reference_only_count']} 条作为参考样本。"
+        )
+    if ready_for_distill_count:
+        next_actions.append("可继续点击“大模型蒸馏”，系统会基于现有证据生成创作者规律。")
+    if asr_provider_missing_count:
+        notes.append(f"ASR provider 未配置，{asr_provider_missing_count} 条样本缺少语音转写。")
+        next_actions.append("如需要口播/声音拆解，请配置 ASR_PROVIDER=auto 并安装 requirements-asr.txt。")
+    if ocr_provider_missing_count:
+        notes.append(f"OCR provider 未配置，{ocr_provider_missing_count} 条样本缺少画面文字识别。")
+        next_actions.append("如需要封面字/字幕拆解，请配置 OCR_PROVIDER=auto 并安装 requirements-ocr.txt。")
+    if failed_count:
+        next_actions.append(f"复核 {failed_count} 条失败样本；其余样本仍可继续蒸馏。")
+    return {
+        "selected_count": selected_count,
+        "downloadable_count": downloadable_count,
+        "downloaded_count": downloaded_count,
+        "case_count": case_count,
+        "enriched_count": enriched_count,
+        "asr_success_count": asr_success_count,
+        "ocr_success_count": ocr_success_count,
+        "asr_provider_missing_count": asr_provider_missing_count,
+        "ocr_provider_missing_count": ocr_provider_missing_count,
+        "reference_only_count": counts["reference_only_count"],
+        "ready_for_distill_count": ready_for_distill_count,
+        "failed_count": failed_count,
+        "requested_stages": requested_stages,
+        "notes": notes,
+        "next_actions": list(dict.fromkeys(next_actions)),
+    }
+
+
+def _optional_error_payload(error: Exception, fallback_code: str) -> dict:
+    if isinstance(error, AppError):
+        return error.as_dict()
+    return {"error_code": fallback_code, "message": str(error)[:500]}
+
+
+def _profile_queue_item_from_payload(
+    item: dict,
+    *,
+    index: int,
+    selected_sample_ids: list[str],
+    sample_lookup: dict,
+    auto_enrich: bool,
+    auto_asr: bool,
+    auto_ocr: bool,
+    auto_analyze: bool,
+) -> dict:
+    sample_id = str(item.get("sample_id") or (selected_sample_ids[index] if index < len(selected_sample_ids) else ""))
+    sample = sample_lookup.get(sample_id)
+    source_url = item.get("source_url") or getattr(sample, "source_url", "") or ""
+    return {
+        "aweme_id": str(item.get("aweme_id") or getattr(sample, "aweme_id", "") or ""),
+        "sample_id": sample_id,
+        "case_id": str(item.get("case_id") or getattr(sample, "case_id", "") or ""),
+        "source_url": source_url,
+        "title": item.get("title") or getattr(sample, "title", "") or "",
+        "webpage_url": item.get("webpage_url") or source_url,
+        "media_type": item.get("media_type") or getattr(sample, "media_type", "") or "unknown",
+        "status": "pending",
+        "message": "",
+        "error_code": "",
+        "local_video_id": "",
+        "enrichment_status": "pending" if auto_enrich else "skipped",
+        "asr_status": "pending" if auto_asr else "skipped",
+        "ocr_status": "pending" if auto_ocr else "skipped",
+        "analysis_status": "skipped" if not auto_analyze else "pending",
+    }
+
+
+def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
+    raw_items = payload.get("items") or []
+    auto_enrich = bool(payload.get("auto_enrich", True))
+    auto_asr = bool(payload.get("auto_asr", True))
+    auto_ocr = bool(payload.get("auto_ocr", True))
+    auto_analyze = bool(payload.get("auto_analyze"))
+    quality_preference = payload.get("quality_preference") or "best"
+    sample_set_id = str(payload.get("sample_set_id") or "")
+    selected_sample_ids = [str(value) for value in payload.get("selected_sample_ids") or [] if str(value)]
+    completed_artifacts: list[CaseArtifact] = []
+    sample_lookup = {}
+    if sample_set_id:
+        try:
+            sample_lookup = {sample.sample_id: sample for sample in load_sample_set(sample_set_id).samples}
+        except AppError:
+            sample_lookup = {}
+    queue_items = [
+        _profile_queue_item_from_payload(
+            item,
+            index=index,
+            selected_sample_ids=selected_sample_ids,
+            sample_lookup=sample_lookup,
+            auto_enrich=auto_enrich,
+            auto_asr=auto_asr,
+            auto_ocr=auto_ocr,
+            auto_analyze=auto_analyze,
+        )
+        for index, item in enumerate(raw_items)
+    ]
+
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "running", 1, "素材包队列开始", result=_profile_queue_result(queue_items))
+            db.commit()
+
+        total = max(1, len(queue_items))
+        for index, item in enumerate(queue_items):
+            base_progress = int((index / total) * 95)
+            if not _is_profile_queue_downloadable(item):
+                item["status"] = "skipped"
+                item["error_code"] = ErrorCode.UNSUPPORTED_PROFILE_ITEM
+                item["message"] = "参考样本不执行视频下载，已保留为创作者蒸馏的元数据证据。"
+                job = db.get(Job, job_id)
+                if job:
+                    _set_job(
+                        job,
+                        "running",
+                        min(95, base_progress + 5),
+                        f"已保留参考样本 {index + 1}/{total}",
+                        result=_profile_queue_result(queue_items),
+                    )
+                    db.commit()
+                continue
+
+            try:
+                stored_item = db.get(DouyinVideoItem, item["aweme_id"])
+                if not stored_item:
+                    stored_item = DouyinVideoItem(aweme_id=item["aweme_id"])
+                    db.add(stored_item)
+                stored_item.title = item["title"] or stored_item.title or f"抖音作品 {item['aweme_id']}"
+                stored_item.source_url = item["webpage_url"] or stored_item.source_url or f"https://www.douyin.com/video/{item['aweme_id']}"
+                stored_item.video_url = stored_item.source_url
+                db.commit()
+
+                item["status"] = "resolving"
+                item["message"] = "正在解析清晰度候选"
+                job = db.get(Job, job_id)
+                if job:
+                    _set_job(job, "running", min(95, base_progress + 5), item["message"], result=_profile_queue_result(queue_items))
+                    db.commit()
+
+                candidates = resolve_quality_candidates(db, item["aweme_id"])
+                candidate = _choose_profile_queue_candidate(candidates, quality_preference)
+
+                item["status"] = "downloading"
+                item["message"] = "正在下载视频"
+                job = db.get(Job, job_id)
+                if job:
+                    _set_job(job, "running", min(95, base_progress + 25), item["message"], result=_profile_queue_result(queue_items))
+                    db.commit()
+
+                download_result = download_candidate(db, item["aweme_id"], candidate["candidate_id"])
+                item["local_video_id"] = download_result.get("local_video_id", "")
+
+                item["status"] = "building_case"
+                item["message"] = "正在生成素材包"
+                job = db.get(Job, job_id)
+                if job:
+                    _set_job(job, "running", min(95, base_progress + 55), item["message"], result=_profile_queue_result(queue_items))
+                    db.commit()
+
+                artifact = build_case_from_local_video(db, item["local_video_id"])
+                completed_artifacts.append(artifact)
+                item["case_id"] = artifact.case_id
+                item["case"] = _artifact_result(artifact)
+
+                if auto_enrich:
+                    item["status"] = "enriching"
+                    item["message"] = "正在写入富化归档"
+                    job = db.get(Job, job_id)
+                    if job:
+                        _set_job(job, "running", min(95, base_progress + 65), item["message"], result=_profile_queue_result(queue_items))
+                        db.commit()
+                    try:
+                        item["enrichment"] = build_enrichment_archive(
+                            artifact,
+                            capture_method="profile_build_queue",
+                            permission_note="local personal analysis",
+                        )
+                        item["enrichment_status"] = "success"
+                    except Exception as error:
+                        item["enrichment_status"] = "failed"
+                        item["enrichment_error"] = _optional_error_payload(error, ErrorCode.ENRICHMENT_FAILED)
+
+                if auto_asr:
+                    item["status"] = "asr_optional"
+                    item["message"] = "正在执行可选 ASR"
+                    job = db.get(Job, job_id)
+                    if job:
+                        _set_job(job, "running", min(95, base_progress + 70), item["message"], result=_profile_queue_result(queue_items))
+                        db.commit()
+                    try:
+                        item["asr"] = run_case_asr(artifact)
+                        item["asr_status"] = item["asr"].get("status") or "success"
+                    except AppError as error:
+                        item["asr_status"] = "provider_missing" if error.code == ErrorCode.ASR_PROVIDER_NOT_CONFIGURED else "failed"
+                        item["asr_error"] = error.as_dict()
+                    except Exception as error:
+                        item["asr_status"] = "failed"
+                        item["asr_error"] = _optional_error_payload(error, ErrorCode.ASR_FAILED)
+
+                if auto_ocr:
+                    item["status"] = "ocr_optional"
+                    item["message"] = "正在执行可选 OCR"
+                    job = db.get(Job, job_id)
+                    if job:
+                        _set_job(job, "running", min(95, base_progress + 74), item["message"], result=_profile_queue_result(queue_items))
+                        db.commit()
+                    try:
+                        item["ocr"] = run_case_ocr(artifact)
+                        item["ocr_status"] = item["ocr"].get("status") or "success"
+                    except AppError as error:
+                        item["ocr_status"] = "provider_missing" if error.code == ErrorCode.OCR_PROVIDER_NOT_CONFIGURED else "failed"
+                        item["ocr_error"] = error.as_dict()
+                    except Exception as error:
+                        item["ocr_status"] = "failed"
+                        item["ocr_error"] = _optional_error_payload(error, ErrorCode.OCR_FAILED)
+
+                if auto_analyze:
+                    item["status"] = "analyzing_optional"
+                    item["message"] = "正在执行可选 AI 拆解"
+                    job = db.get(Job, job_id)
+                    if job:
+                        _set_job(job, "running", min(95, base_progress + 78), item["message"], result=_profile_queue_result(queue_items))
+                        db.commit()
+                    try:
+                        item["analysis"] = _analysis_result(analyze_case_artifact(artifact, mode="fast"))
+                        item["analysis_status"] = "success"
+                    except AppError as error:
+                        item["analysis_status"] = "skipped" if error.code == ErrorCode.LLM_NOT_CONFIGURED else "failed"
+                        item["analysis_error"] = error.as_dict()
+                    except Exception as error:
+                        item["analysis_status"] = "failed"
+                        item["analysis_error"] = _optional_error_payload(error, ErrorCode.AUTO_ANALYSIS_FAILED)
+                else:
+                    item["analysis_status"] = "skipped"
+
+                item["status"] = "completed"
+                item["message"] = "素材包已生成"
+            except AppError as error:
+                item["status"] = "failed"
+                item["error_code"] = error.code or ErrorCode.PROFILE_BUILD_ITEM_FAILED
+                item["message"] = error.message
+            except Exception as error:
+                item["status"] = "failed"
+                item["error_code"] = ErrorCode.PROFILE_BUILD_ITEM_FAILED
+                item["message"] = str(error)[:300]
+
+            job = db.get(Job, job_id)
+            if job:
+                _set_job(
+                    job,
+                    "running",
+                    min(98, int(((index + 1) / total) * 95)),
+                    f"已处理 {index + 1}/{total}",
+                    result=_profile_queue_result(queue_items),
+                )
+                db.commit()
+
+        final_result = _profile_queue_result(queue_items)
+        updated_set = None
+        if sample_set_id and selected_sample_ids:
+            try:
+                updated_set = update_sample_set_selection(sample_set_id, selected_sample_ids).to_dict()
+            except AppError as error:
+                final_result["set_selection_error"] = error.as_dict()
+        if sample_set_id and completed_artifacts:
+            try:
+                updated_set = update_sample_set_with_case_artifacts(sample_set_id, completed_artifacts).to_dict()
+            except AppError as error:
+                final_result["set_update_error"] = error.as_dict()
+        if updated_set:
+            final_result["set"] = updated_set
+        counts = _profile_queue_counts(queue_items)
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(
+                job,
+                "success",
+                100,
+                f"队列完成：成功 {counts['completed_count']} 条，失败 {counts['failed_count']} 条，跳过 {counts['skipped_count']} 条",
+                result=final_result,
+            )
+            db.commit()
+    except Exception as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.PROFILE_BUILD_ITEM_FAILED)
+            db.commit()
+    finally:
+        db.close()
+
+
+RECOVERABLE_DISTILL_ERROR_CODES = {
+    ErrorCode.LLM_NOT_CONFIGURED,
+    ErrorCode.LLM_REQUEST_FAILED,
+    ErrorCode.LLM_RESPONSE_INVALID,
+}
+
+
+def _inline_creator_clone_sample_set(payload: dict) -> CloneSampleSet:
+    samples = [sample_from_dict(item) for item in payload.get("samples") or [] if isinstance(item, dict)]
+    if not samples:
+        raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "请先导入素材池并选择样本。")
+    unique_samples, duplicate_count = dedupe_samples(samples)
+    warnings = []
+    if duplicate_count:
+        warnings.append(f"已自动去重 {duplicate_count} 条重复素材。")
+    sample_set = CloneSampleSet(
+        set_id=f"clone_{uuid.uuid4().hex}",
+        title=str(payload.get("title") or "创作者克隆实验室素材池"),
+        creator_name=str(payload.get("creator_name") or ""),
+        source_platform=str(payload.get("source_platform") or "unknown"),
+        samples=unique_samples,
+        warnings=warnings,
+    )
+    save_sample_set(sample_set)
+    return sample_set
+
+
+def _load_creator_clone_distill_set(payload: dict) -> CloneSampleSet:
+    sample_set_id = str(payload.get("sample_set_id") or "")
+    if sample_set_id:
+        return load_sample_set(sample_set_id)
+    return _inline_creator_clone_sample_set(payload)
+
+
+def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "running", 5, "准备创作者蒸馏")
+            db.commit()
+
+        sample_set = _load_creator_clone_distill_set(payload)
+        selected_sample_ids = [str(value) for value in payload.get("selected_sample_ids") or [] if str(value)]
+        distill_mode = str(payload.get("distill_mode") or "quick")
+        include_case_reports = bool(payload.get("include_case_reports", True))
+        max_samples = int(payload.get("max_samples") or MAX_DISTILL_SAMPLES)
+
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(
+                job,
+                "running",
+                25,
+                f"已载入素材池，准备蒸馏 {len(selected_sample_ids) or len(sample_set.samples)} 条样本",
+                result={"set": sample_set.to_dict()},
+            )
+            db.commit()
+
+        try:
+            job = db.get(Job, job_id)
+            if job:
+                _set_job(job, "running", 70, "调用大模型蒸馏创作者规则")
+                db.commit()
+            result = distill_creator_clone(
+                sample_set,
+                selected_sample_ids,
+                distill_mode=distill_mode,
+                include_case_reports=include_case_reports,
+                max_samples=max_samples,
+            )
+            job = db.get(Job, job_id)
+            if job:
+                _set_job(job, "success", 100, "创作者克隆蒸馏完成", result={"ok": True, **result})
+                db.commit()
+        except AppError as error:
+            if error.code not in RECOVERABLE_DISTILL_ERROR_CODES:
+                raise
+            prompt_payload = prompt_only_result(
+                sample_set,
+                selected_sample_ids,
+                distill_mode=distill_mode,
+                include_case_reports=include_case_reports,
+            )
+            job = db.get(Job, job_id)
+            if job:
+                _set_job(
+                    job,
+                    "success",
+                    100,
+                    "大模型暂不可用，已生成蒸馏 Prompt",
+                    result={
+                        "ok": False,
+                        "recovery": "prompt_only",
+                        "error_code": error.code,
+                        "message": error.message,
+                        **prompt_payload,
+                    },
+                )
+                db.commit()
+    except AppError as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            db.commit()
+    except Exception as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.CASE_BUILD_FAILED)
+            db.commit()
+    finally:
+        db.close()
+
+
 def _create_job(job_type: str, message: str) -> Job:
     db = SessionLocal()
     try:
@@ -606,12 +1135,77 @@ def profile_scan_job(payload: ProfileScanJobRequest, background_tasks: Backgroun
             "profile_url": payload.profile_url,
             "sec_user_id": payload.sec_user_id,
             "manual_links": payload.manual_links,
+            "structured_items": payload.structured_items,
             "count": payload.count,
             "max_pages": payload.max_pages,
             "sort_by": payload.sort_by,
         },
     )
     return {"ok": True, "job_id": job.id}
+
+
+@router.post("/profile-build-cases")
+def profile_build_cases_job(payload: ProfileBuildCasesJobRequest, background_tasks: BackgroundTasks):
+    queued_items = [item.model_dump() for item in payload.items]
+    selected_sample_ids = list(dict.fromkeys(str(value) for value in payload.selected_sample_ids if str(value)))
+    selected_count = len(selected_sample_ids) or len(queued_items)
+    downloadable_count = sum(1 for item in queued_items if _is_profile_queue_downloadable(item))
+    if not queued_items and not payload.selected_sample_ids:
+        return error_response(AppError(ErrorCode.AWEME_ID_NOT_FOUND, f"请先从作品池选择 1-{settings.profile_build_max_items} 条作品。"))
+    if selected_count > MAX_DISTILL_SAMPLES:
+        return error_response(
+            AppError(
+                ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
+                f"当前自用版一次最多选择 {MAX_DISTILL_SAMPLES} 条样本进入蒸馏，避免上下文过长。请减少选择数量后重试。",
+            )
+        )
+    if downloadable_count > settings.profile_build_max_items:
+        return error_response(
+            AppError(
+                ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
+                f"当前自用版一次最多处理 {settings.profile_build_max_items} 条作品，避免误批量下载。请减少选择数量后重试。",
+            )
+        )
+    job = _create_job("profile-build-cases", "等待生成素材包队列")
+    background_tasks.add_task(
+        _run_profile_build_cases_job,
+        job.id,
+        {
+            "items": queued_items,
+            "selected_sample_ids": selected_sample_ids,
+            "auto_enrich": payload.auto_enrich,
+            "auto_asr": payload.auto_asr,
+            "auto_ocr": payload.auto_ocr,
+            "auto_analyze": payload.auto_analyze,
+            "quality_preference": payload.quality_preference,
+            "sample_set_id": payload.sample_set_id,
+        },
+    )
+    return {
+        "ok": True,
+        "job_id": job.id,
+        "selected_count": selected_count,
+        "downloadable_count": downloadable_count,
+        "reference_only_count": max(0, selected_count - downloadable_count),
+        "queued_items": queued_items,
+    }
+
+
+@router.post("/creator-clone-distill")
+def creator_clone_distill_job(payload: CreatorCloneDistillJobRequest, background_tasks: BackgroundTasks):
+    selected_count = len([value for value in payload.selected_sample_ids if str(value)]) or len(payload.samples)
+    if selected_count <= 0:
+        return error_response(AppError(ErrorCode.AWEME_ID_NOT_FOUND, "请先导入素材池并选择样本。"))
+    if selected_count > MAX_DISTILL_SAMPLES or payload.max_samples > MAX_DISTILL_SAMPLES:
+        return error_response(
+            AppError(
+                ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
+                f"当前自用版一次最多选择 {MAX_DISTILL_SAMPLES} 条样本进入蒸馏，避免上下文过长。请减少选择数量后重试。",
+            )
+        )
+    job = _create_job("creator-clone-distill", "等待创作者克隆蒸馏")
+    background_tasks.add_task(_run_creator_clone_distill_job, job.id, payload.model_dump())
+    return {"ok": True, "job_id": job.id, "selected_count": selected_count}
 
 
 @router.post("/resolve-qualities")

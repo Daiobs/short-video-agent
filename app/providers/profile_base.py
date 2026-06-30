@@ -17,6 +17,7 @@ class ProfileScanRequest:
     profile_url: str | None = None
     sec_user_id: str | None = None
     manual_links: str | None = None
+    structured_items: str | None = None
     count: int = 20
     max_pages: int = 1
     sort_by: str = "like_count"
@@ -35,6 +36,7 @@ class ProfileVideoItem:
     comment_count: int = 0
     share_count: int = 0
     collect_count: int = 0
+    view_count: int = 0
     duration: int = 0
     webpage_url: str = ""
     media_type: str = "unknown"
@@ -61,6 +63,7 @@ class ProfileVideoItem:
             "comment_count": self.comment_count,
             "share_count": self.share_count,
             "collect_count": self.collect_count,
+            "view_count": self.view_count,
             "duration": self.duration,
             "webpage_url": self.webpage_url or f"https://www.douyin.com/video/{self.aweme_id}",
             "media_type": self.media_type,
@@ -133,6 +136,7 @@ class ProfileScanResult:
     has_more: bool = False
     next_cursor: str = ""
     warnings: list[str] = field(default_factory=list)
+    import_stats: dict = field(default_factory=dict)
     summary: ProfileScanSummary | None = None
 
     def to_dict(self) -> dict:
@@ -145,6 +149,7 @@ class ProfileScanResult:
             "has_more": self.has_more,
             "next_cursor": self.next_cursor,
             "warnings": self.warnings,
+            "import_stats": self.import_stats,
             "summary": summary.to_dict(),
         }
 

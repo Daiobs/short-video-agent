@@ -194,7 +194,14 @@ def _configured_provider() -> ASRProvider:
     if provider_name in {"", "disabled", "none", "off"}:
         raise AppError(
             ErrorCode.ASR_PROVIDER_NOT_CONFIGURED,
-            "ASR 未启用。请在 .env 中设置 ASR_PROVIDER=faster_whisper，并安装 requirements-asr.txt。",
+            "ASR 未启用。请在 .env 中设置 ASR_PROVIDER=auto 或 ASR_PROVIDER=faster_whisper，并安装 requirements-asr.txt。",
+        )
+    if provider_name == "auto":
+        if importlib.util.find_spec("faster_whisper"):
+            return FasterWhisperProvider()
+        raise AppError(
+            ErrorCode.ASR_PROVIDER_NOT_CONFIGURED,
+            "ASR_PROVIDER=auto 但未检测到 faster-whisper。请安装 requirements-asr.txt，或将 ASR_PROVIDER 设为 disabled。",
         )
     if provider_name in {"faster_whisper", "faster-whisper"}:
         return FasterWhisperProvider()

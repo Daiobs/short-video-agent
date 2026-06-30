@@ -37,11 +37,22 @@ class ErrorCode:
     PROFILE_SCAN_NEEDS_FALLBACK = "PROFILE_SCAN_NEEDS_FALLBACK"
     PROFILE_SCAN_API_NOT_CONFIGURED = "PROFILE_SCAN_API_NOT_CONFIGURED"
     PROFILE_SCAN_STRUCTURE_CHANGED = "PROFILE_SCAN_STRUCTURE_CHANGED"
+    UNSUPPORTED_PROFILE_ITEM = "UNSUPPORTED_PROFILE_ITEM"
+    PROFILE_BUILD_QUEUE_LIMIT = "PROFILE_BUILD_QUEUE_LIMIT"
+    PROFILE_BUILD_ITEM_FAILED = "PROFILE_BUILD_ITEM_FAILED"
     ASR_PROVIDER_NOT_CONFIGURED = "ASR_PROVIDER_NOT_CONFIGURED"
     ASR_FAILED = "ASR_FAILED"
     OCR_PROVIDER_NOT_CONFIGURED = "OCR_PROVIDER_NOT_CONFIGURED"
     OCR_FAILED = "OCR_FAILED"
     NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
+    LOCAL_HELPER_FORBIDDEN = "LOCAL_HELPER_FORBIDDEN"
+    LOCAL_HELPER_TOKEN_INVALID = "LOCAL_HELPER_TOKEN_INVALID"
+    LOCAL_HELPER_CONFIRMATION_REQUIRED = "LOCAL_HELPER_CONFIRMATION_REQUIRED"
+    HANDOFF_MANIFEST_INVALID = "HANDOFF_MANIFEST_INVALID"
+    HANDOFF_TOKEN_INVALID = "HANDOFF_TOKEN_INVALID"
+    LOCAL_CHROME_NOT_AVAILABLE = "LOCAL_CHROME_NOT_AVAILABLE"
+    LOCAL_CHROME_TAB_NOT_FOUND = "LOCAL_CHROME_TAB_NOT_FOUND"
+    LOCAL_CHROME_SCAN_FAILED = "LOCAL_CHROME_SCAN_FAILED"
 
 
 ERROR_MESSAGES = {
@@ -78,11 +89,22 @@ ERROR_MESSAGES = {
     ErrorCode.PROFILE_SCAN_NEEDS_FALLBACK: "公开主页未包含可解析作品列表。当前不登录、不使用 Cookie、不绕风控，请改用多作品链接粘贴或单作品解析。",
     ErrorCode.PROFILE_SCAN_API_NOT_CONFIGURED: "已选择 external_api 主页扫描，但 PROFILE_SCAN_API_BASE 未配置。",
     ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED: "主页返回结构无法归一化，可能是平台页面结构变化。请改用多作品链接粘贴或单作品解析。",
+    ErrorCode.UNSUPPORTED_PROFILE_ITEM: "图文 / 照片作品暂不支持生成视频素材包。请先保留在作品池，或改用视频作品生成素材包。",
+    ErrorCode.PROFILE_BUILD_QUEUE_LIMIT: "已超过当前作品池富化队列上限。请减少选择数量后重试。",
+    ErrorCode.PROFILE_BUILD_ITEM_FAILED: "单条作品生成素材包失败。队列会继续处理后续作品。",
     ErrorCode.ASR_PROVIDER_NOT_CONFIGURED: "ASR provider 尚未配置。后续可接入 faster-whisper、whisper.cpp 或 API ASR。",
     ErrorCode.ASR_FAILED: "语音识别失败。请检查视频音轨、ffmpeg 输出和 ASR 模型配置。",
     ErrorCode.OCR_PROVIDER_NOT_CONFIGURED: "OCR provider 尚未配置。后续可接入 PaddleOCR 或 rapidocr-onnxruntime。",
     ErrorCode.OCR_FAILED: "画面文字识别失败。请检查关键帧是否存在，以及 OCR provider 配置是否正确。",
     ErrorCode.NOT_IMPLEMENTED: "该功能将在后续版本接入，当前版本未启用。",
+    ErrorCode.LOCAL_HELPER_FORBIDDEN: "本地助手接口只允许 127.0.0.1 / localhost 调用。",
+    ErrorCode.LOCAL_HELPER_TOKEN_INVALID: "本地助手扫描确认已过期或无效，请重新点击按钮确认。",
+    ErrorCode.LOCAL_HELPER_CONFIRMATION_REQUIRED: "本地助手动作需要页面确认。请通过页面按钮重新确认后再执行。",
+    ErrorCode.HANDOFF_MANIFEST_INVALID: "安全交接包无效。公开网站只接收已声明不含 Cookie、登录 token 和签名 URL 的净化元数据。",
+    ErrorCode.HANDOFF_TOKEN_INVALID: "安全交接包导入确认已过期或无效，请重新点击导入交接包。",
+    ErrorCode.LOCAL_CHROME_NOT_AVAILABLE: "未检测到本机 Chrome DevTools。请用 remote debugging 模式打开 Chrome 后重试。",
+    ErrorCode.LOCAL_CHROME_TAB_NOT_FOUND: "没有找到已打开的抖音主页标签页。请先在 Chrome 中打开目标主页并登录/过验证。",
+    ErrorCode.LOCAL_CHROME_SCAN_FAILED: "本机 Chrome 辅助扫描失败。请确认页面已加载作品列表，并且 Chrome DevTools 可连接。",
 }
 
 

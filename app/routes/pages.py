@@ -5,6 +5,9 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.templating import Jinja2Templates
 
+from app.config import settings
+from app.services.creator_clone import MAX_DISTILL_SAMPLES
+
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -25,7 +28,15 @@ def _static_version() -> str:
 
 @router.get("/")
 def home(request: Request):
-    response = templates.TemplateResponse(request, "index.html", {"static_version": _static_version()})
+    response = templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "static_version": _static_version(),
+            "profile_build_max_items": settings.profile_build_max_items,
+            "creator_clone_max_distill_samples": MAX_DISTILL_SAMPLES,
+        },
+    )
     response.headers["Cache-Control"] = "no-store"
     return response
 

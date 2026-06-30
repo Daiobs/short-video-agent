@@ -16,6 +16,7 @@ class ProfileScanPayload(BaseModel):
     profile_url: str = ""
     sec_user_id: str = ""
     manual_links: str = ""
+    structured_items: str = ""
     count: int = 20
     max_pages: int = 1
     sort_by: str = "like_count"
@@ -29,6 +30,7 @@ def scan_profile_endpoint(payload: ProfileScanPayload):
                 profile_url=payload.profile_url,
                 sec_user_id=payload.sec_user_id,
                 manual_links=payload.manual_links,
+                structured_items=payload.structured_items,
                 count=payload.count,
                 max_pages=payload.max_pages,
                 sort_by=payload.sort_by,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import html
+import csv
+import io
 import json
 import re
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
@@ -33,12 +35,16 @@ class ManualLinksProfileProvider:
             values = [raw_text.strip()]
         seen: set[str] = set()
         items: list[ProfileVideoItem] = []
+        duplicate_count = 0
+        invalid_count = 0
         for value in values:
             try:
-                aweme_id = extract_aweme_id(value)
+                aweme_id = extract_aweme_id_or_short_url(value)
             except AppError:
+                invalid_count += 1
                 continue
             if aweme_id in seen:
+                duplicate_count += 1
                 continue
             seen.add(aweme_id)
             source_url = extract_first_url(value) or f"https://www.douyin.com/video/{aweme_id}"
@@ -56,13 +62,70 @@ class ManualLinksProfileProvider:
         if not items:
             raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "多作品链接中没有找到有效 aweme_id。")
         limited = sorted_profile_items(items[: _safe_count(request.count)], request.sort_by)
+        stats = {
+            "input_count": len(values),
+            "recognized_count": len(items),
+            "duplicate_count": duplicate_count,
+            "invalid_count": invalid_count,
+            "limited_count": len(limited),
+        }
         result = ProfileScanResult(
             provider=self.name,
             profile_url=request.profile_url or "",
             sec_user_id=request.sec_user_id or "",
             items=limited,
             has_more=len(items) > len(limited),
-            warnings=["多链接模式只提取 aweme_id；互动数据会在进入单作品解析后继续补齐。"],
+            warnings=[
+                f"多链接导入：成功识别 {stats['recognized_count']} 条，去重 {stats['duplicate_count']} 条，忽略 {stats['invalid_count']} 条无效内容。",
+                "多链接模式只提取 aweme_id；互动数据会在进入单作品解析后继续补齐。",
+            ],
+            import_stats=stats,
+        )
+        result.summary = build_profile_summary(result)
+        return result
+
+
+class StructuredItemsProfileProvider:
+    name = "structured_items"
+
+    def scan(self, request: ProfileScanRequest) -> ProfileScanResult:
+        raw_text = (request.structured_items or "").strip()
+        rows = _parse_structured_items(raw_text)
+        seen: set[str] = set()
+        items: list[ProfileVideoItem] = []
+        duplicate_count = 0
+        invalid_count = 0
+        for row in rows:
+            try:
+                item = _profile_item_from_structured_row(row)
+            except AppError:
+                invalid_count += 1
+                continue
+            if item.aweme_id in seen:
+                duplicate_count += 1
+                continue
+            seen.add(item.aweme_id)
+            items.append(item)
+        if not items:
+            raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "JSON / CSV 中没有找到有效作品。")
+        limited = sorted_profile_items(items[: _safe_count(request.count)], request.sort_by)
+        stats = {
+            "input_count": len(rows),
+            "recognized_count": len(items),
+            "duplicate_count": duplicate_count,
+            "invalid_count": invalid_count,
+            "limited_count": len(limited),
+        }
+        result = ProfileScanResult(
+            provider=self.name,
+            profile_url=request.profile_url or "",
+            sec_user_id=request.sec_user_id or "",
+            items=limited,
+            has_more=len(items) > len(limited),
+            warnings=[
+                f"JSON / CSV 导入：成功识别 {stats['recognized_count']} 条，去重 {stats['duplicate_count']} 条，忽略 {stats['invalid_count']} 条无效内容。",
+            ],
+            import_stats=stats,
         )
         result.summary = build_profile_summary(result)
         return result
@@ -134,12 +197,15 @@ def scan_profile(request: ProfileScanRequest) -> ProfileScanResult:
         profile_url=(request.profile_url or "").strip() or None,
         sec_user_id=(request.sec_user_id or "").strip() or None,
         manual_links=(request.manual_links or "").strip() or None,
+        structured_items=(request.structured_items or "").strip() or None,
         count=_safe_count(request.count),
         max_pages=max(1, min(int(request.max_pages or settings.profile_scan_max_pages), 5)),
         sort_by=request.sort_by or "like_count",
     )
     if normalized.manual_links:
         return ManualLinksProfileProvider().scan(normalized)
+    if normalized.structured_items:
+        return StructuredItemsProfileProvider().scan(normalized)
 
     provider_name = settings.profile_scan_provider or "public"
     if provider_name == "external_api":
@@ -150,6 +216,16 @@ def scan_profile(request: ProfileScanRequest) -> ProfileScanResult:
     result.items = sorted_profile_items(result.items, normalized.sort_by)
     result.summary = build_profile_summary(result)
     return result
+
+
+def extract_aweme_id_or_short_url(value: str) -> str:
+    try:
+        return extract_aweme_id(value)
+    except AppError:
+        url = extract_first_url(value)
+        if url and urlparse(url).netloc.lower().endswith("v.douyin.com"):
+            return _resolve_douyin_short_aweme_id(url)
+        raise
 
 
 def normalize_profile_url(profile_url: str | None, sec_user_id: str | None) -> str:
@@ -222,6 +298,26 @@ def _resolve_douyin_short_profile_url(url: str) -> str:
     raise AppError(ErrorCode.INVALID_PROFILE_URL, "短链未跳转到可识别的抖音主页。")
 
 
+def _resolve_douyin_short_aweme_id(url: str) -> str:
+    try:
+        with httpx.Client(timeout=5.0, follow_redirects=False, trust_env=False) as client:
+            response = client.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 short-video-agent profile pool",
+                    "Accept": "text/html,application/xhtml+xml",
+                },
+            )
+    except httpx.HTTPError as error:
+        raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, f"短链解析失败：{str(error)[:160]}") from error
+
+    location = response.headers.get("location", "") or response.headers.get("Location", "")
+    if not location:
+        raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "短链没有返回作品跳转地址。")
+    target = urljoin(url, location)
+    return extract_aweme_id(target)
+
+
 def _profile_url_from_share_url(url: str) -> str:
     parsed = urlparse(url)
     host = parsed.netloc.lower()
@@ -235,6 +331,94 @@ def _profile_url_from_share_url(url: str) -> str:
     if not SEC_USER_ID_RE.fullmatch(sec_uid):
         return ""
     return f"https://www.douyin.com/user/{sec_uid}"
+
+
+def _parse_structured_items(text: str) -> list[dict]:
+    if not text:
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return _parse_csv_items(text)
+    if isinstance(payload, dict):
+        if isinstance(payload.get("items"), list):
+            payload = payload["items"]
+        elif isinstance(payload.get("samples"), list):
+            payload = payload["samples"]
+        elif isinstance(payload.get("aweme_list"), list):
+            payload = payload["aweme_list"]
+        elif isinstance(payload.get("awemeList"), list):
+            payload = payload["awemeList"]
+        elif isinstance(payload.get("videos"), list):
+            payload = payload["videos"]
+        else:
+            payload = [payload]
+    if not isinstance(payload, list):
+        raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "JSON / CSV 作品列表格式无效。")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _parse_csv_items(text: str) -> list[dict]:
+    sample = text.strip()
+    if not sample:
+        return []
+    reader = csv.DictReader(io.StringIO(sample))
+    if reader.fieldnames and any(field for field in reader.fieldnames):
+        return [dict(row) for row in reader]
+    rows = []
+    for line in sample.splitlines():
+        value = line.strip()
+        if value:
+            rows.append({"source_url": value})
+    return rows
+
+
+def _field(row: dict, *names: str, default=""):
+    for name in names:
+        value = _nested_field(row, name)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def _nested_field(row: dict, name: str):
+    current = row
+    for part in name.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _profile_item_from_structured_row(row: dict) -> ProfileVideoItem:
+    raw_id = str(_field(row, "aweme_id", "awemeId", "awemeIdStr", "id", default="")).strip()
+    source_url = str(_field(row, "source_url", "webpage_url", "video_url", "url", "link", default="")).strip()
+    aweme_value = raw_id or source_url
+    aweme_id = extract_aweme_id_or_short_url(aweme_value)
+    source_url = source_url or f"https://www.douyin.com/video/{aweme_id}"
+    media_type = str(_field(row, "media_type", "type", default="")).strip().lower()
+    if media_type in {"photo", "image_post", "note", "图文", "照片"}:
+        media_type = "image"
+    if media_type not in {"video", "image", "unknown"}:
+        media_type = _media_type_from_url(source_url) or "unknown"
+    title = str(_field(row, "title", "desc", "description", "caption", default=f"抖音作品 {aweme_id}")).strip()
+    desc = str(_field(row, "desc", "description", "caption", default="")).strip()
+    return ProfileVideoItem(
+        aweme_id=aweme_id,
+        title=title or f"抖音作品 {aweme_id}",
+        desc=desc,
+        author=str(_field(row, "author", "nickname", default="")).strip(),
+        cover_url=str(_field(row, "cover_url", "cover", default="")).strip(),
+        create_time=str(_field(row, "create_time", "publish_time", "发布时间", default="")).strip(),
+        like_count=_safe_int(_field(row, "like_count", "likes", "digg_count", "statistics.digg_count", "点赞", default=0)),
+        comment_count=_safe_int(_field(row, "comment_count", "comments", "statistics.comment_count", "评论", default=0)),
+        share_count=_safe_int(_field(row, "share_count", "shares", "statistics.share_count", "分享", default=0)),
+        collect_count=_safe_int(_field(row, "collect_count", "collects", "statistics.collect_count", "收藏", default=0)),
+        view_count=_safe_int(_field(row, "view_count", "play_count", "statistics.play_count", default=0)),
+        webpage_url=source_url,
+        media_type=media_type,
+        source_provider="structured_items",
+    )
 
 
 def extract_profile_items_from_html(html_text: str, sec_user_id: str = "") -> list[ProfileVideoItem]:
@@ -291,6 +475,7 @@ def normalize_profile_video_item(raw: dict, sec_user_id: str = "") -> ProfileVid
         comment_count=_safe_int(statistics.get("comment_count") or raw.get("comment_count")),
         share_count=_safe_int(statistics.get("share_count") or raw.get("share_count")),
         collect_count=_safe_int(statistics.get("collect_count") or raw.get("collect_count")),
+        view_count=_safe_int(statistics.get("play_count") or raw.get("play_count")),
         duration=_safe_int(video.get("duration") or raw.get("duration")),
         webpage_url=f"https://www.douyin.com/{'note' if media_type == 'image' else 'video'}/{aweme_id}",
         media_type=media_type,

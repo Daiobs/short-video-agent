@@ -10,6 +10,10 @@ outputs/uploads/*
 outputs/cases/*
 outputs/downloads/*
 outputs/calibration/*
+outputs/creator_clones/*
+outputs/local_chrome_profile/*
+samples/
 !outputs/uploads/.gitkeep
 !outputs/cases/.gitkeep
 !outputs/downloads/.gitkeep
+!outputs/creator_clones/.gitkeep
