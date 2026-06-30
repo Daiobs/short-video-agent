@@ -46,6 +46,7 @@ from app.services.creator_clone import (
     CloneSample,
     CloneSampleSet,
     MAX_DISTILL_SAMPLES,
+    batch_distill_creator_clone,
     build_sample_set,
     build_distill_prompt,
     dedupe_samples,
@@ -421,6 +422,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "<th>处理状态</th>" in response.text
     assert "<th>操作</th>" in response.text
     assert "高级：仅富化当前样本" in response.text
+    assert 'id="creator-clone-batch-distill-button"' in response.text
+    assert "分批蒸馏已选样本" in response.text
     assert 'id="profile-selection-basket"' in response.text
     assert "本轮样本篮" in Path("app/static/app.js").read_text(encoding="utf-8")
     assert 'id="profile-auto-distill"' in response.text
@@ -529,6 +532,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderProfileEnrichmentPlan" in script
     assert "function pollCreatorCloneDistillJob" in script
     assert "/api/jobs/creator-clone-distill" in script
+    assert "/api/jobs/creator-clone-batch-distill" in script
+    assert "function batchDistillSelectedCreatorClone" in script
+    assert "按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批" in script
     assert 'fetch("/api/creator-clone/distill"' not in script
     assert "function profileEvidenceCounts" in script
     assert "富化计划" in script
@@ -2633,6 +2639,71 @@ def test_creator_clone_distill_job_rejects_too_many_samples() -> None:
     assert response.status_code == 400
     assert response.json()["error_code"] == "PROFILE_BUILD_QUEUE_LIMIT"
     assert f"{MAX_DISTILL_SAMPLES} 条样本" in response.json()["message"]
+
+
+def test_creator_clone_batch_distill_job_accepts_more_than_single_limit(monkeypatch) -> None:
+    def fake_batch_distill_creator_clone(sample_set, selected_sample_ids, **kwargs):
+        return {
+            "set": sample_set.to_dict(),
+            "result": {"summary": "批量汇总完成"},
+            "prompt": "final prompt",
+            "exports": {},
+            "batch_distill": {"batch_count": 2, "selected_count": len(selected_sample_ids)},
+            "warnings": [],
+        }
+
+    monkeypatch.setattr("app.routes.jobs.batch_distill_creator_clone", fake_batch_distill_creator_clone)
+    samples = [{"sample_id": f"sample_{index}", "title": f"样本 {index}"} for index in range(MAX_DISTILL_SAMPLES + 1)]
+    response = client.post(
+        "/api/jobs/creator-clone-batch-distill",
+        json={
+            "samples": samples,
+            "selected_sample_ids": [sample["sample_id"] for sample in samples],
+            "batch_size": MAX_DISTILL_SAMPLES,
+            "max_samples": 150,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["selected_count"] == MAX_DISTILL_SAMPLES + 1
+    assert payload["batch_count"] == 2
+
+    deadline = time.time() + 10
+    job = None
+    while time.time() < deadline:
+        job_response = client.get(f"/api/jobs/{payload['job_id']}")
+        assert job_response.status_code == 200
+        job = job_response.json()["job"]
+        if job["status"] in {"success", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert job is not None
+    assert job["status"] == "success"
+    assert job["result_json"]["batch_distill"]["batch_count"] == 2
+
+
+def test_batch_distill_prompt_only_writes_manifest_when_llm_disabled(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: False)
+    sample_set = CloneSampleSet(
+        set_id="clone_batch_prompt_only_test",
+        title="批量 Prompt 测试",
+        samples=[CloneSample(sample_id=f"sample_prompt_{index}", title=f"样本 {index}") for index in range(MAX_DISTILL_SAMPLES + 1)],
+    )
+
+    result = batch_distill_creator_clone(
+        sample_set,
+        [sample.sample_id for sample in sample_set.samples],
+        batch_size=MAX_DISTILL_SAMPLES,
+        max_samples=150,
+    )
+
+    assert result["recovery"] == "prompt_only"
+    assert result["batch_distill"]["batch_count"] == 2
+    assert result["batch_distill"]["final"]["status"] == "prompt_only"
+    assert Path(result["batch_distill"]["final"]["prompt_path"]).is_file()
 
 
 def test_profile_build_cases_queue_continues_after_item_failure(monkeypatch, tmp_path: Path) -> None:

@@ -104,6 +104,7 @@ const profileQueueCard = document.getElementById("profile-queue-card");
 const profileQueueSummary = document.getElementById("profile-queue-summary");
 const profileQueueItems = document.getElementById("profile-queue-items");
 const creatorCloneDistillButton = document.getElementById("creator-clone-distill-button");
+const creatorCloneBatchDistillButton = document.getElementById("creator-clone-batch-distill-button");
 const creatorCloneSelectionStatus = document.getElementById("creator-clone-selection-status");
 const profileSelectionBasket = document.getElementById("profile-selection-basket");
 const profileEvidenceStatus = document.getElementById("profile-evidence-status");
@@ -792,6 +793,15 @@ function updateCreatorCloneSelectionStatus() {
         : "";
     creatorCloneDistillButton.disabled = Boolean(distillDisabledReason);
     creatorCloneDistillButton.title = distillDisabledReason || `将蒸馏 ${selected.length} 条样本`;
+  }
+  if (creatorCloneBatchDistillButton) {
+    const batchDisabledReason = !selected.length
+      ? "请先选择要分批蒸馏的样本。"
+      : selected.length > PROFILE_BUILD_MAX_ITEMS
+        ? `分批蒸馏最多支持 ${PROFILE_BUILD_MAX_ITEMS} 条样本。`
+        : "";
+    creatorCloneBatchDistillButton.disabled = Boolean(batchDisabledReason);
+    creatorCloneBatchDistillButton.title = batchDisabledReason || `将 ${selected.length} 条样本按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批蒸馏并汇总`;
   }
   renderProfileEnrichmentPlan(selected, buildable);
   renderProfileDistillReadiness(selected);
@@ -2641,11 +2651,14 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
 }
 
 function applyCreatorCloneDistillPayload(payload) {
+  const batch = payload.batch_distill || {};
   const recoveryHint = payload.recovery === "prompt_only"
     ? (payload.error_code === "LLM_NOT_CONFIGURED"
       ? "大模型未配置，已生成蒸馏 Prompt，可复制后手动分析。"
       : `${payload.error_code || "LLM_FAILED"}：${payload.message || "大模型蒸馏失败"} 已保留素材池证据和蒸馏 Prompt，可稍后重试或手动分析。`)
-    : "创作者克隆蒸馏完成。";
+    : batch.batch_count
+      ? `分批蒸馏完成：${formatNumber(batch.batch_count)} 个批次，已生成总汇总。`
+      : "创作者克隆蒸馏完成。";
   profileScanStatus.textContent = recoveryHint;
   currentCloneSetId = payload.set?.set_id || currentCloneSetId;
   renderCreatorCloneResult(payload.result || null, payload.set, payload.prompt || "", payload.exports || {});
@@ -2729,6 +2742,62 @@ async function distillSelectedCreatorClone(options = {}) {
     await pollCreatorCloneDistillJob(payload.job_id);
   } catch (error) {
     profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "蒸馏失败"}`;
+    jobMessage.className = "job-message failed";
+    jobMessage.textContent = profileScanStatus.textContent;
+  } finally {
+    creatorCloneDistillRunning = false;
+    updateCreatorCloneSelectionStatus();
+    renderCreatorCloneNextAction();
+  }
+}
+
+async function batchDistillSelectedCreatorClone() {
+  const selected = selectedProfileItems();
+  if (!selected.length) {
+    profileScanStatus.textContent = "请先选择要分批蒸馏的样本。";
+    return;
+  }
+  if (selected.length > PROFILE_BUILD_MAX_ITEMS) {
+    profileScanStatus.textContent = `当前分批蒸馏最多支持 ${PROFILE_BUILD_MAX_ITEMS} 条样本。`;
+    return;
+  }
+  const shouldContinue = window.confirm(
+    `将把 ${selected.length} 条样本按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批进行蒸馏，最后再汇总为账号级报告。这个过程可能会多次调用大模型并耗时较久。确认开始？`,
+  );
+  if (!shouldContinue) {
+    profileScanStatus.textContent = "已取消分批蒸馏。";
+    return;
+  }
+  const selectedIds = selected.map(profileItemKey);
+  creatorCloneDistillRunning = true;
+  creatorCloneBatchDistillButton.disabled = true;
+  creatorCloneDistillButton.disabled = true;
+  renderCreatorCloneNextAction();
+  try {
+    jobCard.classList.remove("hidden");
+    progressBar.style.width = "0%";
+    jobMessage.className = "job-message";
+    jobMessage.textContent = "正在创建分批蒸馏任务...";
+    jobResult.textContent = "";
+    const response = await fetch("/api/jobs/creator-clone-batch-distill", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        sample_set_id: currentCloneSetId,
+        samples: currentCloneSetId ? [] : profileItems.map(creatorCloneSamplePayload),
+        selected_sample_ids: selectedIds,
+        distill_mode: "quick",
+        batch_size: CREATOR_CLONE_MAX_DISTILL_SAMPLES,
+        max_samples: PROFILE_BUILD_MAX_ITEMS,
+        title: "创作者克隆实验室素材池",
+        source_platform: "douyin",
+      }),
+    });
+    const payload = await readJsonResponse(response);
+    profileScanStatus.textContent = `已创建分批蒸馏任务：${payload.selected_count || selected.length} 条样本，${payload.batch_count || 1} 个批次。`;
+    await pollCreatorCloneDistillJob(payload.job_id);
+  } catch (error) {
+    profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "分批蒸馏失败"}`;
     jobMessage.className = "job-message failed";
     jobMessage.textContent = profileScanStatus.textContent;
   } finally {
@@ -3368,6 +3437,10 @@ profileSelectedBuildButton.addEventListener("click", async () => {
 
 creatorCloneDistillButton.addEventListener("click", async () => {
   await distillSelectedCreatorClone();
+});
+
+creatorCloneBatchDistillButton?.addEventListener("click", async () => {
+  await batchDistillSelectedCreatorClone();
 });
 
 copyCreatorCloneSpecButton.addEventListener("click", async () => {

@@ -22,8 +22,10 @@ from app.services.ocr import run_case_ocr
 from app.services.quality_resolver import resolve_quality_candidates
 from app.services.profile_scan import scan_profile
 from app.services.creator_clone import (
+    BATCH_DISTILL_MAX_SAMPLES,
     CloneSampleSet,
     MAX_DISTILL_SAMPLES,
+    batch_distill_creator_clone,
     dedupe_samples,
     distill_creator_clone,
     load_sample_set,
@@ -89,6 +91,18 @@ class CreatorCloneDistillJobRequest(BaseModel):
     distill_mode: str = "quick"
     include_case_reports: bool = True
     max_samples: int = MAX_DISTILL_SAMPLES
+    title: str = ""
+    creator_name: str = ""
+    source_platform: str = "unknown"
+
+
+class CreatorCloneBatchDistillJobRequest(BaseModel):
+    sample_set_id: str = ""
+    samples: list[dict] = []
+    selected_sample_ids: list[str] = []
+    distill_mode: str = "quick"
+    batch_size: int = MAX_DISTILL_SAMPLES
+    max_samples: int = BATCH_DISTILL_MAX_SAMPLES
     title: str = ""
     creator_name: str = ""
     source_platform: str = "unknown"
@@ -1074,6 +1088,60 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         db.close()
 
 
+def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "running", 5, "准备分批蒸馏")
+            db.commit()
+
+        sample_set = _load_creator_clone_distill_set(payload)
+        selected_sample_ids = [str(value) for value in payload.get("selected_sample_ids") or [] if str(value)]
+        distill_mode = str(payload.get("distill_mode") or "quick")
+        batch_size = int(payload.get("batch_size") or MAX_DISTILL_SAMPLES)
+        max_samples = int(payload.get("max_samples") or BATCH_DISTILL_MAX_SAMPLES)
+
+        def progress(value: int, message: str) -> None:
+            current = db.get(Job, job_id)
+            if current:
+                _set_job(
+                    current,
+                    "running",
+                    max(1, min(98, int(value))),
+                    message,
+                    result={"set": sample_set.to_dict()},
+                )
+                db.commit()
+
+        progress(8, f"已载入素材池，准备分批蒸馏 {len(selected_sample_ids) or len(sample_set.samples)} 条样本")
+        result = batch_distill_creator_clone(
+            sample_set,
+            selected_sample_ids,
+            distill_mode=distill_mode,
+            batch_size=batch_size,
+            max_samples=max_samples,
+            progress=progress,
+        )
+        job = db.get(Job, job_id)
+        if job:
+            message = "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型"
+            _set_job(job, "success", 100, message, result={"ok": bool(result.get("result")), **result})
+            db.commit()
+    except AppError as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            db.commit()
+    except Exception as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.PROFILE_BUILD_ITEM_FAILED)
+            db.commit()
+    finally:
+        db.close()
+
+
 def _create_job(job_type: str, message: str) -> Job:
     db = SessionLocal()
     try:
@@ -1199,6 +1267,30 @@ def creator_clone_distill_job(payload: CreatorCloneDistillJobRequest, background
     job = _create_job("creator-clone-distill", "等待创作者克隆蒸馏")
     background_tasks.add_task(_run_creator_clone_distill_job, job.id, payload.model_dump())
     return {"ok": True, "job_id": job.id, "selected_count": selected_count}
+
+
+@router.post("/creator-clone-batch-distill")
+def creator_clone_batch_distill_job(payload: CreatorCloneBatchDistillJobRequest, background_tasks: BackgroundTasks):
+    selected_count = len([value for value in payload.selected_sample_ids if str(value)]) or len(payload.samples)
+    if selected_count <= 0:
+        return error_response(AppError(ErrorCode.AWEME_ID_NOT_FOUND, "请先导入素材池并选择样本。"))
+    if selected_count > BATCH_DISTILL_MAX_SAMPLES or payload.max_samples > BATCH_DISTILL_MAX_SAMPLES:
+        return error_response(
+            AppError(
+                ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
+                f"当前分批蒸馏最多支持 {BATCH_DISTILL_MAX_SAMPLES} 条样本。请减少选择数量后重试。",
+            )
+        )
+    batch_size = max(1, min(int(payload.batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES))
+    job = _create_job("creator-clone-batch-distill", "等待分批蒸馏")
+    background_tasks.add_task(_run_creator_clone_batch_distill_job, job.id, payload.model_dump())
+    return {
+        "ok": True,
+        "job_id": job.id,
+        "selected_count": selected_count,
+        "batch_size": batch_size,
+        "batch_count": (selected_count + batch_size - 1) // batch_size,
+    }
 
 
 @router.post("/resolve-qualities")

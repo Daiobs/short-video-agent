@@ -29,6 +29,7 @@ VALID_SOURCE_TYPES = {"douyin", "xhs", "bili", "local", "manual", "unknown"}
 VALID_MEDIA_TYPES = {"video", "image", "mixed", "text", "unknown"}
 VALID_UNDERSTANDING_LEVELS = {"full", "partial", "metadata_only"}
 MAX_DISTILL_SAMPLES = 20
+BATCH_DISTILL_MAX_SAMPLES = 150
 HANDOFF_SENSITIVE_RE = re.compile(
     r"(cookie|sessionid|sid_guard|passport|token|authorization|x-bogus|mstoken|odin_tt)(\s*[:=]\s*(?:bearer\s+)?[^&;\"'<>]+)?",
     re.IGNORECASE,
@@ -1116,7 +1117,7 @@ def build_micro_reduce_distill_prompt(
     distill_mode: str = "quick",
 ) -> str:
     rows = [_micro_map_summary(summary) for summary in map_summaries]
-    return f"""你是短视频账号规律蒸馏助手。请基于 2-3 条单条视频摘要，输出极简合法 JSON，不要 Markdown。
+    return f"""你是短视频账号规律蒸馏助手。请基于一组单条视频摘要，输出极简合法 JSON，不要 Markdown。
 
 要求：
 - 总输出尽量控制在 800 个中文字符内。
@@ -1536,6 +1537,238 @@ def distill_creator_clone(
     }
 
 
+def selected_samples_for_batch_distill(
+    samples: list[CloneSample],
+    selected_sample_ids: list[str],
+    max_samples: int = BATCH_DISTILL_MAX_SAMPLES,
+) -> tuple[list[CloneSample], list[str]]:
+    if selected_sample_ids:
+        lookup: dict[str, CloneSample] = {}
+        for sample in samples:
+            for key in (sample.sample_id, sample.aweme_id, sample.case_id):
+                if key:
+                    lookup.setdefault(key, sample)
+        selected: list[CloneSample] = []
+        seen: set[str] = set()
+        for key in selected_sample_ids:
+            sample = lookup.get(str(key))
+            if not sample or sample.sample_id in seen:
+                continue
+            selected.append(sample)
+            seen.add(sample.sample_id)
+    else:
+        selected = list(samples)
+    if not selected:
+        raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "请至少选择 1 条素材。")
+    if len(selected) > max_samples:
+        raise AppError(
+            ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
+            f"当前批量蒸馏最多支持 {max_samples} 条样本。请减少选择数量后重试。",
+        )
+    warnings: list[str] = []
+    metadata_only_count = sum(1 for sample in selected if sample.understanding_level == "metadata_only")
+    if metadata_only_count > len(selected) / 2:
+        warnings.append("当前多数样本只有元数据，批量蒸馏会优先输出账号级方向判断，镜头和口播细节可信度较低。")
+    return selected, warnings
+
+
+def _chunk_samples(samples: list[CloneSample], batch_size: int) -> list[list[CloneSample]]:
+    size = max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES))
+    return [samples[index : index + size] for index in range(0, len(samples), size)]
+
+
+def _sample_ids(samples: list[CloneSample]) -> list[str]:
+    return [sample.sample_id for sample in samples]
+
+
+def build_final_creator_clone_reduce_prompt(
+    sample_set: CloneSampleSet,
+    selected_samples: list[CloneSample],
+    batch_results: list[dict],
+    distill_mode: str = "quick",
+) -> str:
+    compact_batches = [
+        _drop_empty_prompt_values(
+            {
+                "batch_id": batch.get("batch_id"),
+                "status": batch.get("status"),
+                "sample_count": batch.get("sample_count"),
+                "sample_ids": _short_list(batch.get("sample_ids"), 8, 60),
+                "summary": _truncate_text((batch.get("result") or {}).get("summary") or batch.get("summary") or "", 260),
+                "creator_positioning": (batch.get("result") or {}).get("creator_positioning") or {},
+                "expression_patterns": (batch.get("result") or {}).get("expression_patterns") or {},
+                "transferable_formulas": _short_list((batch.get("result") or {}).get("transferable_formulas"), 5, 120),
+                "candidate_ideas": _short_list((batch.get("result") or {}).get("candidate_ideas"), 4, 100),
+                "evidence_gaps": _short_list((batch.get("result") or {}).get("evidence_gaps") or batch.get("evidence_gaps"), 4, 100),
+                "error_code": batch.get("error_code") or "",
+            }
+        )
+        for batch in batch_results
+    ]
+    segments = performance_segments(selected_samples)
+    evidence_matrix = selected_evidence_matrix(selected_samples)
+    return f"""你是 Creator Clone Lab 的最终汇总 Reduce 助手。请基于多个批次蒸馏摘要，输出账号级创作者规律 JSON，不要 Markdown。
+
+工作方式：
+- 每个 batch 已经代表 1 组样本的局部规律，你现在只做跨批次汇总。
+- 优先找跨批次反复出现的流量来源、视觉人设、标题话题、动作节奏、可复刻公式和风险边界。
+- 不要逐条复述样本；如果批次失败或证据不足，写进 evidence_gaps。
+- 美拍/COS/颜值类优先归纳：第一眼吸引、人物人设、妆造光线、动作节奏、标题话题和评论互动。
+
+返回 JSON 字段：
+{{
+  "summary": "",
+  "creator_positioning": {{"what_the_creator_sells": "", "audience_promise": "", "hidden_genre": "", "audience_assumption": ""}},
+  "performance_segments": {{"highest_like_samples": [], "highest_comment_samples": [], "highest_share_samples": [], "highest_collect_samples": [], "weak_or_reference_samples": []}},
+  "topic_buckets": [],
+  "thinking_patterns": {{"assumptions": [], "tension_sources": [], "detail_selection_rules": [], "novelty_vs_familiarity": ""}},
+  "expression_patterns": {{"opening_hooks": [], "scene_order": [], "shot_types": [], "subtitle_voice": [], "visual_style": [], "ending_patterns": []}},
+  "transferable_formulas": [],
+  "creator_clone_spec": {{"taste": "", "topic_selection_rules": [], "structure_rules": [], "expression_rules": [], "visual_rules": [], "caption_voice": "", "ending_rules": [], "anti_patterns": [], "self_check_rubric": []}},
+  "candidate_ideas": [],
+  "evidence_gaps": [],
+  "next_actions": []
+}}
+
+蒸馏模式：{distill_mode}
+素材池标题：{sample_set.title}
+创作者：{sample_set.creator_name or "未知"}
+平台：{sample_set.source_platform}
+总样本数：{len(selected_samples)}
+账号可见资料：{json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False)}
+全局证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
+全局表现分层：{json.dumps(segments, ensure_ascii=False)}
+批次摘要：{json.dumps(compact_batches, ensure_ascii=False)}
+"""
+
+
+def batch_distill_creator_clone(
+    sample_set: CloneSampleSet,
+    selected_sample_ids: list[str],
+    *,
+    distill_mode: str = "quick",
+    batch_size: int = MAX_DISTILL_SAMPLES,
+    max_samples: int = BATCH_DISTILL_MAX_SAMPLES,
+    progress=None,
+) -> dict:
+    selected_samples, warnings = selected_samples_for_batch_distill(
+        sample_set.samples,
+        selected_sample_ids,
+        max_samples=max_samples,
+    )
+    sample_set.selected_sample_ids = _sample_ids(selected_samples)
+    for sample in sample_set.samples:
+        sample.selected = sample.sample_id in set(sample_set.selected_sample_ids)
+    save_sample_set(sample_set)
+
+    output_dir = creator_clone_dir(sample_set.set_id)
+    batch_dir = output_dir / "batch_distill"
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    chunks = _chunk_samples(selected_samples, batch_size)
+    if progress:
+        progress(10, f"已规划 {len(chunks)} 个蒸馏批次")
+
+    batch_results: list[dict] = []
+    llm = get_llm_provider() if llm_is_configured() else None
+    if not llm:
+        warnings.append("大模型未配置，已生成分批蒸馏 Prompt 和最终汇总 Prompt。")
+
+    for index, chunk in enumerate(chunks, start=1):
+        batch_id = f"batch_{index:03d}"
+        map_summaries = build_sample_map_summaries(chunk)
+        prompt = build_micro_reduce_distill_prompt(sample_set, chunk, map_summaries, distill_mode=distill_mode)
+        prompt_path = batch_dir / f"{batch_id}_prompt.md"
+        result_path = batch_dir / f"{batch_id}_result.json"
+        markdown_path = batch_dir / f"{batch_id}.md"
+        prompt_path.write_text(prompt, encoding="utf-8")
+        _write_json(batch_dir / f"{batch_id}_map_summaries.json", map_summaries)
+        if progress:
+            progress(10 + int((index - 1) / max(1, len(chunks)) * 65), f"正在蒸馏批次 {index}/{len(chunks)}")
+        batch_payload = {
+            "batch_id": batch_id,
+            "index": index,
+            "sample_count": len(chunk),
+            "sample_ids": _sample_ids(chunk),
+            "prompt_path": str(prompt_path),
+            "result_path": str(result_path),
+            "markdown_path": str(markdown_path),
+            "status": "prompt_only",
+            "summary": "",
+            "error_code": "LLM_NOT_CONFIGURED" if not llm else "",
+        }
+        if llm:
+            try:
+                raw_result = llm.analyze(prompt, [])
+                normalized = normalize_creator_clone_result(raw_result, sample_set, chunk, warnings=[])
+                _write_json(result_path, normalized)
+                markdown_path.write_text(render_creator_clone_markdown(normalized), encoding="utf-8")
+                batch_payload.update({"status": "success", "result": normalized, "summary": normalized.get("summary") or "", "error_code": ""})
+            except AppError as error:
+                fallback = normalize_creator_clone_result({}, sample_set, chunk, warnings=[f"{error.code}：{error.message}"])
+                fallback["summary"] = f"{batch_id} 大模型批次蒸馏失败，已保留本地 Map 摘要和 Prompt。"
+                _write_json(result_path, fallback)
+                markdown_path.write_text(render_creator_clone_markdown(fallback), encoding="utf-8")
+                batch_payload.update({"status": "failed", "result": fallback, "summary": fallback["summary"], "error_code": error.code, "message": error.message})
+        batch_results.append(batch_payload)
+
+    final_prompt = build_final_creator_clone_reduce_prompt(sample_set, selected_samples, batch_results, distill_mode=distill_mode)
+    final_prompt_path = batch_dir / "final_reduce_prompt.md"
+    final_result_path = batch_dir / "final_result.json"
+    final_markdown_path = batch_dir / "final_report.md"
+    final_prompt_path.write_text(final_prompt, encoding="utf-8")
+    final_payload = {
+        "status": "prompt_only",
+        "prompt_path": str(final_prompt_path),
+        "result_path": str(final_result_path),
+        "markdown_path": str(final_markdown_path),
+        "error_code": "LLM_NOT_CONFIGURED" if not llm else "",
+    }
+    final_result = None
+    if progress:
+        progress(82, "正在汇总所有批次")
+    if llm:
+        try:
+            raw_final = llm.analyze(final_prompt, [])
+            final_result = normalize_creator_clone_result(raw_final, sample_set, selected_samples, warnings=warnings)
+            final_result["batch_distill"] = {
+                "batch_count": len(batch_results),
+                "selected_count": len(selected_samples),
+                "batch_size": max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES)),
+            }
+            _write_json(final_result_path, final_result)
+            final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
+            _write_json(output_dir / "creator_clone_result.json", final_result)
+            (output_dir / "creator_clone.md").write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
+            final_payload.update({"status": "success", "result": final_result, "error_code": ""})
+        except AppError as error:
+            final_payload.update({"status": "failed", "error_code": error.code, "message": error.message})
+            warnings.append(f"最终汇总失败：{error.code}：{error.message}")
+
+    manifest = {
+        "set_id": sample_set.set_id,
+        "selected_count": len(selected_samples),
+        "batch_size": max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES)),
+        "batch_count": len(batch_results),
+        "batches": batch_results,
+        "final": final_payload,
+        "warnings": warnings,
+    }
+    _write_json(batch_dir / "manifest.json", manifest)
+    if progress:
+        progress(100, "分批蒸馏完成")
+    return {
+        "set": sample_set.to_dict(),
+        "result": final_result,
+        "prompt": final_prompt,
+        "exports": export_paths(sample_set.set_id),
+        "batch_distill": manifest,
+        "warnings": warnings,
+        "recovery": "prompt_only" if final_result is None else "",
+        "error_code": final_payload.get("error_code") or "",
+        "message": final_payload.get("message") or "",
+    }
+
+
 def prompt_only_result(sample_set: CloneSampleSet, selected_sample_ids: list[str], distill_mode: str = "quick", include_case_reports: bool = True) -> dict:
     selected_samples, warnings = validate_selected_samples(sample_set.samples, selected_sample_ids)
     sample_set.selected_sample_ids = [sample.sample_id for sample in selected_samples]
@@ -1706,6 +1939,8 @@ def export_paths(set_id: str) -> dict:
         "distill_prompt_micro_md": str(base / "distill_prompt_micro.md"),
         "creator_clone_result_json": str(base / "creator_clone_result.json"),
         "creator_clone_md": str(base / "creator_clone.md"),
+        "batch_distill_manifest_json": str(base / "batch_distill" / "manifest.json"),
+        "batch_final_report_md": str(base / "batch_distill" / "final_report.md"),
     }
 
 
