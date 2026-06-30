@@ -1152,18 +1152,11 @@ def profile_build_cases_job(payload: ProfileBuildCasesJobRequest, background_tas
     downloadable_count = sum(1 for item in queued_items if _is_profile_queue_downloadable(item))
     if not queued_items and not payload.selected_sample_ids:
         return error_response(AppError(ErrorCode.AWEME_ID_NOT_FOUND, f"请先从作品池选择 1-{settings.profile_build_max_items} 条作品。"))
-    if selected_count > MAX_DISTILL_SAMPLES:
-        return error_response(
-            AppError(
-                ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
-                f"当前自用版一次最多选择 {MAX_DISTILL_SAMPLES} 条样本进入蒸馏，避免上下文过长。请减少选择数量后重试。",
-            )
-        )
     if downloadable_count > settings.profile_build_max_items:
         return error_response(
             AppError(
                 ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
-                f"当前自用版一次最多处理 {settings.profile_build_max_items} 条作品，避免误批量下载。请减少选择数量后重试。",
+                f"当前自用版一次最多富化 {settings.profile_build_max_items} 条可下载视频，避免误批量下载。请减少选择数量后重试。",
             )
         )
     job = _create_job("profile-build-cases", "等待生成素材包队列")

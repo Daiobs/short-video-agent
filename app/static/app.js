@@ -770,7 +770,7 @@ function updateCreatorCloneSelectionStatus() {
     {full: 0, partial: 0, metadata_only: 0},
   );
   if (creatorCloneSelectionStatus) {
-    creatorCloneSelectionStatus.textContent = `已选 ${selected.length} 条；可富化 ${buildable.length}/${PROFILE_BUILD_MAX_ITEMS} 条；不可富化 ${unbuildableCount} 条。完整 ${counts.full || 0}，部分 ${counts.partial || 0}，仅元数据 ${counts.metadata_only || 0}。`;
+    creatorCloneSelectionStatus.textContent = `已选 ${selected.length} 条；可富化 ${buildable.length}/${PROFILE_BUILD_MAX_ITEMS} 条；不可富化 ${unbuildableCount} 条；单次蒸馏最多 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条。完整 ${counts.full || 0}，部分 ${counts.partial || 0}，仅元数据 ${counts.metadata_only || 0}。`;
   }
   renderProfileSelectionBasket(selected);
   if (profileSelectedBuildButton) {
@@ -778,9 +778,7 @@ function updateCreatorCloneSelectionStatus() {
       ? "请先选择代表样本。"
       : buildable.length > PROFILE_BUILD_MAX_ITEMS
         ? `可下载视频超过当前富化上限 ${PROFILE_BUILD_MAX_ITEMS} 条。`
-        : selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
-          ? `选中样本超过当前蒸馏上限 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条。`
-          : "";
+        : "";
     profileSelectedBuildButton.disabled = Boolean(disabledReason);
     profileSelectedBuildButton.title = disabledReason || (buildable.length
       ? `将富化 ${buildable.length} 条可解析视频，并保留 ${unbuildableCount} 条参考样本`
@@ -884,7 +882,7 @@ function renderProfileEnrichmentPlan(selected, buildable) {
   const missingFrames = buildableItems.filter((item) => !item.has_frames).length;
   const missingAsr = buildableItems.filter((item) => !item.has_asr).length;
   const missingOcr = buildableItems.filter((item) => !item.has_ocr).length;
-  const warning = buildableItems.length > PROFILE_BUILD_MAX_ITEMS || selectedItems.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES;
+  const warning = buildableItems.length > PROFILE_BUILD_MAX_ITEMS;
   profileEvidenceStatus.classList.toggle("warning", warning);
   if (!selectedItems.length) {
     profileEvidenceStatus.innerHTML = "先从素材池选择代表样本；富化后会回填视频、关键帧、OCR、ASR 等证据，再进入大模型蒸馏。";
@@ -892,9 +890,10 @@ function renderProfileEnrichmentPlan(selected, buildable) {
   }
   const limitNote = buildableItems.length > PROFILE_BUILD_MAX_ITEMS
     ? `可下载视频超过当前富化上限 ${PROFILE_BUILD_MAX_ITEMS} 条，请减少视频样本，避免误批量下载。`
-    : selectedItems.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
-      ? `选中样本超过当前蒸馏上限 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条，请减少参考样本，避免上下文过长。`
-      : "";
+    : "";
+  const distillLimitNote = selectedItems.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
+    ? `本轮可先富化全部样本；大模型蒸馏仍建议从中选择 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条代表样本，避免上下文过长。`
+    : "";
   const providerNote = [
     counts.asrProviderMissing ? `ASR provider 未配置 ${counts.asrProviderMissing} 条` : "",
     counts.ocrProviderMissing ? `OCR provider 未配置 ${counts.ocrProviderMissing} 条` : "",
@@ -921,7 +920,7 @@ function renderProfileEnrichmentPlan(selected, buildable) {
     <div class="enrichment-plan-steps" aria-label="本轮富化步骤">
       ${steps.map((step) => `<span>${escapeHtml(step)}</span>`).join("")}
     </div>
-    <p class="enrichment-plan-note">当前证据：视频 ${counts.video}/${selectedItems.length}，关键帧 ${counts.frames}/${selectedItems.length}，OCR ${counts.ocr}/${selectedItems.length}，ASR ${counts.asr}/${selectedItems.length}，评论 ${counts.comments}/${selectedItems.length}。${providerNote ? `${escapeHtml(providerNote)}。` : ""}</p>
+    <p class="enrichment-plan-note">当前证据：视频 ${counts.video}/${selectedItems.length}，关键帧 ${counts.frames}/${selectedItems.length}，OCR ${counts.ocr}/${selectedItems.length}，ASR ${counts.asr}/${selectedItems.length}，评论 ${counts.comments}/${selectedItems.length}。${providerNote ? `${escapeHtml(providerNote)}。` : ""}${distillLimitNote ? `${escapeHtml(distillLimitNote)}。` : ""}</p>
   `;
 }
 
@@ -2117,10 +2116,6 @@ async function buildSelectedProfileQueue() {
   const referenceOnlyCount = selected.length - buildableCount;
   if (buildableCount > PROFILE_BUILD_MAX_ITEMS) {
     profileScanStatus.textContent = `当前自用版最多一次富化 ${PROFILE_BUILD_MAX_ITEMS} 条可下载视频，避免误批量下载。`;
-    return;
-  }
-  if (selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES) {
-    profileScanStatus.textContent = `当前 MVP 最多选择 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条进行蒸馏，避免上下文过长。`;
     return;
   }
   profileSelectedBuildButton.disabled = true;

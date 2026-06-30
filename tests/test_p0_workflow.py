@@ -274,7 +274,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert response.status_code == 200
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
-    assert 'data-profile-build-max-items="10"' in response.text
+    assert 'data-profile-build-max-items="150"' in response.text
     assert 'data-creator-clone-max-distill-samples="20"' in response.text
     assert "单作品解析" in response.text
     assert "创作者克隆实验室" in response.text
@@ -714,7 +714,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".creator-clone-action-grid" in stylesheet
     assert "当前自用版最多一次富化" in script
     assert "可下载视频超过当前富化上限" in script
-    assert "选中样本超过当前蒸馏上限" in script
+    assert "本轮可先富化全部样本" in script
     assert ".profile-source-card" in stylesheet
     assert ".profile-selection-stage" in stylesheet
     assert "#fbf9ff" in stylesheet
@@ -796,13 +796,13 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的“本机 Chrome 辅助入口”" in readme
     assert "扫描主页和清理辅助 profile 除了 token 之外还需要页面确认" in readme
     assert "多作品粘贴是当前账号级分析的稳定入口" in readme
-    assert "作品池队列默认一次最多处理 10 条" in readme
+    assert "作品池富化队列默认一次最多处理 150 条可下载视频" in readme
     assert "yt-dlp 用于后续公开视频解析 / 下载能力" in readme
     requirements = Path("requirements.txt").read_text(encoding="utf-8")
     assert "websocket-client" in requirements
     assert "yt-dlp" in requirements
     assert "PROFILE_BUILD_MAX_ITEMS" in readme
-    assert "PROFILE_BUILD_MAX_ITEMS=10" in env_example
+    assert "PROFILE_BUILD_MAX_ITEMS=150" in env_example
     assert "默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型" in readme
     assert "单作品主流程已收敛为一个“解析”按钮：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。" in readme
     assert "如果浏览器能访问 API 但页面“测试连接”失败，请检查本机代理" in readme
@@ -2586,7 +2586,8 @@ def test_download_build_analyze_case_job_keeps_case_when_ai_fails(monkeypatch, t
     assert Path(job["result_json"]["case"]["analysis_input_path"]).is_file()
 
 
-def test_profile_build_cases_queue_rejects_more_than_configured_limit() -> None:
+def test_profile_build_cases_queue_rejects_more_than_configured_limit(monkeypatch) -> None:
+    monkeypatch.setattr("app.routes.jobs.settings.profile_build_max_items", 10)
     response = client.post(
         "/api/jobs/profile-build-cases",
         json={
@@ -2599,10 +2600,10 @@ def test_profile_build_cases_queue_rejects_more_than_configured_limit() -> None:
 
     assert response.status_code == 400
     assert response.json()["error_code"] == "PROFILE_BUILD_QUEUE_LIMIT"
-    assert "10 条作品" in response.json()["message"]
+    assert "10 条可下载视频" in response.json()["message"]
 
 
-def test_profile_build_cases_queue_rejects_too_many_selected_reference_samples() -> None:
+def test_profile_build_cases_queue_allows_more_reference_samples_than_distill_limit() -> None:
     response = client.post(
         "/api/jobs/profile-build-cases",
         json={
@@ -2611,6 +2612,21 @@ def test_profile_build_cases_queue_rejects_too_many_selected_reference_samples()
                 for index in range(MAX_DISTILL_SAMPLES + 1)
             ],
             "selected_sample_ids": [f"sample_ref_{index}" for index in range(MAX_DISTILL_SAMPLES + 1)],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["selected_count"] == MAX_DISTILL_SAMPLES + 1
+
+
+def test_creator_clone_distill_job_rejects_too_many_samples() -> None:
+    response = client.post(
+        "/api/jobs/creator-clone-distill",
+        json={
+            "samples": [{"sample_id": f"sample_{index}", "title": f"样本 {index}"} for index in range(MAX_DISTILL_SAMPLES + 1)],
+            "selected_sample_ids": [f"sample_{index}" for index in range(MAX_DISTILL_SAMPLES + 1)],
         },
     )
 

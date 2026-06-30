@@ -63,7 +63,7 @@ class Settings:
     profile_scan_api_base: str = os.getenv("PROFILE_SCAN_API_BASE", "").rstrip("/")
     profile_scan_max_pages: int = _int_env("PROFILE_SCAN_MAX_PAGES", 1)
     profile_scan_count_per_page: int = _int_env("PROFILE_SCAN_COUNT_PER_PAGE", 20)
-    profile_build_max_items: int = _int_env("PROFILE_BUILD_MAX_ITEMS", 10)
+    profile_build_max_items: int = _int_env("PROFILE_BUILD_MAX_ITEMS", 150)
     keyframe_max_count: int = _int_env("KEYFRAME_MAX_COUNT", 30)
     keyframe_interval_seconds: float = _float_env("KEYFRAME_INTERVAL_SECONDS", 1.0)
     llm_provider: str = os.getenv("LLM_PROVIDER", "disabled").strip().lower()
