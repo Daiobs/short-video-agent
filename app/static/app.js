@@ -89,6 +89,7 @@ const profileHandoffManifest = document.getElementById("profile-handoff-manifest
 const profileResultsCard = document.getElementById("profile-results-card");
 const profileProviderBadge = document.getElementById("profile-provider-badge");
 const profileWarnings = document.getElementById("profile-warnings");
+const profileQuickInput = document.getElementById("profile-quick-input");
 const profileCaptureAudit = document.getElementById("profile-capture-audit");
 const profileSummary = document.getElementById("profile-summary");
 const profileNextAction = document.getElementById("profile-next-action");
@@ -154,6 +155,7 @@ let profileLastChromeProfileValue = "";
 let profileChromeLaunchCommand = "";
 let profileChromeAvailable = false;
 let creatorCloneEnrichmentRunning = false;
+let creatorCloneDistillRunning = false;
 let preflightCopySnippets = [];
 
 function setStatus(element, value) {
@@ -462,6 +464,63 @@ function activeProfileImportMode() {
   return profileImportModeButtons.find((button) => button.classList.contains("active"))?.dataset.profileImportMode || "browser";
 }
 
+function creatorCloneUnifiedInputValue() {
+  return String(profileQuickInput?.value || "").trim();
+}
+
+function hasCreatorCloneImportInput() {
+  const quick = creatorCloneUnifiedInputValue();
+  if (quick) return true;
+  if (!profileForm) return false;
+  const formData = new FormData(profileForm);
+  return Boolean(
+    String(formData.get("profile_url") || "").trim()
+      || String(formData.get("manual_links") || "").trim()
+      || String(formData.get("structured_items") || "").trim()
+      || String(formData.get("case_ids") || "").trim()
+      || String(formData.get("handoff_manifest") || "").trim(),
+  );
+}
+
+function inferCreatorCloneImportMode() {
+  const quick = creatorCloneUnifiedInputValue();
+  if (quick) {
+    const firstUrl = firstUrlFromText(quick);
+    const target = firstUrl || quick;
+    if (/^\s*[\[{]/.test(quick) || /^aweme_id\s*,/im.test(quick)) return "structured";
+    if (/^case_[A-Za-z0-9_,-\s]+$/.test(quick)) return "case";
+    if (/douyin\.com\/user\//i.test(target) || /^MS4w\./.test(target)) return "browser";
+    return "manual";
+  }
+  const formData = new FormData(profileForm);
+  if (String(formData.get("handoff_manifest") || "").trim()) return "handoff";
+  if (String(formData.get("structured_items") || "").trim()) return "structured";
+  if (String(formData.get("case_ids") || "").trim()) return "case";
+  if (String(formData.get("manual_links") || "").trim()) return "manual";
+  if (String(formData.get("profile_url") || "").trim()) return "browser";
+  return activeProfileImportMode();
+}
+
+function syncUnifiedInputToImportFields(mode) {
+  const quick = creatorCloneUnifiedInputValue();
+  if (!quick || !profileForm) return;
+  if (mode === "browser") {
+    profileForm.elements.profile_url.value = firstUrlFromText(quick) || quick;
+    return;
+  }
+  if (mode === "manual" && profileManualLinks) {
+    profileManualLinks.value = quick;
+    return;
+  }
+  if (mode === "structured") {
+    profileForm.elements.structured_items.value = quick;
+    return;
+  }
+  if (mode === "case") {
+    profileForm.elements.case_ids.value = quick;
+  }
+}
+
 function isProfileItemBuildable(item) {
   return Boolean(item?.aweme_id) && item?.can_build_case !== false && !["image", "text"].includes(item?.media_type || "");
 }
@@ -470,75 +529,116 @@ function hasPendingEnrichment(items = selectedProfileItems()) {
   return normalizeItems(items).some((item) => isProfileItemBuildable(item) && !item.case_id && !item.has_frames);
 }
 
-function getWizardStep() {
+function getCreatorCloneWizardState() {
   if (currentCreatorCloneResult) {
-    return "EXPORT";
+    return "EXPORT_READY";
+  }
+  if (creatorCloneDistillRunning) {
+    return "DISTILLING";
+  }
+  if (creatorCloneEnrichmentRunning) {
+    return "ENRICHING";
   }
   if (!profileItems.length) {
-    return "IMPORT";
+    return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
   }
   const selected = selectedProfileItems();
-  if (creatorCloneEnrichmentRunning) {
-    return "ENRICH";
-  }
   if (!selected.length) {
-    return "SAMPLE_POOL";
+    return recommendedProfileSampleMix().length ? "RECOMMENDED_READY" : "POOL_READY";
   }
   if (hasPendingEnrichment(selected)) {
-    return "SELECT";
+    return "ENRICH_READY";
   }
-  return "DISTILL";
+  return "DISTILL_READY";
+}
+
+function getWizardStep() {
+  return getCreatorCloneWizardState();
+}
+
+function creatorCloneStateStepIndex(state = getCreatorCloneWizardState()) {
+  return {
+    IMPORT_EMPTY: 0,
+    IMPORT_READY: 0,
+    POOL_READY: 1,
+    RECOMMENDED_READY: 2,
+    SAMPLE_SELECTED: 2,
+    ENRICH_READY: 3,
+    ENRICHING: 3,
+    DISTILL_READY: 4,
+    DISTILLING: 4,
+    EXPORT_READY: 5,
+  }[state] ?? 0;
 }
 
 function getCreatorCloneStage() {
-  const step = getWizardStep();
   return {
-    IMPORT: "import",
-    SAMPLE_POOL: "sample_pool",
-    SELECT: "select",
-    ENRICH: "enrich",
-    DISTILL: "distill",
-    EXPORT: "export",
-  }[step] || "import";
+    0: "import",
+    1: "sample_pool",
+    2: "select",
+    3: "enrich",
+    4: "distill",
+    5: "export",
+  }[creatorCloneStateStepIndex()] || "import";
 }
 
-function creatorCloneStageMeta(stage = getCreatorCloneStage()) {
+function creatorCloneStateMeta(state = getCreatorCloneWizardState()) {
   const selected = selectedProfileItems();
   const recommended = recommendedProfileSampleMix();
   const buildable = selected.filter(isProfileItemBuildable);
-  const labels = {
-    import: {
+  const metas = {
+    IMPORT_EMPTY: {
       step: "当前步骤：导入素材",
-      button: "Start Creator Analysis",
-      summary: "粘贴作品链接或填写主页 URL 后，点击主按钮开始分析。",
+      button: "下一步：开始导入素材",
+      summary: "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。",
     },
-    sample_pool: {
+    IMPORT_READY: {
+      step: "当前步骤：导入素材",
+      button: "下一步：开始导入素材",
+      summary: "已检测到导入内容，系统会自动选择主页扫描、作品链接、JSON/CSV 或 Case 导入。",
+    },
+    POOL_READY: {
       step: "当前步骤：构建素材池",
+      button: "下一步：使用推荐样本继续",
+      summary: `已导入 ${formatNumber(profileItems.length)} 条素材，正在等待生成推荐样本篮。`,
+    },
+    RECOMMENDED_READY: {
+      step: "当前步骤：选择 N 条样本",
       button: "下一步：使用推荐样本继续",
       summary: `已导入 ${formatNumber(profileItems.length)} 条素材，系统已推荐 ${formatNumber(recommended.length)} 条样本。`,
     },
-    select: {
-      step: "当前步骤：选择 N 条样本",
-      button: "下一步：确认样本并富化",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
-    },
-    enrich: {
+    SAMPLE_SELECTED: {
       step: "当前步骤：富化证据",
-      button: "下一步：确认样本并富化",
+      button: "下一步：开始富化证据",
       summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
     },
-    distill: {
+    ENRICH_READY: {
+      step: "当前步骤：富化证据",
+      button: "下一步：开始富化证据",
+      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条待富化视频。`,
+    },
+    ENRICHING: {
+      step: "当前步骤：富化证据",
+      button: "正在富化证据",
+      summary: "当前任务：Creator Clone 富化队列。完成后会进入大模型蒸馏。",
+    },
+    DISTILL_READY: {
       step: "当前步骤：大模型蒸馏",
       button: "下一步：开始大模型蒸馏",
       summary: `已选择 ${formatNumber(selected.length)} 条样本，当前证据可进入蒸馏。`,
     },
-    export: {
-      step: "当前步骤：导出规则",
+    DISTILLING: {
+      step: "当前步骤：大模型蒸馏",
+      button: "正在大模型蒸馏",
+      summary: "当前任务：Creator Clone 大模型蒸馏。完成后会展示可视化报告。",
+    },
+    EXPORT_READY: {
+      step: "当前步骤：可视化输出",
       button: "下一步：下载报告",
       summary: "创作者克隆报告已生成，可下载报告或复制规则继续使用。",
     },
   };
-  return labels[stage] || labels.import;
+  return metas[state] || metas.IMPORT_EMPTY;
 }
 
 function renderCreatorCloneRecommendation() {
@@ -546,22 +646,60 @@ function renderCreatorCloneRecommendation() {
     return;
   }
   if (!profileItems.length) {
-    creatorCloneRecommendation.textContent = "导入素材后，系统会推荐高赞 / 高评 / 高分享 / 最新 / 低表现混合样本。";
+    creatorCloneRecommendation.innerHTML = `<div class="recommendation-empty">导入素材后，系统会生成推荐样本篮：高赞 / 高评 / 高分享 / 最新 / 低表现混合。</div>`;
     return;
   }
   const recommended = recommendedProfileSampleMix();
-  const labelSet = new Set();
-  recommended.forEach((item) => {
-    selectedSampleReason(item).split("/").map((part) => part.trim()).filter(Boolean).forEach((part) => labelSet.add(part));
-  });
-  const labels = [...labelSet].slice(0, 5).join(" / ") || "综合表现";
-  creatorCloneRecommendation.textContent = `系统已推荐 ${formatNumber(recommended.length)} 条样本：${labels} 混合。点击主按钮即可使用推荐样本继续。`;
+  const cards = recommended.slice(0, 6).map((item) => {
+    const title = item.title || item.desc || item.aweme_id || item.sample_id || "未命名样本";
+    const evidence = [
+      item.case_id ? "已有素材包" : "",
+      item.has_frames ? "关键帧" : "",
+      item.has_asr ? "ASR" : "",
+      item.has_ocr ? "OCR" : "",
+      item.has_comments ? "评论" : "",
+      item.understanding_level || "metadata_only",
+    ].filter(Boolean).join(" · ");
+    const metrics = [
+      item.like_count ? `赞 ${formatNumber(item.like_count)}` : "",
+      item.comment_count ? `评 ${formatNumber(item.comment_count)}` : "",
+      item.share_count ? `分享 ${formatNumber(item.share_count)}` : "",
+      item.collect_count ? `收藏 ${formatNumber(item.collect_count)}` : "",
+    ].filter(Boolean).join(" · ");
+    return `
+      <article class="recommended-sample-card">
+        <span>${escapeHtml(selectedSampleReason(item))}</span>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml([item.media_type || "unknown", evidence, metrics].filter(Boolean).join(" · "))}</p>
+      </article>
+    `;
+  }).join("");
+  creatorCloneRecommendation.innerHTML = `
+    <div class="recommendation-heading">
+      <div>
+        <span class="entry-label">Recommended Samples</span>
+        <strong>推荐样本篮</strong>
+      </div>
+      <span class="status-badge muted-badge">${formatNumber(recommended.length)} 条</span>
+    </div>
+    ${cards ? `<div class="recommended-sample-grid">${cards}</div>` : `<p class="muted">暂无可推荐样本，可展开“手动调整样本”自行选择。</p>`}
+    <p class="muted compact-copy">主按钮会直接使用这组推荐样本继续；需要细调时再展开手动调整。</p>
+  `;
+}
+
+function renderWizardPrimaryAction(state = getCreatorCloneWizardState()) {
+  const meta = creatorCloneStateMeta(state);
+  if (creatorCloneNextButton) {
+    creatorCloneNextButton.textContent = meta.button;
+    creatorCloneNextButton.dataset.creatorCloneAction = state;
+    creatorCloneNextButton.disabled = ["ENRICHING", "DISTILLING"].includes(state);
+  }
 }
 
 function renderCreatorCloneNextAction() {
-  const stage = getCreatorCloneStage();
-  const meta = creatorCloneStageMeta(stage);
-  const flowIndex = {import: 0, sample_pool: 1, select: 2, enrich: 3, distill: 4, export: 5}[stage] || 0;
+  const state = getCreatorCloneWizardState();
+  const meta = creatorCloneStateMeta(state);
+  const flowIndex = creatorCloneStateStepIndex(state);
   creatorCloneFlowSteps.forEach((step, index) => {
     step.classList.toggle("active", index === flowIndex);
     step.classList.toggle("completed", index < flowIndex);
@@ -575,21 +713,18 @@ function renderCreatorCloneNextAction() {
   if (profileNextAction) {
     profileNextAction.textContent = meta.step;
   }
-  if (creatorCloneNextButton) {
-    creatorCloneNextButton.textContent = meta.button;
-    creatorCloneNextButton.dataset.creatorCloneAction = stage;
-    creatorCloneNextButton.disabled = stage === "sample_pool" && !recommendedProfileSampleMix().length;
-  }
+  renderWizardPrimaryAction(state);
   renderCreatorCloneRecommendation();
 }
 
 // Creator Clone: sample pool
-function setCreatorCloneStep(step = "import") {
+function setCreatorCloneStep(step = getCreatorCloneWizardState()) {
+  const state = step || getCreatorCloneWizardState();
   const selected = selectedProfileItems();
   const hasSelected = selected.length > 0;
   const canDistill = hasSelected && selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES;
-  profileEnrichmentSection?.classList.toggle("hidden", !hasSelected);
-  profileDistillationSection?.classList.toggle("hidden", !canDistill);
+  profileEnrichmentSection?.classList.toggle("hidden", !hasSelected && !["ENRICH_READY", "ENRICHING"].includes(state));
+  profileDistillationSection?.classList.toggle("hidden", !canDistill && !["DISTILL_READY", "DISTILLING", "EXPORT_READY"].includes(state));
   renderCreatorCloneNextAction();
 }
 
@@ -606,7 +741,7 @@ function renderCreatorCloneOverview(summary = {}) {
     : !selected.length
       ? "选择 3-20 条代表样本"
       : selectedBuildable.some((item) => !item.has_frames)
-        ? "确认样本并富化证据"
+      ? "开始富化证据"
         : "可以开始大模型蒸馏";
   const total = summary.scanned_count || profileItems.length;
   profileSummary.innerHTML = `
@@ -616,7 +751,7 @@ function renderCreatorCloneOverview(summary = {}) {
     <article class="wide"><span>证据覆盖</span><strong>${escapeHtml(coverage)}</strong></article>
     <article class="wide"><span>下一步建议</span><strong>${escapeHtml(nextAction)}</strong></article>
   `;
-  setCreatorCloneStep(!profileItems.length ? "import" : !selected.length ? "select" : selectedBuildable.some((item) => !item.has_frames) ? "enrich" : "distill");
+  setCreatorCloneStep();
 }
 
 // Creator Clone: selection
@@ -764,7 +899,7 @@ function renderProfileEnrichmentPlan(selected, buildable) {
   ].filter(Boolean).join("；");
   const headline = limitNote
     || (buildableItems.length
-      ? `点击“确认样本并富化”后，将处理 ${buildableItems.length} 条可下载视频，并保留 ${referenceOnlyCount} 条参考样本。`
+      ? `点击主按钮“开始富化证据”后，将处理 ${buildableItems.length} 条可下载视频，并保留 ${referenceOnlyCount} 条参考样本。`
       : `已选择 ${referenceOnlyCount} 条参考样本，不执行视频下载，可直接进入大模型蒸馏。`);
   const steps = buildableItems.length
     ? ["下载视频", "生成素材包", "抽关键帧", "OCR 画面文字", "ASR 语音", "写入蒸馏输入"]
@@ -907,7 +1042,7 @@ function renderProfileDecisionBoard(payload) {
     ? "先点“推荐组合”，让高赞、高评、新样本和低表现样本一起进入本轮样本篮，再确认富化。"
     : buildable.length
       ? "可先选择全部可富化视频生成素材包，再补 1-2 条图文/元数据样本作为对照。"
-      : "当前多为图文/元数据样本，可以直接蒸馏为参考结论，或继续插件辅助采集更多视频。";
+      : "当前多为图文/元数据样本，可以直接蒸馏为参考结论，或继续使用本机 Chrome 辅助入口采集更多视频。";
   const evidenceText = profileEvidenceCoverageSummary(items);
   const topLike = topProfileItemsBy("like_count", 1)[0];
   const topComment = topProfileItemsBy("comment_count", 1)[0];
@@ -1135,7 +1270,7 @@ function renderProfileCaptureAudit(audit) {
     && contract.cookie_logged === false
     && contract.signed_media_url_returned === false;
   const nextStep = Number(mediaSummary.buildable_item_count || 0) > 0
-    ? "下一步：按点赞、评论、时间等维度选择代表视频，点击“确认样本并富化”。"
+    ? "下一步：按点赞、评论、时间等维度选择代表视频，点击主按钮开始富化证据。"
     : "下一步：当前多为图文/元数据参考，可直接选样蒸馏，或继续采集更多可富化视频。";
   profileCaptureAudit.classList.remove("hidden");
   profileCaptureAudit.innerHTML = `
@@ -1254,25 +1389,25 @@ async function prepareChromeProfileFallback(error) {
   if (profileChromeConfirm) {
     profileChromeConfirm.checked = false;
   }
-  profileScanStatus.textContent = `${error.error_code || "PROFILE_SCAN_FAILED"}：公开扫描受限。请确认本机 Chrome 辅助采集边界后，点击“插件辅助采集”。`;
+  profileScanStatus.textContent = `${error.error_code || "PROFILE_SCAN_FAILED"}：公开扫描受限。请确认本机 Chrome 辅助采集边界后，点击“本机 Chrome 辅助入口”。`;
   try {
     await loadChromeHelperStatus({silent: true});
   } catch (statusError) {
-    profileScanStatus.textContent = `${error.error_code || "PROFILE_SCAN_FAILED"}：公开扫描受限。请在本机 Chrome 打开目标抖音主页，完成登录/验证后再点击“插件辅助采集”。`;
+    profileScanStatus.textContent = `${error.error_code || "PROFILE_SCAN_FAILED"}：公开扫描受限。请在本机 Chrome 打开目标抖音主页，完成登录/验证后再点击“本机 Chrome 辅助入口”。`;
   }
 }
 
 function chromeHelperNextAction(status) {
   if (status.ready_for_profile_scan) {
-    return "下一步：点击“插件辅助采集”。页面会先申请一次性 token，再由你确认后读取当前主页可见作品。";
+    return "下一步：点击“本机 Chrome 辅助入口”。页面会先申请一次性 token，再由你确认后读取当前主页可见作品。";
   }
   if (!status.chrome_available) {
     return "下一步：在本机 Chrome 打开目标抖音主页；如果本地助手需要调试 Chrome，请按设置预检中的提示启动。";
   }
   if (Number(status.douyin_profile_tab_count || 0) <= 0) {
-    return "下一步：在已登录的本机 Chrome 中打开目标主页，页面加载完成后回到这里点击“插件辅助采集”。";
+    return "下一步：在已登录的本机 Chrome 中打开目标主页，页面加载完成后回到这里点击“本机 Chrome 辅助入口”。";
   }
-  return "下一步：确认目标主页已经加载完成，然后点击“插件辅助采集”。";
+  return "下一步：确认目标主页已经加载完成，然后点击“本机 Chrome 辅助入口”。";
 }
 
 function renderChromeHelperStatus(status) {
@@ -1698,7 +1833,14 @@ async function readHandoffManifestFile(file) {
 }
 
 async function runCreatorCloneImportStep() {
-  const mode = activeProfileImportMode();
+  const mode = inferCreatorCloneImportMode();
+  if (!hasCreatorCloneImportInput()) {
+    profileScanStatus.textContent = "请先输入主页 URL、作品链接、aweme_id，或展开“换一种导入方式”导入 JSON / CSV / Case。";
+    profileQuickInput?.focus();
+    return;
+  }
+  syncUnifiedInputToImportFields(mode);
+  setActiveImportMode(mode);
   if (mode === "browser") {
     let status = null;
     try {
@@ -1714,7 +1856,7 @@ async function runCreatorCloneImportStep() {
     if (!profileItems.length) {
       setActiveImportMode("manual");
       profileManualLinks?.focus();
-      profileScanStatus.textContent = profileScanStatus.textContent || "公开主页扫描未得到素材，请改用粘贴作品链接继续。";
+      profileScanStatus.textContent = profileScanStatus.textContent || "主页导入未得到素材，已切换到作品链接粘贴方式。";
     }
     return;
   }
@@ -1733,31 +1875,35 @@ function useRecommendedProfileSamples() {
   (profileSelectionBasket || profileEnrichmentSection || profileResultsCard)?.scrollIntoView({behavior: "smooth", block: "start"});
 }
 
-async function runCreatorCloneNextAction() {
-  const stage = getCreatorCloneStage();
-  if (stage === "import") {
+async function handleWizardPrimaryAction() {
+  const state = getCreatorCloneWizardState();
+  if (["IMPORT_EMPTY", "IMPORT_READY"].includes(state)) {
     await runCreatorCloneImportStep();
     return;
   }
-  if (stage === "sample_pool") {
+  if (["POOL_READY", "RECOMMENDED_READY"].includes(state)) {
     useRecommendedProfileSamples();
     return;
   }
-  if (stage === "select" || stage === "enrich") {
+  if (["SAMPLE_SELECTED", "ENRICH_READY"].includes(state)) {
     await buildSelectedProfileQueue();
     return;
   }
-  if (stage === "distill") {
+  if (state === "DISTILL_READY") {
     await distillSelectedCreatorClone();
     return;
   }
-  if (stage === "export") {
+  if (state === "EXPORT_READY") {
     if (downloadCreatorCloneMd?.href && downloadCreatorCloneMd.href !== "#") {
       window.open(downloadCreatorCloneMd.href, "_blank", "noopener,noreferrer");
       return;
     }
     creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
   }
+}
+
+async function runCreatorCloneNextAction() {
+  return handleWizardPrimaryAction();
 }
 
 function setProfileSelection(items) {
@@ -2087,7 +2233,7 @@ function profileDistillReadiness(items) {
   if (!selected.length) {
     recommendations.push("先从素材池选择代表样本。");
   } else if (warnings.length) {
-    recommendations.push("建议先点击“确认样本并富化”，补齐视频、关键帧、OCR、ASR 后再蒸馏。");
+    recommendations.push("建议先点击主按钮开始富化证据，补齐视频、关键帧、OCR、ASR 后再蒸馏。");
   } else {
     recommendations.push("证据足够，可以直接开始大模型蒸馏。");
   }
@@ -2152,7 +2298,7 @@ function confirmProfileDistillReadiness(selected) {
     return true;
   }
   return window.confirm(
-    `当前选样证据不足：${readiness.warnings.join("；")}。\n建议先点击“确认样本并富化”，补齐视频、关键帧、OCR、ASR 后再蒸馏。\n仍要继续生成临时蒸馏结果吗？`,
+    `当前选样证据不足：${readiness.warnings.join("；")}。\n建议先点击主按钮开始富化证据，补齐视频、关键帧、OCR、ASR 后再蒸馏。\n仍要继续生成临时蒸馏结果吗？`,
   );
 }
 
@@ -2537,7 +2683,7 @@ async function distillSelectedCreatorClone(options = {}) {
     return;
   }
   if (shouldConfirmReadiness && !confirmProfileDistillReadiness(selected)) {
-    profileScanStatus.textContent = "已取消蒸馏。建议先点击“确认样本并富化”，补齐视频、关键帧、OCR、ASR 后再继续。";
+    profileScanStatus.textContent = "已取消蒸馏。建议先点击主按钮开始富化证据，补齐视频、关键帧、OCR、ASR 后再继续。";
     return;
   }
   if (options.triggeredByQueue) {
@@ -2550,6 +2696,8 @@ async function distillSelectedCreatorClone(options = {}) {
       : "正在调用大模型蒸馏创作者规则...";
   }
   creatorCloneDistillButton.disabled = true;
+  creatorCloneDistillRunning = true;
+  renderCreatorCloneNextAction();
   try {
     const selectedIds = selected.map(profileItemKey);
     jobCard.classList.remove("hidden");
@@ -2579,7 +2727,9 @@ async function distillSelectedCreatorClone(options = {}) {
     jobMessage.className = "job-message failed";
     jobMessage.textContent = profileScanStatus.textContent;
   } finally {
+    creatorCloneDistillRunning = false;
     updateCreatorCloneSelectionStatus();
+    renderCreatorCloneNextAction();
   }
 }
 
@@ -3000,6 +3150,10 @@ profileImportModeButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setActiveImportMode(button.dataset.profileImportMode || "browser");
   });
+});
+
+profileQuickInput?.addEventListener("input", () => {
+  renderCreatorCloneNextAction();
 });
 
 creatorCloneNextButton?.addEventListener("click", async () => {

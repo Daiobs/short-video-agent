@@ -64,7 +64,7 @@ DOUYIN_REFERER=https://www.douyin.com/
 - 支持选择全部可解析视频、综合分 Top 3、高评论样本和低表现样本。
 - 蒸馏最多选择 20 条；少于 2 条会提示“样本过少，结果仅供参考”。
 - 每条样本会显示理解状态：完整、部分、仅元数据。
-- 点击“确认样本并富化”后，系统会对选中视频逐条解析清晰度、下载、生成 Case、写入 enrichment 归档，并尝试运行 ASR / OCR。ASR 或 OCR 未配置时只记录 `provider_missing`，不会阻断素材包生成。
+- 点击主按钮“开始富化证据”后，系统会对选中视频逐条解析清晰度、下载、生成 Case、写入 enrichment 归档，并尝试运行 ASR / OCR。ASR 或 OCR 未配置时只记录 `provider_missing`，不会阻断素材包生成。
 - 点击“大模型蒸馏”会创建后台 Job，页面轮询进度；LLM 未配置或请求失败时会降级生成 `distill_prompt.md`，素材池和富化证据不会丢失。
 
 蒸馏输出：
@@ -223,14 +223,14 @@ LOCAL_CHROME_USER_DATA_DIR=
 2. 回到 `http://127.0.0.1:8765/` 的“创作者克隆实验室”。
 3. 输入主页 URL / sec_user_id。
 4. 勾选本机辅助采集确认。
-5. 点击“插件辅助采集”。
+5. 点击“本机 Chrome 辅助入口”。
 6. 页面会弹出确认框；确认后系统会申请一次性 token，连接 `127.0.0.1:9222`，在当前标签页内进行几轮受控滚动，读取 DOM 中可见的作品列表和元数据，生成素材池。
 
 安全边界：
 
 - 后端自用版会拒绝非本机来源请求，只允许 `127.0.0.1` / `localhost`。
 - 即使误把服务绑定到 `0.0.0.0`，应用层也会拒绝非 loopback 客户端、非 loopback Host，以及非本机 Origin / Referer 发起的写操作。
-- 本机助手接口每次启动 Chrome、打开主页、扫描或清理辅助 profile 都需要一次性 token；首页主流程只暴露“插件辅助采集”，调试动作保留为设置预检提示、内部 API 或手动命令。
+- 本机助手接口每次启动 Chrome、打开主页、扫描或清理辅助 profile 都需要一次性 token；首页主流程只暴露“本机 Chrome 辅助入口”，调试动作保留为设置预检提示、内部 API 或手动命令。
 - 启动 Chrome、打开主页、扫描主页和清理辅助 profile 除了 token 之外还需要页面确认；直接调接口但没有确认字段会被拒绝。
 - Chrome 辅助采集不读取 Cookie、不返回 Cookie、不写 Cookie 日志。
 - 返回前会过滤敏感字段，并移除作品链接、封面链接和标签页 URL 中的 query / fragment，避免泄露签名参数或临时 token。
@@ -261,7 +261,7 @@ LOCAL_CHROME_USER_DATA_DIR=
 - 公开站 / 本机助手边界：确认公开网站只接收净化后的账号素材清单，本机请求由用户 Chrome / 本机 IP 发起，Cookie、登录 token、签名媒体 URL 和原始请求头不会进入交接包。
 - 运行产物忽略：确认 `outputs/creator_clones/`、`outputs/local_chrome_profile/`、`samples/` 已被 `.gitignore` 排除。
 
-预检接口不会读取 Cookie，不会发起平台扫描，也不会调用大模型；它只用于告诉用户当前本机环境能跑到哪一步。真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的“插件辅助采集”。
+预检接口不会读取 Cookie，不会发起平台扫描，也不会调用大模型；它只用于告诉用户当前本机环境能跑到哪一步。真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的“本机 Chrome 辅助入口”。
 
 ## 配置
 

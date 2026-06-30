@@ -76,7 +76,7 @@ def chrome_helper_status(request: Request):
                 "只允许本机 127.0.0.1 / localhost 调用。",
                 "不读取 Cookie，不返回 Cookie，不写 Cookie 日志。",
                 "状态检查只返回匿名标签页数量和就绪状态，不返回标签页标题、URL 或作品数据。",
-                "真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的插件辅助采集。",
+                "真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的本机 Chrome 辅助入口。",
                 "每次启动 Chrome、打开主页、扫描或清理辅助 profile 都必须先申请一次性 token，并由页面按钮触发确认。",
             ],
         }

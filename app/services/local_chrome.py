@@ -178,13 +178,13 @@ def local_helper_security_contract() -> dict:
 
 def _chrome_helper_policy(*, chrome_available: bool, ready_for_profile_scan: bool) -> dict:
     if ready_for_profile_scan:
-        next_action = "点击“插件辅助采集”，页面会申请一次性 token，并由用户确认后读取当前主页可见作品。"
+        next_action = "点击“本机 Chrome 辅助入口”，页面会申请一次性 token，并由用户确认后读取当前主页可见作品。"
     elif not chrome_available:
         next_action = "启动带 DevTools 的本机 Chrome，或复制启动命令手动打开。"
     elif _chrome_profile_mode() == "dedicated":
         next_action = "当前连接的是专用调试 Chrome，不是日常 Chrome；请在该调试 Chrome 中打开目标抖音主页，或切换为 existing 模式复用日常 Chrome 登录态。"
     else:
-        next_action = "在本机 Chrome 中打开目标抖音主页，页面加载后重新检测或点击“插件辅助采集”。"
+        next_action = "在本机 Chrome 中打开目标抖音主页，页面加载后重新检测或点击“本机 Chrome 辅助入口”。"
     return {
         "next_action": next_action,
         "request_origin": "user_local_chrome_and_user_local_ip",
