@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.services.llm_provider import BaseLLMProvider, get_llm_provider
+from app.services.runtime_settings import effective_llm_settings, update_llm_runtime_settings
 
 
 SUPPORTED_PROVIDERS = {
@@ -27,43 +28,66 @@ def mask_api_key(value: str) -> str:
 
 
 def llm_is_configured() -> bool:
+    effective = effective_llm_settings()
     return (
-        settings.llm_provider not in DISABLED_PROVIDERS
-        and settings.llm_provider in SUPPORTED_PROVIDERS
-        and bool(settings.llm_api_base)
-        and bool(settings.llm_api_key)
-        and bool(settings.llm_model)
+        effective["provider"] not in DISABLED_PROVIDERS
+        and effective["provider"] in SUPPORTED_PROVIDERS
+        and bool(effective["api_base"])
+        and bool(effective["api_key"])
+        and bool(effective["model"])
     )
 
 
 def llm_status_payload() -> dict:
-    has_api_key = bool(settings.llm_api_key)
-    provider_supported = settings.llm_provider in SUPPORTED_PROVIDERS
+    effective = effective_llm_settings()
+    has_api_key = bool(effective["api_key"])
+    provider_supported = effective["provider"] in SUPPORTED_PROVIDERS
     configured = llm_is_configured()
     if configured:
         status_message = "AI 自动拆解已启用，可以测试连接或在 case 页面重新分析。"
-    elif settings.llm_provider in DISABLED_PROVIDERS:
-        status_message = "AI 自动拆解未启用：请在 .env 中配置 LLM_PROVIDER、LLM_API_KEY 和 LLM_MODEL。"
+    elif effective["provider"] in DISABLED_PROVIDERS:
+        status_message = "AI 自动拆解未启用：请在设置弹窗中配置 Provider、API Key 和 Model。"
     elif not provider_supported:
-        status_message = f"AI 自动拆解未启用：暂不支持 LLM_PROVIDER={settings.llm_provider}。"
+        status_message = f"AI 自动拆解未启用：暂不支持 LLM_PROVIDER={effective['provider']}。"
     elif not has_api_key:
         status_message = "AI 自动拆解未启用：缺少 LLM_API_KEY。"
-    elif not settings.llm_model:
+    elif not effective["model"]:
         status_message = "AI 自动拆解未启用：缺少 LLM_MODEL。"
     else:
         status_message = "AI 自动拆解未启用：请检查 LLM_API_BASE、LLM_API_KEY 和 LLM_MODEL。"
 
     return {
-        "provider": settings.llm_provider,
-        "api_base": settings.llm_api_base,
-        "model": settings.llm_model,
+        "provider": effective["provider"],
+        "api_base": effective["api_base"],
+        "model": effective["model"],
         "configured": configured,
         "has_api_key": has_api_key,
-        "masked_api_key": mask_api_key(settings.llm_api_key),
-        "llm_max_keyframes": settings.llm_max_keyframes,
-        "temperature": settings.llm_temperature,
+        "masked_api_key": mask_api_key(effective["api_key"]),
+        "llm_max_keyframes": effective["max_keyframes"],
+        "temperature": effective["temperature"],
+        "timeout_seconds": effective["timeout_seconds"],
+        "max_output_tokens": effective["max_output_tokens"],
         "status_message": status_message,
     }
+
+
+def update_llm_settings_payload(payload: dict) -> dict:
+    current = effective_llm_settings()
+    values = {
+        "provider": payload.get("provider", current["provider"]),
+        "api_base": payload.get("api_base", current["api_base"]),
+        "model": payload.get("model", current["model"]),
+        "timeout_seconds": payload.get("timeout_seconds", current["timeout_seconds"]),
+        "temperature": payload.get("temperature", current["temperature"]),
+        "max_keyframes": payload.get("llm_max_keyframes", payload.get("max_keyframes", current["max_keyframes"])),
+        "max_output_tokens": payload.get("max_output_tokens", current["max_output_tokens"]),
+    }
+    if payload.get("clear_api_key"):
+        values["api_key"] = ""
+    elif str(payload.get("api_key") or "").strip():
+        values["api_key"] = str(payload.get("api_key") or "").strip()
+    update_llm_runtime_settings(values)
+    return llm_status_payload()
 
 
 def test_llm_connection(provider: BaseLLMProvider | None = None) -> dict:
@@ -80,6 +104,6 @@ def test_llm_connection(provider: BaseLLMProvider | None = None) -> dict:
     return {
         "ok": True,
         "message": str(result.get("message") or "pong"),
-        "provider": settings.llm_provider,
-        "model": settings.llm_model,
+        "provider": effective_llm_settings()["provider"],
+        "model": effective_llm_settings()["model"],
     }

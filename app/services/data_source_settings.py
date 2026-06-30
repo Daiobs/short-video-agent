@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.config import settings
+from app.services.runtime_settings import effective_douyin_settings, update_douyin_runtime_settings
 
 
 def mask_cookie(value: str) -> str:
@@ -13,9 +14,10 @@ def mask_cookie(value: str) -> str:
 
 
 def data_source_status_payload() -> dict:
-    has_cookie = bool((settings.douyin_cookie or "").strip())
-    has_user_agent = bool((settings.douyin_user_agent or "").strip())
-    referer = settings.douyin_referer or "https://www.douyin.com/"
+    effective = effective_douyin_settings()
+    has_cookie = bool((effective["cookie"] or "").strip())
+    has_user_agent = bool((effective["user_agent"] or "").strip())
+    referer = effective["referer"] or "https://www.douyin.com/"
     sources = [
         {
             "id": "manual_links",
@@ -54,8 +56,9 @@ def data_source_status_payload() -> dict:
         "configured": has_cookie,
         "provider": "cookie_api",
         "has_cookie": has_cookie,
-        "masked_cookie": mask_cookie(settings.douyin_cookie),
+        "masked_cookie": mask_cookie(effective["cookie"]),
         "user_agent_configured": has_user_agent,
+        "user_agent": effective["user_agent"],
         "referer": referer,
         "profile_scan_provider": settings.profile_scan_provider,
         "sources": sources,
@@ -70,3 +73,16 @@ def data_source_status_payload() -> dict:
             "公开扫描失败时，请使用多作品链接粘贴或浏览器辅助采集。",
         ],
     }
+
+
+def update_douyin_settings_payload(payload: dict) -> dict:
+    values = {
+        "user_agent": payload.get("user_agent", effective_douyin_settings()["user_agent"]),
+        "referer": payload.get("referer", effective_douyin_settings()["referer"]),
+    }
+    if payload.get("clear_cookie"):
+        values["cookie"] = ""
+    elif str(payload.get("douyin_cookie") or payload.get("cookie") or "").strip():
+        values["cookie"] = str(payload.get("douyin_cookie") or payload.get("cookie") or "").strip()
+    update_douyin_runtime_settings(values)
+    return data_source_status_payload()

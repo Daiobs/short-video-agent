@@ -48,7 +48,9 @@
 - JSON / CSV 导入：支持 `items`、`samples`、`aweme_list`、`awemeList`，兼容 `aweme_id / awemeId / id`、`title / desc`、`author / nickname`、`cover_url / cover`、`statistics.digg_count` 等字段。
 - 已有 Case 导入：轻量版支持粘贴 `case_id`，把已有素材包作为更高理解度样本参与蒸馏。
 
-Cookie 设置只从 `.env` 读取，用于提高 Web API 成功率，不作为登录态要求，不写入日志、素材包、Prompt 或 Git：
+Cookie 和大模型 API 可以在右上角设置弹窗中修改，保存到本机 `.local_settings.json`。该文件已加入 `.gitignore`，不会进入数据库、素材包、Prompt 或 Git；接口响应只显示是否配置和脱敏状态。`.env` 仍可作为默认配置，页面保存的本机运行时配置优先级更高。
+
+Cookie 设置用于提高 Web API 成功率，不作为登录态要求，不写入日志、素材包、Prompt 或 Git：
 
 ```env
 DOUYIN_COOKIE=

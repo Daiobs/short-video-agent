@@ -29,7 +29,7 @@
                 <div>
                     <div class="entry-label">Settings</div>
                     <h2 id="settings-title">API 与解析设置</h2>
-                    <p class="muted">API Key 只从本地 .env 读取，页面不提供保存入口。没有 API Key 也能完成下载和素材包生成。</p>
+                    <p class="muted">API Key 和 Cookie 可保存到本机运行时配置，不进数据库、不上传云端、不提交 Git。没有 API Key 也能完成下载和素材包生成。</p>
                 </div>
                 <button type="button" id="settings-close" class="ghost-button">关闭</button>
             </div>
@@ -52,12 +52,47 @@
                 </div>
                 <div id="llm-status-list" class="compact-dl"></div>
                 <div id="llm-config-hint" class="notice hidden">
-                    <div>未配置时素材包仍会正常生成。需要自动拆解时，在 <code>.env</code> 中配置：</div>
+                    <div>未配置时素材包仍会正常生成。你可以在下方表单保存本机 API 配置，也可以继续使用 <code>.env</code>。</div>
                     <pre class="env-snippet">LLM_PROVIDER=openai_compatible
 LLM_API_BASE=https://api.openai.com/v1
 LLM_API_KEY=你的key
 LLM_MODEL=支持图片输入的模型</pre>
                 </div>
+                <form id="llm-settings-form" class="settings-form">
+                    <label>Provider
+                        <select name="provider" id="llm-provider-input">
+                            <option value="disabled">disabled</option>
+                            <option value="openai_compatible">openai_compatible</option>
+                            <option value="openai_responses">openai_responses</option>
+                            <option value="anthropic_compatible">anthropic_compatible</option>
+                        </select>
+                    </label>
+                    <label>API Base
+                        <input name="api_base" id="llm-api-base-input" placeholder="https://api.openai.com/v1">
+                    </label>
+                    <label>Model
+                        <input name="model" id="llm-model-input" placeholder="gpt-4o / gpt-5.4 / claude-fable-5">
+                    </label>
+                    <label>API Key
+                        <input name="api_key" id="llm-api-key-input" type="password" autocomplete="off" placeholder="留空表示保留当前 Key">
+                    </label>
+                    <div class="settings-inline-grid">
+                        <label>Timeout
+                            <input name="timeout_seconds" id="llm-timeout-input" type="number" min="5" step="1">
+                        </label>
+                        <label>Temperature
+                            <input name="temperature" id="llm-temperature-input" type="number" min="0" max="2" step="0.1">
+                        </label>
+                    </div>
+                    <label class="settings-checkbox">
+                        <input type="checkbox" id="llm-clear-key-input">
+                        清空本机保存的 API Key
+                    </label>
+                    <div class="settings-actions">
+                        <button type="submit" id="save-llm-settings-button">保存 AI 设置</button>
+                        <span id="llm-save-result" class="muted"></span>
+                    </div>
+                </form>
                 <div class="settings-actions">
                     <button type="button" id="test-llm-button">测试连接</button>
                     <span id="llm-test-result" class="muted"></span>
@@ -79,6 +114,25 @@ LLM_MODEL=支持图片输入的模型</pre>
                 </div>
                 <p class="muted compact-copy">Cookie / Web API 只是可选增强层。默认主路径仍是手动作品链接和浏览器辅助采集；Cookie 不会写入素材包、Prompt 或日志。</p>
                 <div id="data-source-status-list" class="compact-dl"></div>
+                <form id="douyin-settings-form" class="settings-form">
+                    <label>Douyin Cookie
+                        <textarea name="douyin_cookie" id="douyin-cookie-input" rows="3" autocomplete="off" placeholder="留空表示保留当前 Cookie"></textarea>
+                    </label>
+                    <label>User-Agent
+                        <input name="user_agent" id="douyin-user-agent-input" placeholder="从浏览器 Network 请求头复制 User-Agent">
+                    </label>
+                    <label>Referer
+                        <input name="referer" id="douyin-referer-input" placeholder="https://www.douyin.com/">
+                    </label>
+                    <label class="settings-checkbox">
+                        <input type="checkbox" id="douyin-clear-cookie-input">
+                        清空本机保存的 Douyin Cookie
+                    </label>
+                    <div class="settings-actions">
+                        <button type="submit" id="save-douyin-settings-button">保存数据源设置</button>
+                        <span id="douyin-save-result" class="muted"></span>
+                    </div>
+                </form>
             </div>
         </div>
     </section>

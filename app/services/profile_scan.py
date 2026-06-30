@@ -19,6 +19,7 @@ from app.providers.profile_base import (
     sorted_profile_items,
 )
 from app.services.douyin_url_parser import extract_aweme_id, extract_first_url
+from app.services.runtime_settings import effective_douyin_settings
 
 
 PROFILE_URL_RE = re.compile(r"https?://(?:www\.)?douyin\.com/[^\s]+", re.I)
@@ -185,7 +186,8 @@ class DouyinCookieProfileProvider:
     endpoint = "https://www.douyin.com/aweme/v1/web/user/post/"
 
     def scan(self, request: ProfileScanRequest) -> ProfileScanResult:
-        if not (settings.douyin_cookie or "").strip():
+        douyin_settings = effective_douyin_settings()
+        if not (douyin_settings["cookie"] or "").strip():
             raise AppError(ErrorCode.COOKIE_REQUIRED, "Cookie API 增强层未配置 DOUYIN_COOKIE。")
         profile_url = normalize_profile_url(request.profile_url, request.sec_user_id)
         sec_user_id = extract_sec_user_id(profile_url, request.sec_user_id)
@@ -193,10 +195,10 @@ class DouyinCookieProfileProvider:
             raise AppError(ErrorCode.SEC_USER_ID_NOT_FOUND)
 
         headers = {
-            "User-Agent": settings.douyin_user_agent or _default_douyin_user_agent(),
+            "User-Agent": douyin_settings["user_agent"] or _default_douyin_user_agent(),
             "Accept": "application/json,text/plain,*/*",
-            "Referer": settings.douyin_referer or profile_url,
-            "Cookie": settings.douyin_cookie,
+            "Referer": douyin_settings["referer"] or profile_url,
+            "Cookie": douyin_settings["cookie"],
         }
         items: list[ProfileVideoItem] = []
         seen: set[str] = set()
@@ -303,7 +305,7 @@ class DataSourceManager:
             return self._scan_explicit_external(normalized)
 
         failures: list[AppError] = []
-        if provider_name == "cookie_api" or bool((settings.douyin_cookie or "").strip()):
+        if provider_name == "cookie_api" or bool((effective_douyin_settings()["cookie"] or "").strip()):
             try:
                 return self._finalize(self.cookie_provider.scan(normalized), normalized, failures)
             except AppError as error:

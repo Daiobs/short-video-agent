@@ -1032,7 +1032,7 @@ def test_llm_settings_returns_unconfigured_status_without_secret(monkeypatch) ->
     assert payload["ok"] is True
     assert payload["llm"]["configured"] is False
     assert payload["llm"]["has_api_key"] is False
-    assert "LLM_PROVIDER" in payload["llm"]["status_message"]
+    assert "设置弹窗" in payload["llm"]["status_message"]
 
 
 def test_llm_settings_masks_configured_api_key(monkeypatch) -> None:
@@ -1069,6 +1069,55 @@ def test_data_source_settings_masks_cookie(monkeypatch) -> None:
     assert status["masked_cookie"].startswith("sess")
     assert secret not in json.dumps(payload, ensure_ascii=False)
     assert {source["id"] for source in status["sources"]} >= {"manual_links", "browser_dom", "cookie_api", "external_api"}
+
+
+def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / ".local_settings.json"
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
+
+    response = client.put(
+        "/api/settings/llm",
+        json={
+            "provider": "openai_compatible",
+            "api_base": "https://api.example.test/v1",
+            "api_key": "sk-local-runtime-secret",
+            "model": "vision-model",
+            "timeout_seconds": 42,
+            "temperature": 0.1,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm"]["configured"] is True
+    assert payload["llm"]["masked_api_key"] == "sk-****cret"
+    assert "sk-local-runtime-secret" not in json.dumps(payload, ensure_ascii=False)
+    stored = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert stored["llm"]["api_key"] == "sk-local-runtime-secret"
+
+
+def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / ".local_settings.json"
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
+    secret = "sessionid=local-douyin-cookie-secret"
+
+    response = client.put(
+        "/api/settings/data-sources/douyin",
+        json={
+            "douyin_cookie": secret,
+            "user_agent": "Browser UA",
+            "referer": "https://www.douyin.com/",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    status = payload["data_sources"]
+    assert status["has_cookie"] is True
+    assert status["user_agent"] == "Browser UA"
+    assert secret not in json.dumps(payload, ensure_ascii=False)
+    stored = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert stored["douyin"]["cookie"] == secret
 
 
 def test_llm_settings_accepts_openai_responses_provider(monkeypatch) -> None:

@@ -14,6 +14,16 @@ const analysisStatus = document.getElementById("analysis-status");
 const llmStatusBadge = document.getElementById("llm-status-badge");
 const llmStatusList = document.getElementById("llm-status-list");
 const llmConfigHint = document.getElementById("llm-config-hint");
+const llmSettingsForm = document.getElementById("llm-settings-form");
+const llmProviderInput = document.getElementById("llm-provider-input");
+const llmApiBaseInput = document.getElementById("llm-api-base-input");
+const llmModelInput = document.getElementById("llm-model-input");
+const llmApiKeyInput = document.getElementById("llm-api-key-input");
+const llmTimeoutInput = document.getElementById("llm-timeout-input");
+const llmTemperatureInput = document.getElementById("llm-temperature-input");
+const llmClearKeyInput = document.getElementById("llm-clear-key-input");
+const saveLlmSettingsButton = document.getElementById("save-llm-settings-button");
+const llmSaveResult = document.getElementById("llm-save-result");
 const testLlmButton = document.getElementById("test-llm-button");
 const llmTestResult = document.getElementById("llm-test-result");
 const refreshPreflightButton = document.getElementById("refresh-preflight-button");
@@ -21,6 +31,13 @@ const preflightSummary = document.getElementById("preflight-summary");
 const preflightList = document.getElementById("preflight-list");
 const dataSourceStatusBadge = document.getElementById("data-source-status-badge");
 const dataSourceStatusList = document.getElementById("data-source-status-list");
+const douyinSettingsForm = document.getElementById("douyin-settings-form");
+const douyinCookieInput = document.getElementById("douyin-cookie-input");
+const douyinUserAgentInput = document.getElementById("douyin-user-agent-input");
+const douyinRefererInput = document.getElementById("douyin-referer-input");
+const douyinClearCookieInput = document.getElementById("douyin-clear-cookie-input");
+const saveDouyinSettingsButton = document.getElementById("save-douyin-settings-button");
+const douyinSaveResult = document.getElementById("douyin-save-result");
 const resultCard = document.getElementById("result-card");
 const caseSummary = document.getElementById("case-summary");
 const homeCaseView = document.getElementById("home-case-view");
@@ -364,6 +381,28 @@ function renderLlmStatus(llm) {
     </dl>
     <p class="muted compact-copy">${escapeHtml(llm.status_message || "")}</p>
   `;
+  if (llmProviderInput) {
+    llmProviderInput.value = llm.provider || "disabled";
+  }
+  if (llmApiBaseInput) {
+    llmApiBaseInput.value = llm.api_base || "";
+  }
+  if (llmModelInput) {
+    llmModelInput.value = llm.model || "";
+  }
+  if (llmTimeoutInput) {
+    llmTimeoutInput.value = llm.timeout_seconds || 90;
+  }
+  if (llmTemperatureInput) {
+    llmTemperatureInput.value = llm.temperature ?? 0.2;
+  }
+  if (llmApiKeyInput) {
+    llmApiKeyInput.value = "";
+    llmApiKeyInput.placeholder = llm.has_api_key ? `留空保留当前 Key（${llm.masked_api_key || "已配置"}）` : "粘贴 API Key";
+  }
+  if (llmClearKeyInput) {
+    llmClearKeyInput.checked = false;
+  }
 }
 
 function sortProfileItems(items, sortBy) {
@@ -2618,6 +2657,19 @@ function renderDataSourceStatus(status = {}) {
       ${sources.map((source) => `<li><strong>${escapeHtml(source.label || source.id)}</strong>：${escapeHtml(source.message || "")}</li>`).join("")}
     </ul>
   `;
+  if (douyinCookieInput) {
+    douyinCookieInput.value = "";
+    douyinCookieInput.placeholder = status.has_cookie ? `留空保留当前 Cookie（${status.masked_cookie || "已配置"}）` : "粘贴 Douyin Cookie";
+  }
+  if (douyinUserAgentInput) {
+    douyinUserAgentInput.value = status.user_agent || "";
+  }
+  if (douyinRefererInput) {
+    douyinRefererInput.value = status.referer || "https://www.douyin.com/";
+  }
+  if (douyinClearCookieInput) {
+    douyinClearCookieInput.checked = false;
+  }
 }
 
 async function loadDataSourceStatus() {
@@ -2780,6 +2832,68 @@ homeRouteButtons.forEach((button) => {
 
 window.addEventListener("hashchange", () => {
   setHomeRoute(routeFromHash(), false);
+});
+
+llmSettingsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  saveLlmSettingsButton.disabled = true;
+  llmSaveResult.textContent = "正在保存...";
+  try {
+    const payload = {
+      provider: llmProviderInput?.value || "disabled",
+      api_base: llmApiBaseInput?.value || "",
+      model: llmModelInput?.value || "",
+      timeout_seconds: Number(llmTimeoutInput?.value || 90),
+      temperature: Number(llmTemperatureInput?.value || 0.2),
+      clear_api_key: Boolean(llmClearKeyInput?.checked),
+    };
+    const apiKey = String(llmApiKeyInput?.value || "").trim();
+    if (apiKey) {
+      payload.api_key = apiKey;
+    }
+    const response = await fetch("/api/settings/llm", {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const result = await readJsonResponse(response);
+    renderLlmStatus(result.llm || {});
+    llmSaveResult.textContent = "已保存到本机运行时配置。";
+    await loadPreflightStatus().catch(() => {});
+  } catch (error) {
+    llmSaveResult.textContent = `${error.error_code || "ERROR"}：${error.message || "保存失败"}`;
+  } finally {
+    saveLlmSettingsButton.disabled = false;
+  }
+});
+
+douyinSettingsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  saveDouyinSettingsButton.disabled = true;
+  douyinSaveResult.textContent = "正在保存...";
+  try {
+    const payload = {
+      user_agent: douyinUserAgentInput?.value || "",
+      referer: douyinRefererInput?.value || "https://www.douyin.com/",
+      clear_cookie: Boolean(douyinClearCookieInput?.checked),
+    };
+    const cookie = String(douyinCookieInput?.value || "").trim();
+    if (cookie) {
+      payload.douyin_cookie = cookie;
+    }
+    const response = await fetch("/api/settings/data-sources/douyin", {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const result = await readJsonResponse(response);
+    renderDataSourceStatus(result.data_sources || {});
+    douyinSaveResult.textContent = "已保存到本机运行时配置。";
+  } catch (error) {
+    douyinSaveResult.textContent = `${error.error_code || "ERROR"}：${error.message || "保存失败"}`;
+  } finally {
+    saveDouyinSettingsButton.disabled = false;
+  }
 });
 
 testLlmButton.addEventListener("click", async () => {

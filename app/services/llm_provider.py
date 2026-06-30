@@ -14,6 +14,7 @@ from PIL import Image, ImageOps
 
 from app.config import settings
 from app.errors import AppError, ErrorCode
+from app.services.runtime_settings import effective_llm_settings
 
 
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -35,13 +36,14 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         temperature: float | None = None,
         max_output_tokens: int | None = None,
     ) -> None:
-        self.api_base = (api_base or settings.llm_api_base).rstrip("/")
-        self.api_key = api_key if api_key is not None else settings.llm_api_key
-        self.model = model or settings.llm_model
-        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
-        self.temperature = temperature if temperature is not None else settings.llm_temperature
+        effective = effective_llm_settings()
+        self.api_base = (api_base or effective["api_base"]).rstrip("/")
+        self.api_key = api_key if api_key is not None else effective["api_key"]
+        self.model = model or effective["model"]
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
+        self.temperature = temperature if temperature is not None else effective["temperature"]
         self.max_output_tokens = (
-            max_output_tokens if max_output_tokens is not None else settings.llm_max_output_tokens
+            max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
@@ -160,13 +162,14 @@ class OpenAIResponsesProvider(BaseLLMProvider):
         temperature: float | None = None,
         max_output_tokens: int | None = None,
     ) -> None:
-        self.api_base = (api_base or settings.llm_api_base).rstrip("/")
-        self.api_key = api_key if api_key is not None else settings.llm_api_key
-        self.model = model or settings.llm_model
-        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
-        self.temperature = temperature if temperature is not None else settings.llm_temperature
+        effective = effective_llm_settings()
+        self.api_base = (api_base or effective["api_base"]).rstrip("/")
+        self.api_key = api_key if api_key is not None else effective["api_key"]
+        self.model = model or effective["model"]
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
+        self.temperature = temperature if temperature is not None else effective["temperature"]
         self.max_output_tokens = (
-            max_output_tokens if max_output_tokens is not None else settings.llm_max_output_tokens
+            max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
@@ -222,13 +225,14 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
         temperature: float | None = None,
         max_output_tokens: int | None = None,
     ) -> None:
-        self.api_base = (api_base or settings.llm_api_base).rstrip("/")
-        self.api_key = api_key if api_key is not None else settings.llm_api_key
-        self.model = model or settings.llm_model
-        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
-        self.temperature = temperature if temperature is not None else settings.llm_temperature
+        effective = effective_llm_settings()
+        self.api_base = (api_base or effective["api_base"]).rstrip("/")
+        self.api_key = api_key if api_key is not None else effective["api_key"]
+        self.model = model or effective["model"]
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
+        self.temperature = temperature if temperature is not None else effective["temperature"]
         self.max_output_tokens = (
-            max_output_tokens if max_output_tokens is not None else settings.llm_max_output_tokens
+            max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
@@ -275,15 +279,17 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
 
 
 def get_llm_provider() -> BaseLLMProvider:
-    if settings.llm_provider in {"", "disabled", "none", "off"}:
+    effective = effective_llm_settings()
+    provider = effective["provider"]
+    if provider in {"", "disabled", "none", "off"}:
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
-    if settings.llm_provider in {"openai", "openai_compatible", "compatible"}:
+    if provider in {"openai", "openai_compatible", "compatible"}:
         return OpenAICompatibleProvider()
-    if settings.llm_provider in {"openai_responses", "responses"}:
+    if provider in {"openai_responses", "responses"}:
         return OpenAIResponsesProvider()
-    if settings.llm_provider in {"anthropic", "anthropic_compatible", "claude"}:
+    if provider in {"anthropic", "anthropic_compatible", "claude"}:
         return AnthropicCompatibleProvider()
-    raise AppError(ErrorCode.LLM_NOT_CONFIGURED, f"不支持的 LLM_PROVIDER：{settings.llm_provider}")
+    raise AppError(ErrorCode.LLM_NOT_CONFIGURED, f"不支持的 LLM_PROVIDER：{provider}")
 
 
 def parse_json_text(text: str) -> dict:
@@ -363,12 +369,13 @@ def _optimized_image_payload(path: Path) -> tuple[str, bytes]:
             image = ImageOps.exif_transpose(image)
             if image.mode not in {"RGB", "L"}:
                 image = image.convert("RGB")
-            max_width = max(320, int(settings.llm_image_max_width or 1280))
+            effective = effective_llm_settings()
+            max_width = max(320, int(effective["image_max_width"] or 1280))
             if image.width > max_width:
                 ratio = max_width / image.width
                 image = image.resize((max_width, max(1, int(image.height * ratio))), Image.Resampling.LANCZOS)
             output = BytesIO()
-            quality = min(95, max(40, int(settings.llm_image_jpeg_quality or 72)))
+            quality = min(95, max(40, int(effective["image_jpeg_quality"] or 72)))
             image.save(output, format="JPEG", quality=quality, optimize=True)
             return "image/jpeg", output.getvalue()
     except Exception:
