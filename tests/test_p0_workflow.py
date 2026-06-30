@@ -270,8 +270,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "单作品解析" in response.text
     assert "创作者克隆实验室" in response.text
     assert "主页 URL / sec_user_id" in response.text
-    assert "其他导入方式（公开扫描失败时）" in response.text
-    assert "多作品链接粘贴" in response.text
+    assert "导入一组对标素材" in response.text
+    assert "1. 导入素材" in response.text
+    assert "2. 选择样本" in response.text
+    assert "3. 富化证据" in response.text
+    assert "4. 大模型蒸馏" in response.text
+    assert "5. 导出规则" in response.text
+    assert "粘贴作品链接" in response.text
     assert 'id="profile-scan-button"' in response.text
     assert 'id="profile-sort"' in response.text
     assert 'id="profile-evidence-filter"' in response.text
@@ -285,28 +290,28 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "不登录、不使用 Cookie" in response.text
     assert "不绕风控" in response.text
     assert "Creator Clone Lab" in response.text
-    assert "其他导入方式（公开扫描失败时）" in response.text
-    assert "多作品链接粘贴" in response.text
-    assert "JSON / CSV 作品列表导入" in response.text
-    assert "handoff_manifest 安全交接包导入" in response.text
+    assert "浏览器辅助采集" in response.text
+    assert "粘贴作品链接" in response.text
+    assert "JSON / CSV 导入" in response.text
+    assert "已有 Case 导入" in response.text
+    assert "高级 / 安全交接包" in response.text
     assert "导入交接包" in response.text
     assert 'id="profile-handoff-file"' in response.text
     assert 'accept=".json,application/json"' in response.text
     assert 'id="profile-handoff-manifest"' in response.text
-    assert "公开主页扫描（优先）" in response.text
-    assert "扫描主页</button>" in response.text
+    assert "公开主页扫描（优先）" not in response.text
+    assert "公开主页扫描（实验）" in response.text
     public_section = response.text[
-        response.text.index('id="profile-public-section"') : response.text.index('id="profile-fallback-section"')
+        response.text.index('id="profile-public-section"') : response.text.index('id="profile-manual-section"')
     ]
     assert 'id="profile-browser-helper-button"' in public_section
     assert 'id="profile-chrome-status"' in public_section
     assert "主页 URL / sec_user_id" in public_section
-    assert "公开扫描" in response.text
     assert "插件辅助采集" in response.text
-    assert "展示账号素材清单" in response.text
-    assert "点赞 / 评论 / 时间分层" in response.text
-    assert "手动确认样本" in response.text
-    assert "可视化表单结果" in response.text
+    assert "素材池概览" in response.text
+    assert "样本选择" in response.text
+    assert "证据富化" in response.text
+    assert "导出规则" in response.text
     assert "插件辅助采集" in response.text
     assert 'id="profile-chrome-status"' in response.text
     assert 'id="profile-helper-tools"' in response.text
@@ -320,23 +325,17 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-continue-chrome-button"' in response.text
     assert "本机 Chrome 辅助状态：尚未检测" in response.text
     assert "本地文件导入（后续接入）" in response.text
-    assert "分层筛选" in response.text
     assert "全选" in response.text
     assert "推荐组合" in response.text
     assert "高赞 Top 3" in response.text
     assert "高评 Top 3" in response.text
     assert "高分享 Top 3" in response.text
-    assert "高收藏 Top 3" in response.text
-    assert "最新 Top 3" in response.text
     assert "低表现 3 条" in response.text
-    assert "待富化 Top 5" in response.text
-    assert "证据完整 Top 5" in response.text
     assert 'data-profile-preset="recommended_mix"' in response.text
     assert 'data-profile-preset="top_likes"' in response.text
-    assert 'data-profile-preset="top_collects"' in response.text
+    assert 'data-profile-preset="top_comments"' in response.text
+    assert 'data-profile-preset="top_shares"' in response.text
     assert 'data-profile-preset="low_performance"' in response.text
-    assert 'data-profile-preset="needs_enrichment"' in response.text
-    assert 'data-profile-preset="ready_evidence"' in response.text
     assert "继续采集更多" in response.text
     assert "检测 Chrome" not in response.text
     assert "启动 Chrome" not in response.text
@@ -355,6 +354,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'data-profile-import="' not in response.text
     assert 'data-profile-build="' not in response.text
     assert 'id="profile-selected-import-button"' not in response.text
+    assert "<th>选择</th>" in response.text
+    assert "<th>素材</th>" in response.text
+    assert "<th>类型</th>" in response.text
+    assert "<th>互动数据</th>" in response.text
+    assert "<th>理解状态</th>" in response.text
+    assert "<th>处理状态</th>" in response.text
+    assert "<th>操作</th>" in response.text
     assert "确认样本并富化" in response.text
     assert 'id="profile-selection-basket"' in response.text
     assert "本轮样本篮" in Path("app/static/app.js").read_text(encoding="utf-8")
@@ -8051,16 +8057,20 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert response.status_code == 200
     assert "创作者克隆实验室" in response.text
     assert "Creator Clone Lab" in response.text
-    assert "输入主页 URL 或 sec_user_id" in response.text
-    assert "本机插件 / 浏览器助手采集主页当前可见作品" in response.text
+    assert "导入一组对标素材" in response.text
+    assert "主页 URL / sec_user_id" in response.text
+    assert "浏览器辅助采集" in response.text
+    assert "插件辅助采集" in response.text
     assert "主页扫描</button>" not in response.text
     assert "不登录、不使用 Cookie" in response.text
     assert "不绕验证码、不绕风控" in response.text
-    assert "JSON / CSV 作品列表导入" in response.text
+    assert "JSON / CSV 导入" in response.text
     assert "已有 Case 导入" in response.text
     assert "本地文件导入（后续接入）" in response.text
     assert "确认样本并富化" in response.text
-    assert "大模型蒸馏与可视化结果" in response.text
+    assert "素材池概览" in response.text
+    assert "样本选择" in response.text
+    assert "证据富化" in response.text
     assert "大模型蒸馏" in response.text
     assert "creator-clone-distill-button" in response.text
     assert "报告文件" in response.text

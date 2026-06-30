@@ -36,7 +36,12 @@ const jobMessage = document.getElementById("job-message");
 const jobResult = document.getElementById("job-result");
 const homeRouteButtons = Array.from(document.querySelectorAll("[data-home-route]"));
 const homePanels = Array.from(document.querySelectorAll("[data-home-panel]"));
+
 const profileForm = document.getElementById("profile-form");
+
+// Creator Clone: import
+const profileImportModeButtons = Array.from(document.querySelectorAll("[data-profile-import-mode]"));
+const profileImportPanels = Array.from(document.querySelectorAll("[data-profile-import-panel]"));
 const profilePublicSection = document.getElementById("profile-public-section");
 const profileSort = document.getElementById("profile-sort");
 const profileEvidenceFilter = document.getElementById("profile-evidence-filter");
@@ -61,9 +66,12 @@ const profileProviderBadge = document.getElementById("profile-provider-badge");
 const profileWarnings = document.getElementById("profile-warnings");
 const profileCaptureAudit = document.getElementById("profile-capture-audit");
 const profileSummary = document.getElementById("profile-summary");
+const profileNextAction = document.getElementById("profile-next-action");
 const profileDecisionBoard = document.getElementById("profile-decision-board");
 const profileSegmentsPreview = document.getElementById("profile-segments-preview");
 const profileResultsBody = document.getElementById("profile-results-body");
+const profileEnrichmentSection = document.getElementById("profile-enrichment-section");
+const profileDistillationSection = document.getElementById("profile-distillation-section");
 const profileQueueCard = document.getElementById("profile-queue-card");
 const profileQueueSummary = document.getElementById("profile-queue-summary");
 const profileQueueItems = document.getElementById("profile-queue-items");
@@ -387,8 +395,66 @@ function profileItemKey(item) {
   return item?.sample_id || item?.aweme_id || item?.case_id || item?.source_url || "";
 }
 
+// Creator Clone: import
+function setActiveImportMode(mode = "browser") {
+  const activeMode = ["browser", "manual", "structured", "case", "handoff"].includes(mode) ? mode : "browser";
+  profileImportModeButtons.forEach((button) => {
+    const active = button.dataset.profileImportMode === activeMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  profileImportPanels.forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.profileImportPanel === activeMode);
+  });
+}
+
 function isProfileItemBuildable(item) {
   return Boolean(item?.aweme_id) && item?.can_build_case !== false && !["image", "text"].includes(item?.media_type || "");
+}
+
+// Creator Clone: sample pool
+function setCreatorCloneStep(step = "import") {
+  const selected = selectedProfileItems();
+  const hasSelected = selected.length > 0;
+  const canDistill = hasSelected && selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES;
+  profileEnrichmentSection?.classList.toggle("hidden", !hasSelected);
+  profileDistillationSection?.classList.toggle("hidden", !canDistill);
+  if (profileNextAction) {
+    const label = {
+      import: "下一步：导入素材",
+      select: "下一步：选择样本",
+      enrich: "下一步：富化证据",
+      distill: "下一步：大模型蒸馏",
+      export: "下一步：导出规则",
+    }[step] || "下一步：选择样本";
+    profileNextAction.textContent = label;
+  }
+}
+
+function renderCreatorCloneOverview(summary = {}) {
+  if (!profileSummary) {
+    return;
+  }
+  const selected = selectedProfileItems();
+  const buildable = profileItems.filter(isProfileItemBuildable);
+  const selectedBuildable = selected.filter(isProfileItemBuildable);
+  const coverage = profileEvidenceCoverageSummary(profileItems);
+  const nextAction = !profileItems.length
+    ? "先导入一组对标素材"
+    : !selected.length
+      ? "选择 3-20 条代表样本"
+      : selectedBuildable.some((item) => !item.has_frames)
+        ? "确认样本并富化证据"
+        : "可以开始大模型蒸馏";
+  const total = summary.scanned_count || profileItems.length;
+  profileSummary.innerHTML = `
+    <article><span>素材数量</span><strong>${formatNumber(total)}</strong></article>
+    <article><span>已选样本</span><strong>${formatNumber(selected.length)}</strong></article>
+    <article><span>可富化视频</span><strong>${formatNumber(buildable.length)}</strong></article>
+    <article class="wide"><span>证据覆盖</span><strong>${escapeHtml(coverage)}</strong></article>
+    <article class="wide"><span>下一步建议</span><strong>${escapeHtml(nextAction)}</strong></article>
+  `;
+  setCreatorCloneStep(!profileItems.length ? "import" : !selected.length ? "select" : selectedBuildable.some((item) => !item.has_frames) ? "enrich" : "distill");
 }
 
 function updateCreatorCloneSelectionStatus() {
@@ -431,6 +497,7 @@ function updateCreatorCloneSelectionStatus() {
   }
   renderProfileEnrichmentPlan(selected, buildable);
   renderProfileDistillReadiness(selected);
+  renderCreatorCloneOverview(profileScanPayload?.summary || cloneSummaryFromSet(profileScanPayload?.set) || {});
 }
 
 function selectedSampleReason(item) {
@@ -652,38 +719,7 @@ function renderProfileSummary(summary) {
   if (!summary || !profileSummary) {
     return;
   }
-  const topItems = normalizeItems(summary.top_items).slice(0, 3);
-  const profileMeta = summary.profile_metadata || profileScanPayload?.set?.profile_metadata || {};
-  const profileStats = profileMeta.stats || {};
-  const profileMetaLine = [
-    profileMeta.nickname ? `昵称 ${profileMeta.nickname}` : "",
-    profileStats.follower_count ? `粉丝 ${formatNumber(profileStats.follower_count)}` : "",
-    profileStats.liked_count ? `获赞 ${formatNumber(profileStats.liked_count)}` : "",
-    profileStats.work_count ? `作品 ${formatNumber(profileStats.work_count)}` : "",
-    profileMeta.bio ? `简介 ${profileMeta.bio}` : "",
-  ].filter(Boolean).join(" / ");
-  const videoCount = Number(summary.video_count || 0);
-  const categoryDistribution = summary.content_category_distribution || {};
-  const imageCount = Number(categoryDistribution.image || categoryDistribution["图文/照片"] || 0)
-    || profileItems.filter((item) => item.media_type === "image").length;
-  const unknownCount = profileItems.filter((item) => item.media_type === "unknown").length;
-  const hasMetrics = profileItems.some((item) => Number(item.like_count || 0) || Number(item.comment_count || 0) || Number(item.share_count || 0) || Number(item.collect_count || 0));
-  profileSummary.innerHTML = `
-    <article><span>素材数量</span><strong>${formatNumber(summary.scanned_count || profileItems.length)}</strong></article>
-    <article><span>可解析视频</span><strong>${formatNumber(videoCount)}</strong></article>
-    <article><span>图文 / 照片</span><strong>${formatNumber(imageCount)}</strong></article>
-    <article><span>未知类型</span><strong>${formatNumber(unknownCount)}</strong></article>
-    <article><span>最高综合分</span><strong>${formatNumber(summary.max_engagement_score)}</strong></article>
-    <article><span>平均点赞</span><strong>${formatNumber(summary.avg_like_count)}</strong></article>
-    <article><span>平均评论</span><strong>${formatNumber(summary.avg_comment_count)}</strong></article>
-    <article><span>平均分享</span><strong>${formatNumber(summary.avg_share_count)}</strong></article>
-    <article><span>收藏样本</span><strong>${formatNumber(profileItems.filter((item) => Number(item.collect_count || 0) > 0).length)}</strong></article>
-    <article class="wide"><span>账号资料</span><strong>${escapeHtml(profileMetaLine || "暂无账号可见资料")}</strong></article>
-    <article class="wide"><span>证据覆盖</span><strong>${escapeHtml(profileEvidenceCoverageSummary(profileItems))}</strong></article>
-    <article class="wide"><span>高频关键词</span><strong>${escapeHtml(normalizeItems(summary.content_keywords).slice(0, 8).join(" / ") || "暂无")}</strong></article>
-    <article class="wide"><span>综合分 Top 3</span><strong>${escapeHtml(topItems.map((item) => item.title || item.aweme_id).join(" / ") || "暂无")}</strong></article>
-    <article class="wide"><span>推荐动作</span><strong>${hasMetrics ? "选择 3-20 条代表样本进行创作者蒸馏" : "互动数据缺失时先生成部分素材包或补充 JSON / CSV 数据"}</strong></article>
-  `;
+  renderCreatorCloneOverview(summary);
 }
 
 function renderProfileDecisionBoard(payload) {
@@ -1189,10 +1225,15 @@ function currentProfileTargetValue() {
   return firstUrlFromText(rawProfileValue) || rawProfileValue || profileLastChromeProfileValue;
 }
 
+// Creator Clone: sample table
 function renderProfileTable() {
+  renderCompactProfileTable();
+}
+
+function renderCompactProfileTable() {
   const sorted = visibleProfileItems();
   if (!sorted.length) {
-    profileResultsBody.innerHTML = '<tr><td colspan="13" class="muted">当前筛选下没有素材。可以切换证据筛选，或改用多作品链接、JSON / CSV、已有 Case 导入。</td></tr>';
+    profileResultsBody.innerHTML = '<tr><td colspan="7" class="muted">当前筛选下没有素材。可以切换证据筛选，或改用粘贴作品链接、JSON / CSV、已有 Case 导入。</td></tr>';
     return;
   }
   profileResultsBody.innerHTML = sorted
@@ -1212,25 +1253,41 @@ function renderProfileTable() {
       const sourceLink = sourceHref
         ? `<a class="text-link profile-source-link" href="${escapeHtml(sourceHref)}" target="_blank" rel="noreferrer">来源</a>`
         : "";
+      const caseLink = item.case_id
+        ? `<a class="text-link profile-source-link" href="/cases/${escapeHtml(item.case_id)}" target="_blank" rel="noreferrer">打开 Case</a>`
+        : "";
+      const primaryAction = item.case_id
+        ? caseLink
+        : isProfileItemBuildable(item)
+          ? `<button type="button" class="text-button" data-profile-select-action="${escapeHtml(key)}">选入富化</button>`
+          : sourceLink || `<span class="muted">仅参考</span>`;
+      const metricLines = [
+        `赞 ${formatNumber(item.like_count)}`,
+        `评 ${formatNumber(item.comment_count)}`,
+        `分享 ${formatNumber(item.share_count)}`,
+        `收藏 ${formatNumber(item.collect_count)}`,
+        `综合 ${formatNumber(item.engagement_score)}`,
+      ];
       return `
         <tr>
           <td><input type="checkbox" data-profile-select value="${escapeHtml(key)}"${checked}></td>
-          <td>${image}</td>
+          <td>
+            <div class="profile-material-cell">
+              ${image}
+              <div>
+                <strong>${escapeHtml(item.title || item.desc || awemeLabel)}</strong>
+                <p>${escapeHtml(item.desc || item.source_url || item.webpage_url || "")}</p>
+                <code>${escapeHtml(awemeLabel)}</code>
+              </div>
+            </div>
+          </td>
           <td><span class="profile-media-type ${escapeHtml(item.media_type || "unknown")}">${escapeHtml(typeLabel)}</span></td>
           <td>
-            <strong>${escapeHtml(item.title || item.desc || awemeLabel)}</strong>
-            <p>${escapeHtml(item.desc || item.source_url || item.webpage_url || "")}</p>
-            ${sourceLink}
+            <div class="profile-metric-stack">${metricLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}</div>
           </td>
-          <td><code>${escapeHtml(awemeLabel)}</code></td>
-          <td>${formatNumber(item.like_count)}</td>
-          <td>${formatNumber(item.comment_count)}</td>
-          <td>${formatNumber(item.share_count)}</td>
-          <td>${formatNumber(item.collect_count)}</td>
-          <td>${formatNumber(item.engagement_score)}</td>
-          <td>${escapeHtml(item.create_time || "未知")}</td>
           <td><span class="profile-item-status ${escapeHtml(level)}">${escapeHtml(levelLabel)}</span>${evidenceBadges}</td>
           <td><span class="profile-item-status ${escapeHtml(item.media_type || "unknown")}">${escapeHtml(status)}</span></td>
+          <td><div class="profile-row-actions">${primaryAction}${caseLink && sourceLink ? sourceLink : ""}</div></td>
         </tr>
       `;
     })
@@ -1661,6 +1718,7 @@ async function pollProfileQueue(jobId) {
   return pollProfileQueue(jobId);
 }
 
+// Creator Clone: enrichment queue
 async function buildSelectedProfileQueue() {
   const selected = selectedProfileItems();
   if (!selected.length) {
@@ -2123,6 +2181,7 @@ function creatorCloneOverviewFromSet(set) {
   };
 }
 
+// Creator Clone: export
 function renderCreatorCloneResult(result, set, prompt, exports = {}) {
   currentCreatorCloneResult = result || null;
   currentDistillPrompt = prompt || currentDistillPrompt || "";
@@ -2224,6 +2283,7 @@ async function pollCreatorCloneDistillJob(jobId) {
   return pollCreatorCloneDistillJob(jobId);
 }
 
+// Creator Clone: distillation
 async function distillSelectedCreatorClone(options = {}) {
   const shouldConfirmReadiness = options.confirmReadiness !== false;
   const selected = selectedProfileItems();
@@ -2527,6 +2587,7 @@ preflightList?.addEventListener("click", async (event) => {
   }
 });
 
+// Single Work
 async function runSingleValue(value) {
   singleButton.disabled = true;
   singleButton.textContent = "解析中...";
@@ -2581,6 +2642,12 @@ profileHandoffFile?.addEventListener("change", async () => {
   await readHandoffManifestFile(profileHandoffFile.files?.[0]);
 });
 
+profileImportModeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setActiveImportMode(button.dataset.profileImportMode || "browser");
+  });
+});
+
 profileBrowserHelperButton.addEventListener("click", async () => {
   await scanProfileWithLocalChrome();
 });
@@ -2608,6 +2675,25 @@ profileResultsBody.addEventListener("change", (event) => {
     }
     updateCreatorCloneSelectionStatus();
   }
+});
+
+profileResultsBody.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-profile-select-action]");
+  if (!button) {
+    return;
+  }
+  const key = button.dataset.profileSelectAction || "";
+  if (!key) {
+    return;
+  }
+  profileSelectedKeys.add(key);
+  document.querySelectorAll("[data-profile-select]").forEach((input) => {
+    if (input.value === key) {
+      input.checked = true;
+    }
+  });
+  updateCreatorCloneSelectionStatus();
+  profileScanStatus.textContent = "已加入本轮样本篮。";
 });
 
 profileSelectionBasket?.addEventListener("click", (event) => {
