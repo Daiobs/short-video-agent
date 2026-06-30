@@ -276,6 +276,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "3. 富化证据" in response.text
     assert "4. 大模型蒸馏" in response.text
     assert "5. 导出规则" in response.text
+    assert 'id="creator-clone-next-bar"' in response.text
+    assert 'id="creator-clone-current-step"' in response.text
+    assert 'id="creator-clone-next-summary"' in response.text
+    assert 'id="creator-clone-next-button"' in response.text
+    assert "当前步骤：导入素材" in response.text
+    assert "下一步：开始采集素材" in response.text
+    assert "高级操作" in response.text
     assert "粘贴作品链接" in response.text
     assert 'id="profile-scan-button"' in response.text
     assert 'id="profile-sort"' in response.text
@@ -295,7 +302,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "JSON / CSV 导入" in response.text
     assert "已有 Case 导入" in response.text
     assert "高级 / 安全交接包" in response.text
-    assert "导入交接包" in response.text
+    assert "handoff_manifest.json" in response.text
     assert 'id="profile-handoff-file"' in response.text
     assert 'accept=".json,application/json"' in response.text
     assert 'id="profile-handoff-manifest"' in response.text
@@ -304,7 +311,8 @@ def test_home_uses_versioned_static_assets() -> None:
     public_section = response.text[
         response.text.index('id="profile-public-section"') : response.text.index('id="profile-manual-section"')
     ]
-    assert 'id="profile-browser-helper-button"' in public_section
+    assert 'id="profile-browser-helper-button"' not in public_section
+    assert "公开主页扫描（实验）" not in public_section
     assert 'id="profile-chrome-status"' in public_section
     assert "主页 URL / sec_user_id" in public_section
     assert "插件辅助采集" in response.text
@@ -325,6 +333,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-continue-chrome-button"' in response.text
     assert "本机 Chrome 辅助状态：尚未检测" in response.text
     assert "本地文件导入（后续接入）" in response.text
+    assert "手动调整样本" in response.text
     assert "全选" in response.text
     assert "推荐组合" in response.text
     assert "高赞 Top 3" in response.text
@@ -341,19 +350,20 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "启动 Chrome" not in response.text
     assert "复制启动命令" not in response.text
     assert "清理辅助 Profile" not in response.text
-    assert "导入链接" in response.text
-    assert "导入列表" in response.text
-    assert "导入 Case" in response.text
-    assert "summary-actions" in response.text
+    assert "导入链接" not in response.text
+    assert "导入列表" not in response.text
+    assert "导入 Case</button>" not in response.text
     assert "toolbar-actions summary-actions" not in response.text
     assert 'data-profile-source="public"' in response.text
-    assert 'data-profile-source="manual"' in response.text
-    assert 'data-profile-source="structured"' in response.text
-    assert 'data-profile-source="handoff"' in response.text
-    assert 'data-profile-source="case"' in response.text
+    assert 'data-profile-import-mode="manual"' in response.text
+    assert 'data-profile-import-mode="structured"' in response.text
+    assert 'data-profile-import-mode="handoff"' in response.text
+    assert 'data-profile-import-mode="case"' in response.text
     assert 'data-profile-import="' not in response.text
     assert 'data-profile-build="' not in response.text
     assert 'id="profile-selected-import-button"' not in response.text
+    assert "素材明细" in response.text
+    assert response.text.index("素材明细") < response.text.index("<th>选择</th>")
     assert "<th>选择</th>" in response.text
     assert "<th>素材</th>" in response.text
     assert "<th>类型</th>" in response.text
@@ -380,6 +390,27 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "大模型蒸馏" in response.text
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     script = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert "function getCreatorCloneStage" in script
+    assert "function renderCreatorCloneNextAction" in script
+    assert "function runCreatorCloneNextAction" in script
+    assert "function runCreatorCloneImportStep" in script
+    assert "function useRecommendedProfileSamples" in script
+    assert "creatorCloneExportActions.open = true" in script
+    assert "下一步：使用推荐样本继续" in script
+    assert "下一步：确认样本并富化" in script
+    assert "下一步：开始大模型蒸馏" in script
+    assert "下一步：下载报告" in script
+    assert "dataset.creatorCloneAction" in script
+    assert "ready_for_profile_scan" in script
+    assert "setActiveImportMode(\"manual\")" in script
+    assert "profileManualLinks?.focus()" in script
+    assert "recommendedProfileSampleMix" in script
+    assert ".creator-clone-next-bar" in stylesheet
+    assert ".primary-cta" in stylesheet
+    assert ".advanced-action-list" in stylesheet
+    assert ".manual-sample-adjustments" in stylesheet
+    assert ".profile-material-details" in stylesheet
+    assert response.text.count("primary-cta") == 1
     assert "// Settings" in script
     assert "// Single Work" in script
     assert "// Creator Clone: import" in script
@@ -8071,6 +8102,10 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "主页 URL / sec_user_id" in response.text
     assert "浏览器辅助采集" in response.text
     assert "插件辅助采集" in response.text
+    assert "下一步：开始采集素材" in response.text
+    assert "高级操作" in response.text
+    assert "手动调整样本" in response.text
+    assert "素材明细" in response.text
     assert "主页扫描</button>" not in response.text
     assert "不登录、不使用 Cookie" in response.text
     assert "不绕验证码、不绕风控" in response.text
@@ -8084,6 +8119,7 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "大模型蒸馏" in response.text
     assert "creator-clone-distill-button" in response.text
     assert "报告文件" in response.text
+    assert 'id="creator-clone-export-actions"' in response.text
     assert "复制规则" in response.text
     assert "下载报告" in response.text
     script = Path("app/static/app.js").read_text(encoding="utf-8")

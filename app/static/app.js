@@ -43,6 +43,11 @@ const profileForm = document.getElementById("profile-form");
 // Creator Clone: import
 const profileImportModeButtons = Array.from(document.querySelectorAll("[data-profile-import-mode]"));
 const profileImportPanels = Array.from(document.querySelectorAll("[data-profile-import-panel]"));
+const creatorCloneFlowSteps = Array.from(document.querySelectorAll(".profile-main-flow span"));
+const creatorCloneCurrentStep = document.getElementById("creator-clone-current-step");
+const creatorCloneNextSummary = document.getElementById("creator-clone-next-summary");
+const creatorCloneNextButton = document.getElementById("creator-clone-next-button");
+const creatorCloneRecommendation = document.getElementById("creator-clone-recommendation");
 const profilePublicSection = document.getElementById("profile-public-section");
 const profileSort = document.getElementById("profile-sort");
 const profileEvidenceFilter = document.getElementById("profile-evidence-filter");
@@ -84,6 +89,7 @@ const profileDistillReadinessStatus = document.getElementById("profile-distill-r
 const creatorCloneResultCard = document.getElementById("creator-clone-result-card");
 const creatorCloneResult = document.getElementById("creator-clone-result");
 const creatorCloneConfidence = document.getElementById("creator-clone-confidence");
+const creatorCloneExportActions = document.getElementById("creator-clone-export-actions");
 const copyCreatorCloneSpecButton = document.getElementById("copy-creator-clone-spec-button");
 const copyDistillPromptButton = document.getElementById("copy-distill-prompt-button");
 const downloadCreatorCloneJson = document.getElementById("download-creator-clone-json");
@@ -407,10 +413,112 @@ function setActiveImportMode(mode = "browser") {
   profileImportPanels.forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.profileImportPanel === activeMode);
   });
+  renderCreatorCloneNextAction();
+}
+
+function activeProfileImportMode() {
+  return profileImportModeButtons.find((button) => button.classList.contains("active"))?.dataset.profileImportMode || "browser";
 }
 
 function isProfileItemBuildable(item) {
   return Boolean(item?.aweme_id) && item?.can_build_case !== false && !["image", "text"].includes(item?.media_type || "");
+}
+
+function hasPendingEnrichment(items = selectedProfileItems()) {
+  return normalizeItems(items).some((item) => isProfileItemBuildable(item) && !item.case_id && !item.has_frames);
+}
+
+function getCreatorCloneStage() {
+  if (currentCreatorCloneResult) {
+    return "export";
+  }
+  if (!profileItems.length) {
+    return "import";
+  }
+  const selected = selectedProfileItems();
+  if (!selected.length) {
+    return "select";
+  }
+  if (hasPendingEnrichment(selected)) {
+    return "enrich";
+  }
+  return "distill";
+}
+
+function creatorCloneStageMeta(stage = getCreatorCloneStage()) {
+  const selected = selectedProfileItems();
+  const recommended = recommendedProfileSampleMix();
+  const buildable = selected.filter(isProfileItemBuildable);
+  const labels = {
+    import: {
+      step: "当前步骤：导入素材",
+      button: "下一步：开始采集素材",
+      summary: "请先选择导入方式并准备素材来源。",
+    },
+    select: {
+      step: "当前步骤：选择样本",
+      button: "下一步：使用推荐样本继续",
+      summary: `已导入 ${formatNumber(profileItems.length)} 条素材，系统已推荐 ${formatNumber(recommended.length)} 条样本。`,
+    },
+    enrich: {
+      step: "当前步骤：富化证据",
+      button: "下一步：确认样本并富化",
+      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
+    },
+    distill: {
+      step: "当前步骤：大模型蒸馏",
+      button: "下一步：开始大模型蒸馏",
+      summary: `已选择 ${formatNumber(selected.length)} 条样本，当前证据可进入蒸馏。`,
+    },
+    export: {
+      step: "当前步骤：导出规则",
+      button: "下一步：下载报告",
+      summary: "创作者克隆报告已生成，可下载报告或复制规则继续使用。",
+    },
+  };
+  return labels[stage] || labels.import;
+}
+
+function renderCreatorCloneRecommendation() {
+  if (!creatorCloneRecommendation) {
+    return;
+  }
+  if (!profileItems.length) {
+    creatorCloneRecommendation.textContent = "导入素材后，系统会推荐高赞 / 高评 / 高分享 / 最新 / 低表现混合样本。";
+    return;
+  }
+  const recommended = recommendedProfileSampleMix();
+  const labelSet = new Set();
+  recommended.forEach((item) => {
+    selectedSampleReason(item).split("/").map((part) => part.trim()).filter(Boolean).forEach((part) => labelSet.add(part));
+  });
+  const labels = [...labelSet].slice(0, 5).join(" / ") || "综合表现";
+  creatorCloneRecommendation.textContent = `系统已推荐 ${formatNumber(recommended.length)} 条样本：${labels} 混合。点击主按钮即可使用推荐样本继续。`;
+}
+
+function renderCreatorCloneNextAction() {
+  const stage = getCreatorCloneStage();
+  const meta = creatorCloneStageMeta(stage);
+  const flowIndex = {import: 0, select: 1, enrich: 2, distill: 3, export: 4}[stage] || 0;
+  creatorCloneFlowSteps.forEach((step, index) => {
+    step.classList.toggle("active", index === flowIndex);
+    step.classList.toggle("completed", index < flowIndex);
+  });
+  if (creatorCloneCurrentStep) {
+    creatorCloneCurrentStep.textContent = meta.step;
+  }
+  if (creatorCloneNextSummary) {
+    creatorCloneNextSummary.textContent = meta.summary;
+  }
+  if (profileNextAction) {
+    profileNextAction.textContent = meta.step;
+  }
+  if (creatorCloneNextButton) {
+    creatorCloneNextButton.textContent = meta.button;
+    creatorCloneNextButton.dataset.creatorCloneAction = stage;
+    creatorCloneNextButton.disabled = stage === "select" && !recommendedProfileSampleMix().length;
+  }
+  renderCreatorCloneRecommendation();
 }
 
 // Creator Clone: sample pool
@@ -420,16 +528,7 @@ function setCreatorCloneStep(step = "import") {
   const canDistill = hasSelected && selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES;
   profileEnrichmentSection?.classList.toggle("hidden", !hasSelected);
   profileDistillationSection?.classList.toggle("hidden", !canDistill);
-  if (profileNextAction) {
-    const label = {
-      import: "下一步：导入素材",
-      select: "下一步：选择样本",
-      enrich: "下一步：富化证据",
-      distill: "下一步：大模型蒸馏",
-      export: "下一步：导出规则",
-    }[step] || "下一步：选择样本";
-    profileNextAction.textContent = label;
-  }
+  renderCreatorCloneNextAction();
 }
 
 function renderCreatorCloneOverview(summary = {}) {
@@ -893,6 +992,9 @@ function renderProfileSegmentColumn(title, metricKey, items, preset) {
 
 function renderProfileResults(payload) {
   profileScanPayload = payload;
+  currentCreatorCloneResult = null;
+  currentDistillPrompt = "";
+  creatorCloneResultCard?.classList.add("hidden");
   const cloneSet = payload.set || null;
   currentCloneSetId = cloneSet?.set_id || "";
   profileItems = normalizeItems(payload.items || cloneSet?.samples);
@@ -1161,8 +1263,9 @@ function requireProfileChromeConfirmation() {
   if (!profileChromeConfirm || profileChromeConfirm.checked) {
     return true;
   }
-  if (profilePublicSection) {
-    profilePublicSection.open = true;
+  const advanced = profileChromeConfirm.closest("details");
+  if (advanced) {
+    advanced.open = true;
   }
   profileScanStatus.textContent = "请先勾选本次辅助采集确认：请求由本机 Chrome / 本机 IP 发起，只读取页面可见作品列表和元数据，不读取 Cookie。";
   return false;
@@ -1373,6 +1476,7 @@ async function scanProfile(sourceMode = "public") {
     }
   } finally {
     profileScanButton.disabled = false;
+    renderCreatorCloneNextAction();
   }
 }
 
@@ -1506,6 +1610,7 @@ async function scanProfileWithLocalChrome(options = {}) {
     profileBrowserHelperButton.disabled = false;
     resetProfileChromeConfirmation();
     updateProfileChromeContinueButton();
+    renderCreatorCloneNextAction();
   }
 }
 
@@ -1527,6 +1632,69 @@ async function readHandoffManifestFile(file) {
     profileScanStatus.textContent = `已读取 ${file.name || "handoff_manifest.json"}，可点击“导入交接包”。`;
   } catch (error) {
     profileScanStatus.textContent = "HANDOFF_MANIFEST_INVALID：handoff_manifest.json 不是合法 JSON。";
+  }
+}
+
+async function runCreatorCloneImportStep() {
+  const mode = activeProfileImportMode();
+  if (mode === "browser") {
+    let status = null;
+    try {
+      status = await loadChromeHelperStatus({silent: true});
+    } catch (error) {
+      status = null;
+    }
+    if (status?.ready_for_profile_scan) {
+      await scanProfileWithLocalChrome();
+      return;
+    }
+    await scanProfile("public");
+    if (!profileItems.length) {
+      setActiveImportMode("manual");
+      profileManualLinks?.focus();
+      profileScanStatus.textContent = profileScanStatus.textContent || "公开主页扫描未得到素材，请改用粘贴作品链接继续。";
+    }
+    return;
+  }
+  const sourceMode = {manual: "manual", structured: "structured", case: "case", handoff: "handoff"}[mode] || "manual";
+  await scanProfile(sourceMode);
+}
+
+function useRecommendedProfileSamples() {
+  const recommended = recommendedProfileSampleMix();
+  if (!recommended.length) {
+    profileScanStatus.textContent = "当前素材池还没有可推荐样本，请展开“手动调整样本”自行选择。";
+    return;
+  }
+  setProfileSelection(recommended);
+  profileScanStatus.textContent = `已使用推荐样本继续：${recommended.length} 条。`;
+  (profileSelectionBasket || profileEnrichmentSection || profileResultsCard)?.scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+async function runCreatorCloneNextAction() {
+  const stage = getCreatorCloneStage();
+  if (stage === "import") {
+    await runCreatorCloneImportStep();
+    return;
+  }
+  if (stage === "select") {
+    useRecommendedProfileSamples();
+    return;
+  }
+  if (stage === "enrich") {
+    await buildSelectedProfileQueue();
+    return;
+  }
+  if (stage === "distill") {
+    await distillSelectedCreatorClone();
+    return;
+  }
+  if (stage === "export") {
+    if (downloadCreatorCloneMd?.href && downloadCreatorCloneMd.href !== "#") {
+      window.open(downloadCreatorCloneMd.href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
   }
 }
 
@@ -2188,6 +2356,9 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
   currentCreatorCloneResult = result || null;
   currentDistillPrompt = prompt || currentDistillPrompt || "";
   creatorCloneResultCard.classList.remove("hidden");
+  if (creatorCloneExportActions) {
+    creatorCloneExportActions.open = true;
+  }
   creatorCloneResultCard.scrollIntoView({behavior: "smooth", block: "start"});
   const overview = result?.sample_overview || creatorCloneOverviewFromSet(set);
   creatorCloneConfidence.textContent = overview.confidence || (result ? "distilled" : "prompt only");
@@ -2206,6 +2377,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
       ${renderCreatorCloneEvidenceOverview(overview)}
       <pre class="prompt-preview">${escapeHtml(currentDistillPrompt.slice(0, 3000))}</pre>
     `;
+    renderCreatorCloneNextAction();
     return;
   }
   const positioning = result.creator_positioning || {};
@@ -2248,6 +2420,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
       `)}
     </div>
   `;
+  renderCreatorCloneNextAction();
 }
 
 function applyCreatorCloneDistillPayload(payload) {
@@ -2650,6 +2823,15 @@ profileImportModeButtons.forEach((button) => {
   });
 });
 
+creatorCloneNextButton?.addEventListener("click", async () => {
+  creatorCloneNextButton.disabled = true;
+  try {
+    await runCreatorCloneNextAction();
+  } finally {
+    renderCreatorCloneNextAction();
+  }
+});
+
 profileBrowserHelperButton.addEventListener("click", async () => {
   await scanProfileWithLocalChrome();
 });
@@ -2983,4 +3165,5 @@ downloadHomeAnalysisInputButton.addEventListener("click", () => {
 
 loadLlmStatus();
 loadPreflightStatus().catch(() => {});
+renderCreatorCloneNextAction();
 setHomeRoute(routeFromHash(), false);
