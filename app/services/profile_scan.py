@@ -19,6 +19,7 @@ from app.providers.profile_base import (
     sorted_profile_items,
 )
 from app.services.douyin_url_parser import extract_aweme_id, extract_first_url
+from app.services.runtime_settings import effective_douyin_settings
 
 
 PROFILE_URL_RE = re.compile(r"https?://(?:www\.)?douyin\.com/[^\s]+", re.I)
@@ -180,6 +181,93 @@ class DouyinPublicProfileProvider:
         return result
 
 
+class DouyinCookieProfileProvider:
+    name = "cookie_api"
+    endpoint = "https://www.douyin.com/aweme/v1/web/user/post/"
+
+    def scan(self, request: ProfileScanRequest) -> ProfileScanResult:
+        douyin_settings = effective_douyin_settings()
+        if not (douyin_settings["cookie"] or "").strip():
+            raise AppError(ErrorCode.COOKIE_REQUIRED, "Cookie API 增强层未配置 DOUYIN_COOKIE。")
+        profile_url = normalize_profile_url(request.profile_url, request.sec_user_id)
+        sec_user_id = extract_sec_user_id(profile_url, request.sec_user_id)
+        if not sec_user_id:
+            raise AppError(ErrorCode.SEC_USER_ID_NOT_FOUND)
+
+        headers = {
+            "User-Agent": douyin_settings["user_agent"] or _default_douyin_user_agent(),
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": douyin_settings["referer"] or profile_url,
+            "Cookie": douyin_settings["cookie"],
+        }
+        items: list[ProfileVideoItem] = []
+        seen: set[str] = set()
+        max_cursor = "0"
+        has_more = False
+        max_pages = max(1, min(int(request.max_pages or settings.profile_scan_max_pages), 5))
+        count = _safe_count(request.count)
+        page_count = max(1, min(count, settings.profile_scan_count_per_page or 20, 50))
+        try:
+            with httpx.Client(timeout=8.0, follow_redirects=False, trust_env=False) as client:
+                for _ in range(max_pages):
+                    response = client.get(
+                        self.endpoint,
+                        params={
+                            "sec_user_id": sec_user_id,
+                            "max_cursor": max_cursor,
+                            "count": page_count,
+                            "aid": "6383",
+                            "device_platform": "webapp",
+                        },
+                        headers=headers,
+                    )
+                    if response.status_code in {401, 403}:
+                        raise AppError(ErrorCode.COOKIE_INVALID, "Cookie API 返回未授权或禁止访问。")
+                    if response.status_code == 429:
+                        raise AppError(ErrorCode.DOUYIN_RISK_CONTROL, "Cookie API 返回限流或风控。")
+                    if response.status_code >= 400:
+                        raise AppError(ErrorCode.PROFILE_SCAN_FAILED, f"Cookie API 请求失败：HTTP {response.status_code}。")
+                    payload = _json_response(response)
+                    raw_items = payload.get("aweme_list") or payload.get("awemeList") or []
+                    if not isinstance(raw_items, list):
+                        raise AppError(ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED, "Cookie API 返回结构缺少 aweme_list。")
+                    for raw_item in raw_items:
+                        if not isinstance(raw_item, dict):
+                            continue
+                        item = normalize_profile_video_item(raw_item, sec_user_id=sec_user_id)
+                        if not item or item.aweme_id in seen:
+                            continue
+                        item.source_provider = self.name
+                        seen.add(item.aweme_id)
+                        items.append(item)
+                    has_more = bool(payload.get("has_more") or payload.get("hasMore"))
+                    max_cursor = str(payload.get("max_cursor") or payload.get("maxCursor") or "")
+                    if not has_more or len(items) >= count:
+                        break
+        except AppError:
+            raise
+        except httpx.HTTPError as error:
+            raise AppError(ErrorCode.PROFILE_SCAN_FAILED, f"Cookie API 请求失败：{str(error)[:160]}") from error
+
+        if not items:
+            raise AppError(ErrorCode.EMPTY_AWEME_LIST, "Cookie API 没有返回可解析作品。")
+
+        sorted_items = sorted_profile_items(items[:count], request.sort_by)
+        result = ProfileScanResult(
+            provider=self.name,
+            profile_url=profile_url,
+            sec_user_id=sec_user_id,
+            items=sorted_items,
+            has_more=has_more or len(items) > len(sorted_items),
+            next_cursor=max_cursor,
+            warnings=[
+                "Cookie API 是可选增强层，只用于提高公开 Web API 成功率；Cookie 不会写入素材包、prompt 或日志。",
+            ],
+        )
+        result.summary = build_profile_summary(result)
+        return result
+
+
 class ExternalApiProfileProvider:
     name = "external_api"
 
@@ -192,8 +280,67 @@ class ExternalApiProfileProvider:
         )
 
 
+class DataSourceManager:
+    source_ids = ("manual_links", "browser_dom", "cookie_api", "external_api")
+
+    def __init__(self) -> None:
+        self.manual_provider = ManualLinksProfileProvider()
+        self.structured_provider = StructuredItemsProfileProvider()
+        self.cookie_provider = DouyinCookieProfileProvider()
+        self.public_provider = DouyinPublicProfileProvider()
+        self.external_provider = ExternalApiProfileProvider()
+
+    def supported_sources(self) -> tuple[str, ...]:
+        return self.source_ids
+
+    def scan(self, request: ProfileScanRequest) -> ProfileScanResult:
+        normalized = normalize_profile_scan_request(request)
+        if normalized.manual_links:
+            return self.manual_provider.scan(normalized)
+        if normalized.structured_items:
+            return self.structured_provider.scan(normalized)
+
+        provider_name = settings.profile_scan_provider or "public"
+        if provider_name == "external_api":
+            return self._scan_explicit_external(normalized)
+
+        failures: list[AppError] = []
+        if provider_name == "cookie_api" or bool((effective_douyin_settings()["cookie"] or "").strip()):
+            try:
+                return self._finalize(self.cookie_provider.scan(normalized), normalized, failures)
+            except AppError as error:
+                failures.append(error)
+
+        try:
+            return self._finalize(self.public_provider.scan(normalized), normalized, failures)
+        except AppError as error:
+            if failures:
+                error.message = f"{error.message} Cookie API 增强也未成功：{_failure_summary(failures)}。"
+            raise
+
+    def _scan_explicit_external(self, request: ProfileScanRequest) -> ProfileScanResult:
+        result = self.external_provider.scan(request)
+        return self._finalize(result, request, [])
+
+    def _finalize(
+        self,
+        result: ProfileScanResult,
+        request: ProfileScanRequest,
+        failures: list[AppError],
+    ) -> ProfileScanResult:
+        result.items = sorted_profile_items(result.items, request.sort_by)
+        if failures:
+            result.warnings.extend(f"增强数据源失败：{error.code}：{error.message}" for error in failures)
+        result.summary = build_profile_summary(result)
+        return result
+
+
 def scan_profile(request: ProfileScanRequest) -> ProfileScanResult:
-    normalized = ProfileScanRequest(
+    return DataSourceManager().scan(request)
+
+
+def normalize_profile_scan_request(request: ProfileScanRequest) -> ProfileScanRequest:
+    return ProfileScanRequest(
         profile_url=(request.profile_url or "").strip() or None,
         sec_user_id=(request.sec_user_id or "").strip() or None,
         manual_links=(request.manual_links or "").strip() or None,
@@ -202,20 +349,6 @@ def scan_profile(request: ProfileScanRequest) -> ProfileScanResult:
         max_pages=max(1, min(int(request.max_pages or settings.profile_scan_max_pages), 5)),
         sort_by=request.sort_by or "like_count",
     )
-    if normalized.manual_links:
-        return ManualLinksProfileProvider().scan(normalized)
-    if normalized.structured_items:
-        return StructuredItemsProfileProvider().scan(normalized)
-
-    provider_name = settings.profile_scan_provider or "public"
-    if provider_name == "external_api":
-        provider = ExternalApiProfileProvider()
-    else:
-        provider = DouyinPublicProfileProvider()
-    result = provider.scan(normalized)
-    result.items = sorted_profile_items(result.items, normalized.sort_by)
-    result.summary = build_profile_summary(result)
-    return result
 
 
 def extract_aweme_id_or_short_url(value: str) -> str:
@@ -601,6 +734,27 @@ def _balanced_json_near_marker(text: str, marker: str) -> str:
             if depth == 0:
                 return text[start : index + 1]
     return ""
+
+
+def _json_response(response: httpx.Response) -> dict:
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise AppError(ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED, "Cookie API 返回非 JSON。") from error
+    if not isinstance(payload, dict):
+        raise AppError(ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED, "Cookie API 返回不是 JSON object。")
+    return payload
+
+
+def _default_douyin_user_agent() -> str:
+    return (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    )
+
+
+def _failure_summary(errors: list[AppError]) -> str:
+    return "；".join(f"{error.code}" for error in errors[:3])
 
 
 def _first_url(value) -> str:

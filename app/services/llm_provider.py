@@ -14,6 +14,7 @@ from PIL import Image, ImageOps
 
 from app.config import settings
 from app.errors import AppError, ErrorCode
+from app.services.runtime_settings import effective_llm_settings
 
 
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -35,13 +36,14 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         temperature: float | None = None,
         max_output_tokens: int | None = None,
     ) -> None:
-        self.api_base = (api_base or settings.llm_api_base).rstrip("/")
-        self.api_key = api_key if api_key is not None else settings.llm_api_key
-        self.model = model or settings.llm_model
-        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
-        self.temperature = temperature if temperature is not None else settings.llm_temperature
+        effective = effective_llm_settings()
+        self.api_base = (api_base or effective["api_base"]).rstrip("/")
+        self.api_key = api_key if api_key is not None else effective["api_key"]
+        self.model = model or effective["model"]
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
+        self.temperature = temperature if temperature is not None else effective["temperature"]
         self.max_output_tokens = (
-            max_output_tokens if max_output_tokens is not None else settings.llm_max_output_tokens
+            max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
@@ -160,13 +162,14 @@ class OpenAIResponsesProvider(BaseLLMProvider):
         temperature: float | None = None,
         max_output_tokens: int | None = None,
     ) -> None:
-        self.api_base = (api_base or settings.llm_api_base).rstrip("/")
-        self.api_key = api_key if api_key is not None else settings.llm_api_key
-        self.model = model or settings.llm_model
-        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
-        self.temperature = temperature if temperature is not None else settings.llm_temperature
+        effective = effective_llm_settings()
+        self.api_base = (api_base or effective["api_base"]).rstrip("/")
+        self.api_key = api_key if api_key is not None else effective["api_key"]
+        self.model = model or effective["model"]
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
+        self.temperature = temperature if temperature is not None else effective["temperature"]
         self.max_output_tokens = (
-            max_output_tokens if max_output_tokens is not None else settings.llm_max_output_tokens
+            max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
@@ -191,10 +194,22 @@ class OpenAIResponsesProvider(BaseLLMProvider):
         }
         if self.max_output_tokens:
             payload["max_output_tokens"] = self.max_output_tokens
+        endpoint = f"{self.api_base}/responses"
+        started_at = time.monotonic()
+        image_bytes = _image_bytes(image_paths)
+        logger.info(
+            "llm_request_start provider=openai_responses model=%s endpoint=%s prompt_chars=%s image_count=%s image_bytes=%s timeout=%s",
+            self.model,
+            endpoint,
+            len(prompt),
+            len([path for path in image_paths if path.is_file()]),
+            image_bytes,
+            self.timeout_seconds,
+        )
         try:
             with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
                 response = client.post(
-                    f"{self.api_base}/responses",
+                    endpoint,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
@@ -202,13 +217,52 @@ class OpenAIResponsesProvider(BaseLLMProvider):
                     json=payload,
                 )
             if response.status_code >= 400:
-                raise AppError(ErrorCode.LLM_REQUEST_FAILED, f"大模型 API 返回 HTTP {response.status_code}。")
-            return parse_json_text(_responses_output_text(response.json()))
+                logger.warning(
+                    "llm_request_failed provider=openai_responses model=%s status=%s duration_ms=%s response_preview=%s",
+                    self.model,
+                    response.status_code,
+                    _duration_ms(started_at),
+                    _response_preview(response),
+                )
+                raise AppError(
+                    ErrorCode.LLM_REQUEST_FAILED,
+                    f"大模型 API 返回 HTTP {response.status_code}：{_response_preview(response)}",
+                )
+            data = _response_json(response, "openai_responses")
+            output_text = _responses_output_text(data)
+            try:
+                result = parse_json_text(output_text)
+            except AppError as error:
+                raise AppError(
+                    error.code,
+                    f"Responses 模型输出不是合法 JSON：{_text_preview(output_text)}",
+                ) from error
+            logger.info(
+                "llm_request_success provider=openai_responses model=%s duration_ms=%s prompt_chars=%s image_count=%s image_bytes=%s",
+                self.model,
+                _duration_ms(started_at),
+                len(prompt),
+                len([path for path in image_paths if path.is_file()]),
+                image_bytes,
+            )
+            return result
         except AppError:
             raise
         except httpx.TimeoutException as error:
+            logger.warning(
+                "llm_request_timeout provider=openai_responses model=%s duration_ms=%s timeout=%s",
+                self.model,
+                _duration_ms(started_at),
+                self.timeout_seconds,
+            )
             raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 请求超时。") from error
         except Exception as error:
+            logger.warning(
+                "llm_request_error provider=openai_responses model=%s error_type=%s duration_ms=%s",
+                self.model,
+                type(error).__name__,
+                _duration_ms(started_at),
+            )
             raise AppError(ErrorCode.LLM_REQUEST_FAILED, str(error)[:500]) from error
 
 
@@ -222,13 +276,14 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
         temperature: float | None = None,
         max_output_tokens: int | None = None,
     ) -> None:
-        self.api_base = (api_base or settings.llm_api_base).rstrip("/")
-        self.api_key = api_key if api_key is not None else settings.llm_api_key
-        self.model = model or settings.llm_model
-        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
-        self.temperature = temperature if temperature is not None else settings.llm_temperature
+        effective = effective_llm_settings()
+        self.api_base = (api_base or effective["api_base"]).rstrip("/")
+        self.api_key = api_key if api_key is not None else effective["api_key"]
+        self.model = model or effective["model"]
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
+        self.temperature = temperature if temperature is not None else effective["temperature"]
         self.max_output_tokens = (
-            max_output_tokens if max_output_tokens is not None else settings.llm_max_output_tokens
+            max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
@@ -275,15 +330,17 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
 
 
 def get_llm_provider() -> BaseLLMProvider:
-    if settings.llm_provider in {"", "disabled", "none", "off"}:
+    effective = effective_llm_settings()
+    provider = effective["provider"]
+    if provider in {"", "disabled", "none", "off"}:
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
-    if settings.llm_provider in {"openai", "openai_compatible", "compatible"}:
+    if provider in {"openai", "openai_compatible", "compatible"}:
         return OpenAICompatibleProvider()
-    if settings.llm_provider in {"openai_responses", "responses"}:
+    if provider in {"openai_responses", "responses"}:
         return OpenAIResponsesProvider()
-    if settings.llm_provider in {"anthropic", "anthropic_compatible", "claude"}:
+    if provider in {"anthropic", "anthropic_compatible", "claude"}:
         return AnthropicCompatibleProvider()
-    raise AppError(ErrorCode.LLM_NOT_CONFIGURED, f"不支持的 LLM_PROVIDER：{settings.llm_provider}")
+    raise AppError(ErrorCode.LLM_NOT_CONFIGURED, f"不支持的 LLM_PROVIDER：{provider}")
 
 
 def parse_json_text(text: str) -> dict:
@@ -363,12 +420,13 @@ def _optimized_image_payload(path: Path) -> tuple[str, bytes]:
             image = ImageOps.exif_transpose(image)
             if image.mode not in {"RGB", "L"}:
                 image = image.convert("RGB")
-            max_width = max(320, int(settings.llm_image_max_width or 1280))
+            effective = effective_llm_settings()
+            max_width = max(320, int(effective["image_max_width"] or 1280))
             if image.width > max_width:
                 ratio = max_width / image.width
                 image = image.resize((max_width, max(1, int(image.height * ratio))), Image.Resampling.LANCZOS)
             output = BytesIO()
-            quality = min(95, max(40, int(settings.llm_image_jpeg_quality or 72)))
+            quality = min(95, max(40, int(effective["image_jpeg_quality"] or 72)))
             image.save(output, format="JPEG", quality=quality, optimize=True)
             return "image/jpeg", output.getvalue()
     except Exception:
@@ -424,6 +482,31 @@ def _response_format_may_be_unsupported(response: httpx.Response) -> bool:
     except Exception:
         return False
     return response.status_code in {400, 422} and "response_format" in body
+
+
+def _response_json(response: httpx.Response, provider: str) -> dict:
+    try:
+        data = response.json()
+    except ValueError as error:
+        raise AppError(
+            ErrorCode.LLM_REQUEST_FAILED,
+            f"{provider} 响应不是 JSON：{_response_preview(response)}",
+        ) from error
+    if not isinstance(data, dict):
+        raise AppError(ErrorCode.LLM_RESPONSE_INVALID, f"{provider} 响应不是 JSON object。")
+    return data
+
+
+def _response_preview(response: httpx.Response, limit: int = 220) -> str:
+    text = response.text or ""
+    return _text_preview(text, limit=limit)
+
+
+def _text_preview(text: str, limit: int = 220) -> str:
+    cleaned = " ".join((text or "").split())
+    if not cleaned:
+        return "<empty>"
+    return cleaned[:limit]
 
 
 def _responses_output_text(data: dict) -> str:

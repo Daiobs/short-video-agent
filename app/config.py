@@ -43,6 +43,8 @@ class Settings:
         f"sqlite:///{(PROJECT_ROOT / 'short_video_agent.db').as_posix()}",
     )
     douyin_cookie: str = os.getenv("DOUYIN_COOKIE", "")
+    douyin_user_agent: str = os.getenv("DOUYIN_USER_AGENT", "").strip()
+    douyin_referer: str = os.getenv("DOUYIN_REFERER", "https://www.douyin.com/").strip()
     max_video_size_mb: int = _int_env("MAX_VIDEO_SIZE_MB", 500)
     allowed_cdn_hosts: tuple[str, ...] = tuple(
         host.strip().lower()

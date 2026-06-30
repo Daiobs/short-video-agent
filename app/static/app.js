@@ -14,11 +14,30 @@ const analysisStatus = document.getElementById("analysis-status");
 const llmStatusBadge = document.getElementById("llm-status-badge");
 const llmStatusList = document.getElementById("llm-status-list");
 const llmConfigHint = document.getElementById("llm-config-hint");
+const llmSettingsForm = document.getElementById("llm-settings-form");
+const llmProviderInput = document.getElementById("llm-provider-input");
+const llmApiBaseInput = document.getElementById("llm-api-base-input");
+const llmModelInput = document.getElementById("llm-model-input");
+const llmApiKeyInput = document.getElementById("llm-api-key-input");
+const llmTimeoutInput = document.getElementById("llm-timeout-input");
+const llmTemperatureInput = document.getElementById("llm-temperature-input");
+const llmClearKeyInput = document.getElementById("llm-clear-key-input");
+const saveLlmSettingsButton = document.getElementById("save-llm-settings-button");
+const llmSaveResult = document.getElementById("llm-save-result");
 const testLlmButton = document.getElementById("test-llm-button");
 const llmTestResult = document.getElementById("llm-test-result");
 const refreshPreflightButton = document.getElementById("refresh-preflight-button");
 const preflightSummary = document.getElementById("preflight-summary");
 const preflightList = document.getElementById("preflight-list");
+const dataSourceStatusBadge = document.getElementById("data-source-status-badge");
+const dataSourceStatusList = document.getElementById("data-source-status-list");
+const douyinSettingsForm = document.getElementById("douyin-settings-form");
+const douyinCookieInput = document.getElementById("douyin-cookie-input");
+const douyinUserAgentInput = document.getElementById("douyin-user-agent-input");
+const douyinRefererInput = document.getElementById("douyin-referer-input");
+const douyinClearCookieInput = document.getElementById("douyin-clear-cookie-input");
+const saveDouyinSettingsButton = document.getElementById("save-douyin-settings-button");
+const douyinSaveResult = document.getElementById("douyin-save-result");
 const resultCard = document.getElementById("result-card");
 const caseSummary = document.getElementById("case-summary");
 const homeCaseView = document.getElementById("home-case-view");
@@ -43,6 +62,11 @@ const profileForm = document.getElementById("profile-form");
 // Creator Clone: import
 const profileImportModeButtons = Array.from(document.querySelectorAll("[data-profile-import-mode]"));
 const profileImportPanels = Array.from(document.querySelectorAll("[data-profile-import-panel]"));
+const creatorCloneFlowSteps = Array.from(document.querySelectorAll(".profile-main-flow span"));
+const creatorCloneCurrentStep = document.getElementById("creator-clone-current-step");
+const creatorCloneNextSummary = document.getElementById("creator-clone-next-summary");
+const creatorCloneNextButton = document.getElementById("creator-clone-next-button");
+const creatorCloneRecommendation = document.getElementById("creator-clone-recommendation");
 const profilePublicSection = document.getElementById("profile-public-section");
 const profileSort = document.getElementById("profile-sort");
 const profileEvidenceFilter = document.getElementById("profile-evidence-filter");
@@ -84,6 +108,7 @@ const profileDistillReadinessStatus = document.getElementById("profile-distill-r
 const creatorCloneResultCard = document.getElementById("creator-clone-result-card");
 const creatorCloneResult = document.getElementById("creator-clone-result");
 const creatorCloneConfidence = document.getElementById("creator-clone-confidence");
+const creatorCloneExportActions = document.getElementById("creator-clone-export-actions");
 const copyCreatorCloneSpecButton = document.getElementById("copy-creator-clone-spec-button");
 const copyDistillPromptButton = document.getElementById("copy-distill-prompt-button");
 const downloadCreatorCloneJson = document.getElementById("download-creator-clone-json");
@@ -128,6 +153,7 @@ let chromeHelperStatusLoaded = false;
 let profileLastChromeProfileValue = "";
 let profileChromeLaunchCommand = "";
 let profileChromeAvailable = false;
+let creatorCloneEnrichmentRunning = false;
 let preflightCopySnippets = [];
 
 function setStatus(element, value) {
@@ -355,6 +381,28 @@ function renderLlmStatus(llm) {
     </dl>
     <p class="muted compact-copy">${escapeHtml(llm.status_message || "")}</p>
   `;
+  if (llmProviderInput) {
+    llmProviderInput.value = llm.provider || "disabled";
+  }
+  if (llmApiBaseInput) {
+    llmApiBaseInput.value = llm.api_base || "";
+  }
+  if (llmModelInput) {
+    llmModelInput.value = llm.model || "";
+  }
+  if (llmTimeoutInput) {
+    llmTimeoutInput.value = llm.timeout_seconds || 90;
+  }
+  if (llmTemperatureInput) {
+    llmTemperatureInput.value = llm.temperature ?? 0.2;
+  }
+  if (llmApiKeyInput) {
+    llmApiKeyInput.value = "";
+    llmApiKeyInput.placeholder = llm.has_api_key ? `留空保留当前 Key（${llm.masked_api_key || "已配置"}）` : "粘贴 API Key";
+  }
+  if (llmClearKeyInput) {
+    llmClearKeyInput.checked = false;
+  }
 }
 
 function sortProfileItems(items, sortBy) {
@@ -407,10 +455,132 @@ function setActiveImportMode(mode = "browser") {
   profileImportPanels.forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.profileImportPanel === activeMode);
   });
+  renderCreatorCloneNextAction();
+}
+
+function activeProfileImportMode() {
+  return profileImportModeButtons.find((button) => button.classList.contains("active"))?.dataset.profileImportMode || "browser";
 }
 
 function isProfileItemBuildable(item) {
   return Boolean(item?.aweme_id) && item?.can_build_case !== false && !["image", "text"].includes(item?.media_type || "");
+}
+
+function hasPendingEnrichment(items = selectedProfileItems()) {
+  return normalizeItems(items).some((item) => isProfileItemBuildable(item) && !item.case_id && !item.has_frames);
+}
+
+function getWizardStep() {
+  if (currentCreatorCloneResult) {
+    return "EXPORT";
+  }
+  if (!profileItems.length) {
+    return "IMPORT";
+  }
+  const selected = selectedProfileItems();
+  if (creatorCloneEnrichmentRunning) {
+    return "ENRICH";
+  }
+  if (!selected.length) {
+    return "SAMPLE_POOL";
+  }
+  if (hasPendingEnrichment(selected)) {
+    return "SELECT";
+  }
+  return "DISTILL";
+}
+
+function getCreatorCloneStage() {
+  const step = getWizardStep();
+  return {
+    IMPORT: "import",
+    SAMPLE_POOL: "sample_pool",
+    SELECT: "select",
+    ENRICH: "enrich",
+    DISTILL: "distill",
+    EXPORT: "export",
+  }[step] || "import";
+}
+
+function creatorCloneStageMeta(stage = getCreatorCloneStage()) {
+  const selected = selectedProfileItems();
+  const recommended = recommendedProfileSampleMix();
+  const buildable = selected.filter(isProfileItemBuildable);
+  const labels = {
+    import: {
+      step: "当前步骤：导入素材",
+      button: "Start Creator Analysis",
+      summary: "粘贴作品链接或填写主页 URL 后，点击主按钮开始分析。",
+    },
+    sample_pool: {
+      step: "当前步骤：构建素材池",
+      button: "下一步：使用推荐样本继续",
+      summary: `已导入 ${formatNumber(profileItems.length)} 条素材，系统已推荐 ${formatNumber(recommended.length)} 条样本。`,
+    },
+    select: {
+      step: "当前步骤：选择 N 条样本",
+      button: "下一步：确认样本并富化",
+      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
+    },
+    enrich: {
+      step: "当前步骤：富化证据",
+      button: "下一步：确认样本并富化",
+      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
+    },
+    distill: {
+      step: "当前步骤：大模型蒸馏",
+      button: "下一步：开始大模型蒸馏",
+      summary: `已选择 ${formatNumber(selected.length)} 条样本，当前证据可进入蒸馏。`,
+    },
+    export: {
+      step: "当前步骤：导出规则",
+      button: "下一步：下载报告",
+      summary: "创作者克隆报告已生成，可下载报告或复制规则继续使用。",
+    },
+  };
+  return labels[stage] || labels.import;
+}
+
+function renderCreatorCloneRecommendation() {
+  if (!creatorCloneRecommendation) {
+    return;
+  }
+  if (!profileItems.length) {
+    creatorCloneRecommendation.textContent = "导入素材后，系统会推荐高赞 / 高评 / 高分享 / 最新 / 低表现混合样本。";
+    return;
+  }
+  const recommended = recommendedProfileSampleMix();
+  const labelSet = new Set();
+  recommended.forEach((item) => {
+    selectedSampleReason(item).split("/").map((part) => part.trim()).filter(Boolean).forEach((part) => labelSet.add(part));
+  });
+  const labels = [...labelSet].slice(0, 5).join(" / ") || "综合表现";
+  creatorCloneRecommendation.textContent = `系统已推荐 ${formatNumber(recommended.length)} 条样本：${labels} 混合。点击主按钮即可使用推荐样本继续。`;
+}
+
+function renderCreatorCloneNextAction() {
+  const stage = getCreatorCloneStage();
+  const meta = creatorCloneStageMeta(stage);
+  const flowIndex = {import: 0, sample_pool: 1, select: 2, enrich: 3, distill: 4, export: 5}[stage] || 0;
+  creatorCloneFlowSteps.forEach((step, index) => {
+    step.classList.toggle("active", index === flowIndex);
+    step.classList.toggle("completed", index < flowIndex);
+  });
+  if (creatorCloneCurrentStep) {
+    creatorCloneCurrentStep.textContent = meta.step;
+  }
+  if (creatorCloneNextSummary) {
+    creatorCloneNextSummary.textContent = meta.summary;
+  }
+  if (profileNextAction) {
+    profileNextAction.textContent = meta.step;
+  }
+  if (creatorCloneNextButton) {
+    creatorCloneNextButton.textContent = meta.button;
+    creatorCloneNextButton.dataset.creatorCloneAction = stage;
+    creatorCloneNextButton.disabled = stage === "sample_pool" && !recommendedProfileSampleMix().length;
+  }
+  renderCreatorCloneRecommendation();
 }
 
 // Creator Clone: sample pool
@@ -420,16 +590,7 @@ function setCreatorCloneStep(step = "import") {
   const canDistill = hasSelected && selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES;
   profileEnrichmentSection?.classList.toggle("hidden", !hasSelected);
   profileDistillationSection?.classList.toggle("hidden", !canDistill);
-  if (profileNextAction) {
-    const label = {
-      import: "下一步：导入素材",
-      select: "下一步：选择样本",
-      enrich: "下一步：富化证据",
-      distill: "下一步：大模型蒸馏",
-      export: "下一步：导出规则",
-    }[step] || "下一步：选择样本";
-    profileNextAction.textContent = label;
-  }
+  renderCreatorCloneNextAction();
 }
 
 function renderCreatorCloneOverview(summary = {}) {
@@ -893,6 +1054,9 @@ function renderProfileSegmentColumn(title, metricKey, items, preset) {
 
 function renderProfileResults(payload) {
   profileScanPayload = payload;
+  currentCreatorCloneResult = null;
+  currentDistillPrompt = "";
+  creatorCloneResultCard?.classList.add("hidden");
   const cloneSet = payload.set || null;
   currentCloneSetId = cloneSet?.set_id || "";
   profileItems = normalizeItems(payload.items || cloneSet?.samples);
@@ -1161,8 +1325,9 @@ function requireProfileChromeConfirmation() {
   if (!profileChromeConfirm || profileChromeConfirm.checked) {
     return true;
   }
-  if (profilePublicSection) {
-    profilePublicSection.open = true;
+  const advanced = profileChromeConfirm.closest("details");
+  if (advanced) {
+    advanced.open = true;
   }
   profileScanStatus.textContent = "请先勾选本次辅助采集确认：请求由本机 Chrome / 本机 IP 发起，只读取页面可见作品列表和元数据，不读取 Cookie。";
   return false;
@@ -1373,6 +1538,7 @@ async function scanProfile(sourceMode = "public") {
     }
   } finally {
     profileScanButton.disabled = false;
+    renderCreatorCloneNextAction();
   }
 }
 
@@ -1506,6 +1672,7 @@ async function scanProfileWithLocalChrome(options = {}) {
     profileBrowserHelperButton.disabled = false;
     resetProfileChromeConfirmation();
     updateProfileChromeContinueButton();
+    renderCreatorCloneNextAction();
   }
 }
 
@@ -1527,6 +1694,69 @@ async function readHandoffManifestFile(file) {
     profileScanStatus.textContent = `已读取 ${file.name || "handoff_manifest.json"}，可点击“导入交接包”。`;
   } catch (error) {
     profileScanStatus.textContent = "HANDOFF_MANIFEST_INVALID：handoff_manifest.json 不是合法 JSON。";
+  }
+}
+
+async function runCreatorCloneImportStep() {
+  const mode = activeProfileImportMode();
+  if (mode === "browser") {
+    let status = null;
+    try {
+      status = await loadChromeHelperStatus({silent: true});
+    } catch (error) {
+      status = null;
+    }
+    if (status?.ready_for_profile_scan) {
+      await scanProfileWithLocalChrome();
+      return;
+    }
+    await scanProfile("public");
+    if (!profileItems.length) {
+      setActiveImportMode("manual");
+      profileManualLinks?.focus();
+      profileScanStatus.textContent = profileScanStatus.textContent || "公开主页扫描未得到素材，请改用粘贴作品链接继续。";
+    }
+    return;
+  }
+  const sourceMode = {manual: "manual", structured: "structured", case: "case", handoff: "handoff"}[mode] || "manual";
+  await scanProfile(sourceMode);
+}
+
+function useRecommendedProfileSamples() {
+  const recommended = recommendedProfileSampleMix();
+  if (!recommended.length) {
+    profileScanStatus.textContent = "当前素材池还没有可推荐样本，请展开“手动调整样本”自行选择。";
+    return;
+  }
+  setProfileSelection(recommended);
+  profileScanStatus.textContent = `已使用推荐样本继续：${recommended.length} 条。`;
+  (profileSelectionBasket || profileEnrichmentSection || profileResultsCard)?.scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+async function runCreatorCloneNextAction() {
+  const stage = getCreatorCloneStage();
+  if (stage === "import") {
+    await runCreatorCloneImportStep();
+    return;
+  }
+  if (stage === "sample_pool") {
+    useRecommendedProfileSamples();
+    return;
+  }
+  if (stage === "select" || stage === "enrich") {
+    await buildSelectedProfileQueue();
+    return;
+  }
+  if (stage === "distill") {
+    await distillSelectedCreatorClone();
+    return;
+  }
+  if (stage === "export") {
+    if (downloadCreatorCloneMd?.href && downloadCreatorCloneMd.href !== "#") {
+      window.open(downloadCreatorCloneMd.href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
   }
 }
 
@@ -1738,6 +1968,8 @@ async function buildSelectedProfileQueue() {
     return;
   }
   profileSelectedBuildButton.disabled = true;
+  creatorCloneEnrichmentRunning = true;
+  renderCreatorCloneNextAction();
   jobCard.classList.remove("hidden");
   progressBar.style.width = "0%";
   jobMessage.className = "job-message";
@@ -1774,7 +2006,9 @@ async function buildSelectedProfileQueue() {
     profileScanStatus.textContent = jobMessage.textContent;
     updateCreatorCloneSelectionStatus();
   } finally {
+    creatorCloneEnrichmentRunning = false;
     profileSelectedBuildButton.disabled = false;
+    renderCreatorCloneNextAction();
   }
 }
 
@@ -2188,6 +2422,9 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
   currentCreatorCloneResult = result || null;
   currentDistillPrompt = prompt || currentDistillPrompt || "";
   creatorCloneResultCard.classList.remove("hidden");
+  if (creatorCloneExportActions) {
+    creatorCloneExportActions.open = true;
+  }
   creatorCloneResultCard.scrollIntoView({behavior: "smooth", block: "start"});
   const overview = result?.sample_overview || creatorCloneOverviewFromSet(set);
   creatorCloneConfidence.textContent = overview.confidence || (result ? "distilled" : "prompt only");
@@ -2206,6 +2443,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
       ${renderCreatorCloneEvidenceOverview(overview)}
       <pre class="prompt-preview">${escapeHtml(currentDistillPrompt.slice(0, 3000))}</pre>
     `;
+    renderCreatorCloneNextAction();
     return;
   }
   const positioning = result.creator_positioning || {};
@@ -2248,6 +2486,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
       `)}
     </div>
   `;
+  renderCreatorCloneNextAction();
 }
 
 function applyCreatorCloneDistillPayload(payload) {
@@ -2400,6 +2639,57 @@ async function loadPreflightStatus() {
   return payload;
 }
 
+function renderDataSourceStatus(status = {}) {
+  if (!dataSourceStatusBadge || !dataSourceStatusList) {
+    return;
+  }
+  dataSourceStatusBadge.textContent = status.configured ? "增强已配置" : "主路径可用";
+  dataSourceStatusBadge.className = `status-badge ${status.configured ? "success" : "muted-badge"}`;
+  const sources = normalizeItems(status.sources);
+  dataSourceStatusList.innerHTML = `
+    <dl>
+      <dt>Cookie API</dt><dd>${status.has_cookie ? "已配置" : "未配置"}</dd>
+      <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
+      <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
+      <dt>当前策略</dt><dd>${escapeHtml(status.status_message || "")}</dd>
+    </dl>
+    <ul class="preflight-contract-summary">
+      ${sources.map((source) => `<li><strong>${escapeHtml(source.label || source.id)}</strong>：${escapeHtml(source.message || "")}</li>`).join("")}
+    </ul>
+  `;
+  if (douyinCookieInput) {
+    douyinCookieInput.value = "";
+    douyinCookieInput.placeholder = status.has_cookie ? `留空保留当前 Cookie（${status.masked_cookie || "已配置"}）` : "粘贴 Douyin Cookie";
+  }
+  if (douyinUserAgentInput) {
+    douyinUserAgentInput.value = status.user_agent || "";
+  }
+  if (douyinRefererInput) {
+    douyinRefererInput.value = status.referer || "https://www.douyin.com/";
+  }
+  if (douyinClearCookieInput) {
+    douyinClearCookieInput.checked = false;
+  }
+}
+
+async function loadDataSourceStatus() {
+  if (dataSourceStatusList) {
+    dataSourceStatusList.textContent = "正在读取数据源设置...";
+  }
+  try {
+    const response = await fetch("/api/settings/data-sources", {cache: "no-store"});
+    const payload = await readJsonResponse(response);
+    renderDataSourceStatus(payload.data_sources || {});
+  } catch (error) {
+    if (dataSourceStatusBadge) {
+      dataSourceStatusBadge.textContent = "读取失败";
+    }
+    if (dataSourceStatusList) {
+      dataSourceStatusList.textContent = `${error.error_code || "ERROR"}：${error.message || "无法读取数据源设置"}`;
+    }
+  }
+}
+
 function buildFullPrompt(data) {
   const analysisInput = JSON.stringify(data.analysis_input || {}, null, 2);
   return `${data.prompt || ""}\n\n## 附：analysis_input.json\n\n\`\`\`json\n${analysisInput}\n\`\`\``;
@@ -2544,6 +2834,68 @@ window.addEventListener("hashchange", () => {
   setHomeRoute(routeFromHash(), false);
 });
 
+llmSettingsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  saveLlmSettingsButton.disabled = true;
+  llmSaveResult.textContent = "正在保存...";
+  try {
+    const payload = {
+      provider: llmProviderInput?.value || "disabled",
+      api_base: llmApiBaseInput?.value || "",
+      model: llmModelInput?.value || "",
+      timeout_seconds: Number(llmTimeoutInput?.value || 90),
+      temperature: Number(llmTemperatureInput?.value || 0.2),
+      clear_api_key: Boolean(llmClearKeyInput?.checked),
+    };
+    const apiKey = String(llmApiKeyInput?.value || "").trim();
+    if (apiKey) {
+      payload.api_key = apiKey;
+    }
+    const response = await fetch("/api/settings/llm", {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const result = await readJsonResponse(response);
+    renderLlmStatus(result.llm || {});
+    llmSaveResult.textContent = "已保存到本机运行时配置。";
+    await loadPreflightStatus().catch(() => {});
+  } catch (error) {
+    llmSaveResult.textContent = `${error.error_code || "ERROR"}：${error.message || "保存失败"}`;
+  } finally {
+    saveLlmSettingsButton.disabled = false;
+  }
+});
+
+douyinSettingsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  saveDouyinSettingsButton.disabled = true;
+  douyinSaveResult.textContent = "正在保存...";
+  try {
+    const payload = {
+      user_agent: douyinUserAgentInput?.value || "",
+      referer: douyinRefererInput?.value || "https://www.douyin.com/",
+      clear_cookie: Boolean(douyinClearCookieInput?.checked),
+    };
+    const cookie = String(douyinCookieInput?.value || "").trim();
+    if (cookie) {
+      payload.douyin_cookie = cookie;
+    }
+    const response = await fetch("/api/settings/data-sources/douyin", {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const result = await readJsonResponse(response);
+    renderDataSourceStatus(result.data_sources || {});
+    douyinSaveResult.textContent = "已保存到本机运行时配置。";
+  } catch (error) {
+    douyinSaveResult.textContent = `${error.error_code || "ERROR"}：${error.message || "保存失败"}`;
+  } finally {
+    saveDouyinSettingsButton.disabled = false;
+  }
+});
+
 testLlmButton.addEventListener("click", async () => {
   testLlmButton.disabled = true;
   llmTestResult.textContent = "正在测试...";
@@ -2648,6 +3000,15 @@ profileImportModeButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setActiveImportMode(button.dataset.profileImportMode || "browser");
   });
+});
+
+creatorCloneNextButton?.addEventListener("click", async () => {
+  creatorCloneNextButton.disabled = true;
+  try {
+    await runCreatorCloneNextAction();
+  } finally {
+    renderCreatorCloneNextAction();
+  }
 });
 
 profileBrowserHelperButton.addEventListener("click", async () => {
@@ -2982,5 +3343,7 @@ downloadHomeAnalysisInputButton.addEventListener("click", () => {
 });
 
 loadLlmStatus();
+loadDataSourceStatus();
 loadPreflightStatus().catch(() => {});
+renderCreatorCloneNextAction();
 setHomeRoute(routeFromHash(), false);

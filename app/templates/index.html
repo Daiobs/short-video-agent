@@ -29,7 +29,7 @@
                 <div>
                     <div class="entry-label">Settings</div>
                     <h2 id="settings-title">API 与解析设置</h2>
-                    <p class="muted">API Key 只从本地 .env 读取，页面不提供保存入口。没有 API Key 也能完成下载和素材包生成。</p>
+                    <p class="muted">API Key 和 Cookie 可保存到本机运行时配置，不进数据库、不上传云端、不提交 Git。没有 API Key 也能完成下载和素材包生成。</p>
                 </div>
                 <button type="button" id="settings-close" class="ghost-button">关闭</button>
             </div>
@@ -52,12 +52,47 @@
                 </div>
                 <div id="llm-status-list" class="compact-dl"></div>
                 <div id="llm-config-hint" class="notice hidden">
-                    <div>未配置时素材包仍会正常生成。需要自动拆解时，在 <code>.env</code> 中配置：</div>
+                    <div>未配置时素材包仍会正常生成。你可以在下方表单保存本机 API 配置，也可以继续使用 <code>.env</code>。</div>
                     <pre class="env-snippet">LLM_PROVIDER=openai_compatible
 LLM_API_BASE=https://api.openai.com/v1
 LLM_API_KEY=你的key
 LLM_MODEL=支持图片输入的模型</pre>
                 </div>
+                <form id="llm-settings-form" class="settings-form">
+                    <label>Provider
+                        <select name="provider" id="llm-provider-input">
+                            <option value="disabled">disabled</option>
+                            <option value="openai_compatible">openai_compatible</option>
+                            <option value="openai_responses">openai_responses</option>
+                            <option value="anthropic_compatible">anthropic_compatible</option>
+                        </select>
+                    </label>
+                    <label>API Base
+                        <input name="api_base" id="llm-api-base-input" placeholder="https://api.openai.com/v1">
+                    </label>
+                    <label>Model
+                        <input name="model" id="llm-model-input" placeholder="gpt-4o / gpt-5.4 / claude-fable-5">
+                    </label>
+                    <label>API Key
+                        <input name="api_key" id="llm-api-key-input" type="password" autocomplete="off" placeholder="留空表示保留当前 Key">
+                    </label>
+                    <div class="settings-inline-grid">
+                        <label>Timeout
+                            <input name="timeout_seconds" id="llm-timeout-input" type="number" min="5" step="1">
+                        </label>
+                        <label>Temperature
+                            <input name="temperature" id="llm-temperature-input" type="number" min="0" max="2" step="0.1">
+                        </label>
+                    </div>
+                    <label class="settings-checkbox">
+                        <input type="checkbox" id="llm-clear-key-input">
+                        清空本机保存的 API Key
+                    </label>
+                    <div class="settings-actions">
+                        <button type="submit" id="save-llm-settings-button">保存 AI 设置</button>
+                        <span id="llm-save-result" class="muted"></span>
+                    </div>
+                </form>
                 <div class="settings-actions">
                     <button type="button" id="test-llm-button">测试连接</button>
                     <span id="llm-test-result" class="muted"></span>
@@ -71,6 +106,33 @@ LLM_MODEL=支持图片输入的模型</pre>
                 <p class="muted compact-copy">检查 Chrome 辅助扫描、ffmpeg/ffprobe、ASR、OCR 和大模型配置是否已准备好。</p>
                 <div id="preflight-summary" class="muted">读取中...</div>
                 <div id="preflight-list" class="preflight-list"></div>
+            </div>
+            <div class="settings-panel wide-settings-panel">
+                <div class="settings-panel-header">
+                    <h3>Creator Clone 数据源</h3>
+                    <span id="data-source-status-badge" class="status-badge">读取中</span>
+                </div>
+                <p class="muted compact-copy">Cookie / Web API 只是可选增强层。默认主路径仍是手动作品链接和浏览器辅助采集；Cookie 不会写入素材包、Prompt 或日志。</p>
+                <div id="data-source-status-list" class="compact-dl"></div>
+                <form id="douyin-settings-form" class="settings-form">
+                    <label>Douyin Cookie
+                        <textarea name="douyin_cookie" id="douyin-cookie-input" rows="3" autocomplete="off" placeholder="留空表示保留当前 Cookie"></textarea>
+                    </label>
+                    <label>User-Agent
+                        <input name="user_agent" id="douyin-user-agent-input" placeholder="从浏览器 Network 请求头复制 User-Agent">
+                    </label>
+                    <label>Referer
+                        <input name="referer" id="douyin-referer-input" placeholder="https://www.douyin.com/">
+                    </label>
+                    <label class="settings-checkbox">
+                        <input type="checkbox" id="douyin-clear-cookie-input">
+                        清空本机保存的 Douyin Cookie
+                    </label>
+                    <div class="settings-actions">
+                        <button type="submit" id="save-douyin-settings-button">保存数据源设置</button>
+                        <span id="douyin-save-result" class="muted"></span>
+                    </div>
+                </form>
             </div>
         </div>
     </section>
@@ -147,47 +209,63 @@ LLM_MODEL=支持图片输入的模型</pre>
             <div class="entry-label">Creator Clone Lab</div>
             <h2>创作者克隆实验室</h2>
             <p class="muted">导入一组对标素材，自由选择 N 条样本，通过大模型蒸馏创作者定位、选题规律、表达模板和可复用公式。</p>
-            <div class="notice compact-notice">不登录、不使用 Cookie、不绕验证码、不绕风控；请确保你拥有素材分析权限。</div>
+            <div class="notice compact-notice">默认不依赖 Cookie，不绕验证码、不绕风控；Cookie / Web API 仅作为可选增强层。请确保你拥有素材分析权限。</div>
             <div class="profile-flow-strip profile-main-flow" aria-label="创作者克隆工作流">
                 <span>1. 导入素材</span>
-                <span>2. 选择样本</span>
-                <span>3. 富化证据</span>
-                <span>4. 大模型蒸馏</span>
-                <span>5. 导出规则</span>
+                <span>2. 构建素材池</span>
+                <span>3. 选择 N 条样本</span>
+                <span>4. 证据富化</span>
+                <span>5. 大模型蒸馏</span>
+                <span>6. 可视化输出</span>
             </div>
-            <form id="profile-form" class="profile-scan-form">
-                <div class="profile-import-mode-grid" aria-label="导入方式">
-                    <button type="button" class="profile-import-card active" data-profile-import-mode="browser">
-                        <strong>浏览器辅助采集</strong>
-                        <span>适合主页素材池，读取当前可见作品</span>
-                    </button>
-                    <button type="button" class="profile-import-card" data-profile-import-mode="manual">
-                        <strong>粘贴作品链接</strong>
-                        <span>一行一条链接、分享文案或 aweme_id</span>
-                    </button>
-                    <button type="button" class="profile-import-card" data-profile-import-mode="structured">
-                        <strong>JSON / CSV 导入</strong>
-                        <span>导入已整理的作品列表和指标</span>
-                    </button>
-                    <button type="button" class="profile-import-card" data-profile-import-mode="case">
-                        <strong>已有 Case 导入</strong>
-                        <span>把已生成素材包作为高证据样本</span>
-                    </button>
-                    <button type="button" class="profile-import-card" data-profile-import-mode="handoff">
-                        <strong>高级 / 安全交接包</strong>
-                        <span>导入 handoff_manifest 净化元数据</span>
-                    </button>
+            <section class="creator-clone-next-bar" id="creator-clone-next-bar" aria-live="polite">
+                <div>
+                    <span class="entry-label" id="creator-clone-current-step">当前步骤：导入素材</span>
+                    <strong id="creator-clone-next-summary">粘贴作品链接或填写主页 URL 后，点击主按钮开始分析。</strong>
                 </div>
+                <div class="creator-clone-next-actions">
+                    <button type="button" id="creator-clone-next-button" class="primary-cta">Start Creator Analysis</button>
+                    <details class="creator-clone-advanced-actions">
+                        <summary>备用动作</summary>
+                        <div class="advanced-action-list">
+                            <button type="button" id="profile-browser-helper-button">插件辅助采集</button>
+                            <button type="submit" form="profile-form" id="profile-scan-button" data-profile-source="public">公开主页扫描（实验）</button>
+                        </div>
+                    </details>
+                </div>
+            </section>
+            <form id="profile-form" class="profile-scan-form">
+                <details class="profile-data-source-details">
+                    <summary>数据源设置（默认会按当前填写内容自动选择）</summary>
+                    <div class="profile-import-mode-grid" aria-label="导入方式">
+                        <button type="button" class="profile-import-card active" data-profile-import-mode="browser">
+                            <strong>主页 / 浏览器辅助</strong>
+                            <span>输入主页 URL 或 sec_user_id，必要时读取当前可见作品</span>
+                        </button>
+                        <button type="button" class="profile-import-card" data-profile-import-mode="manual">
+                            <strong>多作品链接粘贴</strong>
+                            <span>主路径：一行一条链接、分享文案或 aweme_id</span>
+                        </button>
+                        <button type="button" class="profile-import-card" data-profile-import-mode="structured">
+                            <strong>JSON / CSV 导入</strong>
+                            <span>导入已整理的作品列表和指标</span>
+                        </button>
+                        <button type="button" class="profile-import-card" data-profile-import-mode="case">
+                            <strong>已有 Case 导入</strong>
+                            <span>把已生成素材包作为高证据样本</span>
+                        </button>
+                        <button type="button" class="profile-import-card" data-profile-import-mode="handoff">
+                            <strong>高级 / 安全交接包</strong>
+                            <span>导入 handoff_manifest 净化元数据</span>
+                        </button>
+                    </div>
+                </details>
 
                 <div class="profile-import-panel active" id="profile-public-section" data-profile-import-panel="browser">
                     <div class="profile-panel-heading">
                         <div>
                             <span class="summary-title">浏览器辅助采集</span>
                             <p class="muted compact-copy">输入主页 URL / sec_user_id。优先在本机调试 Chrome 中打开目标主页，由你确认后读取页面可见作品列表和元数据。</p>
-                        </div>
-                        <div class="summary-actions">
-                            <button type="button" id="profile-browser-helper-button">插件辅助采集</button>
-                            <button type="submit" id="profile-scan-button" data-profile-source="public">公开主页扫描（实验）</button>
                         </div>
                     </div>
                     <div class="profile-input-grid compact">
@@ -200,10 +278,14 @@ LLM_MODEL=支持图片输入的模型</pre>
                         <div id="profile-chrome-status" class="local-helper-status muted">
                             本机 Chrome 辅助状态：尚未检测。
                         </div>
-                        <label class="local-helper-confirmation">
-                            <input type="checkbox" id="profile-chrome-confirm">
-                            我确认本次辅助采集由本机 Chrome / 本机 IP 发起，只读取当前页面可见作品列表和元数据，不读取、不上传、不记录 Cookie 或登录 token。
-                        </label>
+                        <p class="muted compact-copy">浏览器辅助采集只读取当前页面可见作品，不读取 Cookie 或登录 token。</p>
+                        <details class="profile-helper-advanced">
+                            <summary>高级说明</summary>
+                            <label class="local-helper-confirmation">
+                                <input type="checkbox" id="profile-chrome-confirm">
+                                我确认本次辅助采集由本机 Chrome / 本机 IP 发起，只读取当前页面可见作品列表和元数据，不读取、不上传、不记录 Cookie 或登录 token。
+                            </label>
+                        </details>
                     </div>
                 </div>
 
@@ -212,9 +294,6 @@ LLM_MODEL=支持图片输入的模型</pre>
                         <div>
                             <span class="summary-title">粘贴作品链接</span>
                             <p class="muted compact-copy">公开主页读取不稳定时，直接粘贴多条作品链接最稳。</p>
-                        </div>
-                        <div class="summary-actions">
-                            <button type="submit" data-profile-source="manual">导入链接</button>
                         </div>
                     </div>
                         <label>作品链接 / 分享文案 / aweme_id
@@ -233,9 +312,6 @@ https://v.douyin.com/xxxxxx/
                             <span class="summary-title">JSON / CSV 导入</span>
                             <p class="muted compact-copy">适合你已经从其他工具整理好作品 ID、标题和互动数据的情况。</p>
                         </div>
-                        <div class="summary-actions">
-                            <button type="submit" data-profile-source="structured">导入列表</button>
-                        </div>
                     </div>
                         <label>JSON 数组或 CSV
                             <textarea name="structured_items" id="profile-structured-items" rows="5" placeholder="支持字段：aweme_id/awemeId/id,title/desc,author/nickname,cover_url/cover,source_url,like_count/digg_count,comment_count,share_count,collect_count,view_count,create_time"></textarea>
@@ -247,9 +323,6 @@ https://v.douyin.com/xxxxxx/
                         <div>
                             <span class="summary-title">已有 Case 导入</span>
                             <p class="muted compact-copy">把已有素材包作为更高理解度样本参与账号级蒸馏。</p>
-                        </div>
-                        <div class="summary-actions">
-                            <button type="submit" data-profile-source="case">导入 Case</button>
                         </div>
                     </div>
                     <label>case_id 列表
@@ -263,9 +336,6 @@ https://v.douyin.com/xxxxxx/
                         <div>
                             <span class="summary-title">高级 / 安全交接包</span>
                             <p class="muted compact-copy">适用于“本机助手采集，公开站继续分析”的链路。默认折叠为高级入口。</p>
-                        </div>
-                        <div class="summary-actions">
-                            <button type="submit" data-profile-source="handoff">导入交接包</button>
                         </div>
                     </div>
                         <label class="handoff-file-row">选择 handoff_manifest.json
@@ -301,7 +371,7 @@ https://v.douyin.com/xxxxxx/
                         <span class="entry-label">A. Overview</span>
                         <h3>素材池概览</h3>
                     </div>
-                    <span id="profile-next-action" class="status-badge muted-badge">等待导入</span>
+                    <span id="profile-next-action" class="status-badge muted-badge">当前步骤：导入素材</span>
                 </div>
                 <section id="profile-summary" class="profile-summary-grid"></section>
                 <details class="profile-more-stats">
@@ -318,39 +388,45 @@ https://v.douyin.com/xxxxxx/
                         <span class="entry-label">B. Sample Selection</span>
                         <h3>样本选择</h3>
                     </div>
+                </div>
+                <div id="creator-clone-recommendation" class="creator-clone-recommendation">
+                    导入素材后，系统会推荐高赞 / 高评 / 高分享 / 最新 / 低表现混合样本。
+                </div>
+                <details class="manual-sample-adjustments">
+                    <summary>手动调整样本</summary>
                     <div class="compact-actions secondary-inline-actions">
                         <button type="button" id="profile-select-all-button" class="text-button">全选当前列表</button>
                         <button type="button" id="profile-clear-selection-button" class="text-button">清空选择</button>
                     </div>
-                </div>
-                <div class="profile-selection-controls">
-                    <label class="compact-select">排序维度
-                        <select id="profile-sort">
-                            <option value="like_count">点赞数</option>
-                            <option value="comment_count">评论数</option>
-                            <option value="share_count">分享数</option>
-                            <option value="collect_count">收藏数</option>
-                            <option value="engagement_score">综合分</option>
-                            <option value="create_time">发布时间</option>
-                        </select>
-                    </label>
-                    <label class="compact-select">证据筛选
-                        <select id="profile-evidence-filter">
-                            <option value="all">全部素材</option>
-                            <option value="buildable">可富化视频</option>
-                            <option value="metadata_only">仅元数据</option>
-                            <option value="has_frames">已有关键帧</option>
-                            <option value="ready_evidence">证据完整</option>
-                        </select>
-                    </label>
-                    <div class="profile-preset-grid" aria-label="分层选样快捷入口">
-                        <button type="button" data-profile-preset="recommended_mix">推荐组合</button>
-                        <button type="button" data-profile-preset="top_likes">高赞 Top 3</button>
-                        <button type="button" data-profile-preset="top_comments">高评 Top 3</button>
-                        <button type="button" data-profile-preset="top_shares">高分享 Top 3</button>
-                        <button type="button" data-profile-preset="low_performance">低表现 3 条</button>
+                    <div class="profile-selection-controls">
+                        <label class="compact-select">排序维度
+                            <select id="profile-sort">
+                                <option value="like_count">点赞数</option>
+                                <option value="comment_count">评论数</option>
+                                <option value="share_count">分享数</option>
+                                <option value="collect_count">收藏数</option>
+                                <option value="engagement_score">综合分</option>
+                                <option value="create_time">发布时间</option>
+                            </select>
+                        </label>
+                        <label class="compact-select">证据筛选
+                            <select id="profile-evidence-filter">
+                                <option value="all">全部素材</option>
+                                <option value="buildable">可富化视频</option>
+                                <option value="metadata_only">仅元数据</option>
+                                <option value="has_frames">已有关键帧</option>
+                                <option value="ready_evidence">证据完整</option>
+                            </select>
+                        </label>
+                        <div class="profile-preset-grid" aria-label="分层选样快捷入口">
+                            <button type="button" data-profile-preset="recommended_mix">推荐组合</button>
+                            <button type="button" data-profile-preset="top_likes">高赞 Top 3</button>
+                            <button type="button" data-profile-preset="top_comments">高评 Top 3</button>
+                            <button type="button" data-profile-preset="top_shares">高分享 Top 3</button>
+                            <button type="button" data-profile-preset="low_performance">低表现 3 条</button>
+                        </div>
                     </div>
-                </div>
+                </details>
                 <div id="creator-clone-selection-status" class="muted">已选 0 条。</div>
                 <div id="profile-selection-basket" class="profile-selection-basket hidden" aria-live="polite"></div>
             </section>
@@ -361,7 +437,7 @@ https://v.douyin.com/xxxxxx/
                         <span class="entry-label">C. Evidence</span>
                         <h3>证据富化</h3>
                     </div>
-                    <button type="button" id="profile-selected-build-button">确认样本并富化</button>
+                    <button type="button" id="profile-selected-build-button" class="secondary-button">确认样本并富化</button>
                 </div>
                 <div id="profile-evidence-status" class="profile-evidence-status">
                     先从素材池选择代表样本；富化后会回填视频、关键帧、OCR、ASR 等证据。
@@ -388,29 +464,32 @@ https://v.douyin.com/xxxxxx/
                         <span class="entry-label">D. Distillation</span>
                         <h3>大模型蒸馏</h3>
                     </div>
-                    <button type="button" id="creator-clone-distill-button">大模型蒸馏</button>
+                    <button type="button" id="creator-clone-distill-button" class="secondary-button">大模型蒸馏</button>
                 </div>
                 <div id="profile-distill-readiness" class="profile-distill-readiness">
                     先选择代表样本。系统会根据样本数量、关键帧和证据完整度提示是否适合蒸馏。
                 </div>
             </section>
 
-            <div class="profile-table-wrap">
-                <table class="profile-table">
-                    <thead>
-                        <tr>
-                            <th>选择</th>
-                            <th>素材</th>
-                            <th>类型</th>
-                            <th>互动数据</th>
-                            <th>理解状态</th>
-                            <th>处理状态</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="profile-results-body"></tbody>
-                </table>
-            </div>
+            <details class="profile-material-details">
+                <summary>素材明细</summary>
+                <div class="profile-table-wrap">
+                    <table class="profile-table">
+                        <thead>
+                            <tr>
+                                <th>选择</th>
+                                <th>素材</th>
+                                <th>类型</th>
+                                <th>互动数据</th>
+                                <th>理解状态</th>
+                                <th>处理状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="profile-results-body"></tbody>
+                    </table>
+                </div>
+            </details>
             <section id="profile-queue-card" class="profile-queue-card hidden">
                 <h3>素材包队列</h3>
                 <div id="profile-queue-summary" class="muted"></div>
@@ -425,7 +504,7 @@ https://v.douyin.com/xxxxxx/
                     <span id="creator-clone-confidence" class="status-badge muted-badge"></span>
                 </div>
                 <div id="creator-clone-result" class="creator-clone-result"></div>
-                <details class="profile-action-card report-export-card">
+                <details class="profile-action-card report-export-card" id="creator-clone-export-actions">
                     <summary>
                         <span class="summary-title">报告文件</span>
                     </summary>

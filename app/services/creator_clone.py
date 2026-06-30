@@ -753,6 +753,468 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
 """
 
 
+def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[CloneSample], distill_mode: str = "quick") -> str:
+    lite_samples = [_lite_sample_prompt_payload(sample) for sample in selected_samples]
+    segments = performance_segments(selected_samples)
+    evidence_matrix = selected_evidence_matrix(selected_samples)
+    evidence_constraints = selected_evidence_constraints(selected_samples)
+    return f"""你是短视频账号规律蒸馏助手。请基于样本列表输出简洁、合法 JSON，不要 Markdown。
+
+任务：提炼这个账号/创作者的定位、流量来源、内容公式、可复刻规则和下一步建议。
+要求：
+- 只根据证据推断，不确定就写进 evidence_gaps。
+- 美拍/COS/颜值类样本重点看视觉吸引、人物人设、动作节奏、标题话题和互动引导。
+- 输出要短而有用，适合网页展示。
+
+返回 JSON 字段：
+{{
+  "summary": "",
+  "creator_positioning": {{"what_the_creator_sells": "", "audience_promise": "", "hidden_genre": "", "audience_assumption": ""}},
+  "performance_segments": {{"highest_like_samples": [], "highest_comment_samples": [], "highest_share_samples": [], "highest_collect_samples": [], "weak_or_reference_samples": []}},
+  "topic_buckets": [],
+  "thinking_patterns": {{"assumptions": [], "tension_sources": [], "detail_selection_rules": [], "novelty_vs_familiarity": ""}},
+  "expression_patterns": {{"opening_hooks": [], "scene_order": [], "shot_types": [], "subtitle_voice": [], "visual_style": [], "ending_patterns": []}},
+  "transferable_formulas": [],
+  "creator_clone_spec": {{"taste": "", "topic_selection_rules": [], "structure_rules": [], "expression_rules": [], "visual_rules": [], "caption_voice": "", "ending_rules": [], "anti_patterns": [], "self_check_rubric": []}},
+  "candidate_ideas": [],
+  "evidence_gaps": [],
+  "next_actions": []
+}}
+
+蒸馏模式：{distill_mode}
+素材池标题：{sample_set.title}
+创作者：{sample_set.creator_name or "未知"}
+平台：{sample_set.source_platform}
+证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
+证据约束：{json.dumps(evidence_constraints, ensure_ascii=False)}
+本地分层：{json.dumps(segments, ensure_ascii=False)}
+样本：{json.dumps(lite_samples, ensure_ascii=False)}
+"""
+
+
+def build_sample_map_summaries(selected_samples: list[CloneSample]) -> list[dict]:
+    return [sample_map_summary(sample) for sample in selected_samples]
+
+
+def build_llm_map_summaries(llm, selected_samples: list[CloneSample]) -> list[dict]:
+    summaries: list[dict] = []
+    for sample in selected_samples:
+        fallback = sample_map_summary(sample)
+        try:
+            result = llm.analyze(build_sample_map_prompt(sample, fallback), [])
+        except AppError as error:
+            degraded = dict(fallback)
+            degraded["map_source"] = fallback.get("map_source") or "local_evidence"
+            degraded["map_error_code"] = error.code
+            degraded["map_error_message"] = _truncate_text(error.message, 160)
+            degraded.setdefault("next_actions", [])
+            degraded["next_actions"] = _short_list(degraded["next_actions"] + ["单条 Map 大模型失败，Reduce 将使用本地证据短摘。"], 5, 120)
+            summaries.append(_drop_empty_prompt_values(degraded))
+            continue
+        summaries.append(_normalize_llm_map_summary(result, fallback))
+    return summaries
+
+
+def build_sample_map_prompt(sample: CloneSample, fallback_summary: dict) -> str:
+    return f"""你是短视频单条 Map 拆解助手。请只基于这一条视频的证据短摘，输出短 JSON，不要 Markdown。
+
+目标：
+- 用 1 条视频的有限证据，提炼它靠什么吸引、属于什么内容类型、可复用的表达结构。
+- 不要写长报告，不要编造没有证据的画面/评论/口播。
+- 如果是美拍/COS/颜值类，重点看第一眼视觉、人物人设、动作节奏、妆造光线和标题话题。
+- 如果是鸡汤/教学/知识类，重点看前 3 秒钩子、文案结构、情绪路径和可复刻脚本结构。
+
+返回 JSON 字段：
+{{
+  "one_line_summary": "",
+  "content_category": "",
+  "hook": {{"first_impression": "", "why_stop_scrolling": "", "first_3_seconds": []}},
+  "visual": {{"subject": "", "movement_rhythm": "", "style_keywords": []}},
+  "content_ratio": [],
+  "copyable_points": [],
+  "avoid_copying": [],
+  "remake_angle": "",
+  "evidence_gaps": []
+}}
+
+视频证据短摘：{json.dumps(fallback_summary, ensure_ascii=False)}
+"""
+
+
+def sample_map_summary(sample: CloneSample) -> dict:
+    summary = {
+        "sample_id": sample.sample_id,
+        "aweme_id": sample.aweme_id,
+        "case_id": sample.case_id,
+        "title": _truncate_text(sample.title or sample.desc or "", 140),
+        "author": _truncate_text(sample.author, 80),
+        "media_type": sample.media_type,
+        "metrics": {
+            "like_count": sample.like_count,
+            "comment_count": sample.comment_count,
+            "share_count": sample.share_count,
+            "collect_count": sample.collect_count,
+            "engagement_score": sample.engagement_score,
+        },
+        "evidence_status": _sample_evidence_status(sample),
+        "map_source": "metadata",
+        "one_line_summary": _truncate_text(sample.notes or sample.title or "仅有元数据，不能判断画面和表达结构。", 180),
+        "content_category": "",
+        "hook": {},
+        "visual": {},
+        "content_ratio": [],
+        "copyable_points": [],
+        "avoid_copying": [],
+        "remake_angle": "",
+        "evidence": {},
+        "risks": [],
+        "next_actions": [],
+    }
+    if sample.case_id:
+        case_summary = _case_map_summary(_case_dir_from_sample(sample))
+        summary.update(case_summary)
+    return _drop_empty_prompt_values(summary)
+
+
+def _case_map_summary(case_dir: Path) -> dict:
+    if not case_dir.exists():
+        return {}
+    analysis_result = _read_json(case_dir / "analysis_result.json")
+    analysis_input = _read_json(case_dir / "analysis_input.json")
+    evidence_pack = _case_compact_map_evidence(case_dir)
+    if not analysis_result:
+        fallback = {
+            "map_source": "case_evidence",
+            "one_line_summary": _truncate_text(
+                _case_title(case_dir, analysis_input) or "素材包已生成，但尚未完成单条 AI 拆解。",
+                180,
+            ),
+            "content_category": analysis_input.get("content_category") or "",
+            "content_category_label": analysis_input.get("content_category_label") or "",
+            "video": analysis_input.get("video") if isinstance(analysis_input.get("video"), dict) else {},
+            "evidence": evidence_pack,
+            "next_actions": ["先完成单条视频拆解，再做创作者规律蒸馏。"],
+        }
+        return _drop_empty_prompt_values(fallback)
+
+    hook = analysis_result.get("hook_analysis") if isinstance(analysis_result.get("hook_analysis"), dict) else {}
+    visual = analysis_result.get("visual_analysis") if isinstance(analysis_result.get("visual_analysis"), dict) else {}
+    replication = analysis_result.get("replication") if isinstance(analysis_result.get("replication"), dict) else {}
+    evidence_summary = analysis_result.get("evidence_summary") if isinstance(analysis_result.get("evidence_summary"), dict) else {}
+    publish_package = analysis_result.get("publish_package") if isinstance(analysis_result.get("publish_package"), dict) else {}
+    copywriting = analysis_result.get("copywriting_analysis") if isinstance(analysis_result.get("copywriting_analysis"), dict) else {}
+    speech = analysis_result.get("speech_analysis") if isinstance(analysis_result.get("speech_analysis"), dict) else {}
+    screen_text = analysis_result.get("screen_text_analysis") if isinstance(analysis_result.get("screen_text_analysis"), dict) else {}
+    comments = analysis_result.get("comment_insights") if isinstance(analysis_result.get("comment_insights"), dict) else {}
+    return _drop_empty_prompt_values(
+        {
+            "map_source": "analysis_result",
+            "one_line_summary": _truncate_text(analysis_result.get("summary") or "", 220),
+            "content_category": analysis_result.get("content_category") or analysis_input.get("content_category") or "",
+            "content_category_label": analysis_result.get("content_category_label")
+            or analysis_input.get("content_category_label")
+            or "",
+            "confidence": analysis_result.get("confidence"),
+            "hook": {
+                "first_impression": _truncate_text(hook.get("first_impression") or "", 120),
+                "why_stop_scrolling": _truncate_text(hook.get("why_stop_scrolling") or "", 160),
+                "first_3_seconds": _short_list(hook.get("first_3_seconds"), 4, 120),
+                "optimization": _truncate_text(hook.get("optimization") or "", 140),
+            },
+            "visual": {
+                "scene": _truncate_text(visual.get("scene") or "", 80),
+                "subject": _truncate_text(visual.get("subject") or "", 120),
+                "composition": _truncate_text(visual.get("composition") or "", 100),
+                "lighting_color": _truncate_text(visual.get("lighting_color") or "", 100),
+                "movement_rhythm": _truncate_text(visual.get("movement_rhythm") or "", 140),
+                "style_keywords": _short_list(visual.get("style_keywords"), 8, 40),
+            },
+            "copywriting": {
+                "title_click_reason": _truncate_text(copywriting.get("title_click_reason") or "", 140),
+                "comment_trigger": _truncate_text(copywriting.get("comment_trigger") or "", 120),
+                "reusable_patterns": _short_list(copywriting.get("reusable_patterns"), 4, 100),
+            },
+            "speech": {
+                "has_speech": bool(speech.get("has_speech")),
+                "opening_line": _truncate_text(speech.get("opening_line") or "", 140),
+                "spoken_hook": _truncate_text(speech.get("spoken_hook") or "", 140),
+                "script_structure": _truncate_text(speech.get("script_structure") or "", 180),
+            },
+            "screen_text": {
+                "cover_text": _truncate_text(screen_text.get("cover_text") or "", 120),
+                "subtitle_role": _truncate_text(screen_text.get("subtitle_role") or "", 140),
+                "key_phrases": _short_list(screen_text.get("key_phrases"), 5, 60),
+            },
+            "comments": {
+                "audience_needs": _short_list(comments.get("audience_needs"), 5, 80),
+                "comment_hooks": _short_list(comments.get("comment_hooks"), 5, 80),
+            },
+            "content_ratio": _short_content_ratio(analysis_result.get("content_ratio")),
+            "emotion_path": _short_list(analysis_result.get("emotion_path"), 4, 120),
+            "copyable_points": _short_list(replication.get("copyable_points"), 5, 140),
+            "avoid_copying": _short_list(replication.get("avoid_copying"), 5, 140),
+            "remake_angle": _truncate_text(replication.get("remake_angle") or "", 180),
+            "opening_3s": _truncate_text(replication.get("opening_3s") or "", 180),
+            "publish_package": {
+                "title": _truncate_text(publish_package.get("title") or "", 100),
+                "caption": _truncate_text(publish_package.get("caption") or "", 160),
+                "hashtags": _short_list(publish_package.get("hashtags"), 8, 40),
+            },
+            "evidence": {
+                "visual_input_mode": evidence_summary.get("visual_input_mode") or "",
+                "visual_evidence": _short_evidence_list(evidence_summary.get("visual_evidence")),
+                "asr_evidence": _short_evidence_list(evidence_summary.get("asr_evidence")),
+                "ocr_evidence": _short_evidence_list(evidence_summary.get("ocr_evidence")),
+                "comment_evidence": _short_evidence_list(evidence_summary.get("comment_evidence")),
+                "evidence_gaps": _short_list(evidence_summary.get("evidence_gaps"), 5, 120),
+            },
+            "risks": _short_list(analysis_result.get("risks"), 5, 120),
+            "next_actions": _short_list(analysis_result.get("next_actions"), 5, 120),
+        }
+    )
+
+
+def _normalize_llm_map_summary(raw: dict, fallback: dict) -> dict:
+    result = dict(fallback)
+    if not isinstance(raw, dict):
+        result["map_source"] = "local_evidence"
+        result["map_error_code"] = ErrorCode.LLM_RESPONSE_INVALID
+        return _drop_empty_prompt_values(result)
+    result.update(
+        {
+            "map_source": "llm_map",
+            "one_line_summary": _truncate_text(raw.get("one_line_summary") or raw.get("summary") or result.get("one_line_summary") or "", 220),
+            "content_category": _truncate_text(raw.get("content_category") or result.get("content_category") or "", 80),
+            "hook": _short_dict(raw.get("hook"), 120) if isinstance(raw.get("hook"), dict) else result.get("hook", {}),
+            "visual": _short_dict(raw.get("visual"), 120) if isinstance(raw.get("visual"), dict) else result.get("visual", {}),
+            "content_ratio": _short_content_ratio(raw.get("content_ratio")),
+            "copyable_points": _short_list(raw.get("copyable_points"), 5, 120),
+            "avoid_copying": _short_list(raw.get("avoid_copying"), 5, 120),
+            "remake_angle": _truncate_text(raw.get("remake_angle") or "", 180),
+            "evidence_gaps": _short_list(raw.get("evidence_gaps"), 5, 120),
+        }
+    )
+    return _drop_empty_prompt_values(result)
+
+
+def _case_compact_map_evidence(case_dir: Path) -> dict:
+    pack = _case_prompt_evidence_pack(case_dir)
+    return _drop_empty_prompt_values(
+        {
+            "content_category": pack.get("content_category") or "",
+            "content_category_label": pack.get("content_category_label") or "",
+            "video": _short_video_dict(pack.get("video")),
+            "stats": pack.get("stats") if isinstance(pack.get("stats"), dict) else {},
+            "assets": pack.get("assets") if isinstance(pack.get("assets"), dict) else {},
+            "statuses": pack.get("statuses") if isinstance(pack.get("statuses"), dict) else {},
+            "asr_excerpt": _truncate_text(pack.get("asr_excerpt") or "", 260),
+            "ocr_excerpt": _short_ocr_excerpt(pack.get("ocr_excerpt")),
+            "comment_summary": _short_comment_summary(pack.get("comment_summary")),
+        }
+    )
+
+
+def _case_title(case_dir: Path, analysis_input: dict) -> str:
+    metadata = _read_json(case_dir / "metadata.json")
+    return str(
+        metadata.get("title")
+        or analysis_input.get("title")
+        or analysis_input.get("source_url")
+        or metadata.get("source_url")
+        or ""
+    )
+
+
+def _short_video_dict(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: value.get(key)
+        for key in ("duration", "width", "height", "fps", "bitrate", "file_size")
+        if value.get(key) not in (None, "")
+    }
+
+
+def _short_ocr_excerpt(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    return _drop_empty_prompt_values(
+        {
+            "cover_text": _truncate_text(value.get("cover_text") or "", 120),
+            "subtitle_text": _truncate_text(value.get("subtitle_text") or "", 220),
+            "frame_text": _truncate_text(value.get("frame_text") or "", 160),
+        }
+    )
+
+
+def _short_comment_summary(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    return _drop_empty_prompt_values(
+        {
+            "status": value.get("status") or "",
+            "total_comments": value.get("total_comments") or 0,
+            "top_needs": _short_list(value.get("top_needs"), 4, 60),
+            "high_frequency_words": _short_list(value.get("high_frequency_words"), 8, 30),
+            "comment_hooks": _short_list(value.get("comment_hooks"), 4, 80),
+        }
+    )
+
+
+def build_reduce_distill_prompt(
+    sample_set: CloneSampleSet,
+    selected_samples: list[CloneSample],
+    map_summaries: list[dict],
+    distill_mode: str = "quick",
+) -> str:
+    segments = performance_segments(selected_samples)
+    evidence_matrix = selected_evidence_matrix(selected_samples)
+    evidence_constraints = selected_evidence_constraints(selected_samples)
+    reduce_summaries = [_map_summary_for_reduce(summary) for summary in map_summaries]
+    return f"""你是 Creator Clone Lab 的 Reduce 蒸馏助手。请只基于下面的单条视频 Map 摘要做跨样本归纳，输出合法 JSON，不要 Markdown。
+
+工作方式：
+- Map 阶段已经完成单条视频短拆解；你不要重新分析原视频，也不要要求更多原始素材。
+- Reduce 阶段只负责找 2-3 条样本之间反复出现的内容规律、流量来源、可复刻公式和风险边界。
+- 如果证据不足，写进 evidence_gaps；不要把没有 ASR/OCR/评论的部分说死。
+- 美拍/COS/颜值类优先归纳：第一眼吸引、人物人设、动作节奏、妆造/光线/构图、标题话题和互动引导。
+- 输出短、稳、可展示，避免长篇泛化。
+
+返回 JSON 字段：
+{{
+  "summary": "",
+  "creator_positioning": {{"what_the_creator_sells": "", "audience_promise": "", "hidden_genre": "", "audience_assumption": ""}},
+  "performance_segments": {{"highest_like_samples": [], "highest_comment_samples": [], "highest_share_samples": [], "highest_collect_samples": [], "weak_or_reference_samples": []}},
+  "topic_buckets": [],
+  "thinking_patterns": {{"assumptions": [], "tension_sources": [], "detail_selection_rules": [], "novelty_vs_familiarity": ""}},
+  "expression_patterns": {{"opening_hooks": [], "scene_order": [], "shot_types": [], "subtitle_voice": [], "visual_style": [], "ending_patterns": []}},
+  "transferable_formulas": [],
+  "creator_clone_spec": {{"taste": "", "topic_selection_rules": [], "structure_rules": [], "expression_rules": [], "visual_rules": [], "caption_voice": "", "ending_rules": [], "anti_patterns": [], "self_check_rubric": []}},
+  "candidate_ideas": [],
+  "evidence_gaps": [],
+  "next_actions": []
+}}
+
+蒸馏模式：{distill_mode}
+素材池标题：{sample_set.title}
+创作者：{sample_set.creator_name or "未知"}
+平台：{sample_set.source_platform}
+账号可见资料：{json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False)}
+证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
+证据约束：{json.dumps(evidence_constraints, ensure_ascii=False)}
+本地分层：{json.dumps(segments, ensure_ascii=False)}
+Map 摘要：{json.dumps(reduce_summaries, ensure_ascii=False)}
+"""
+
+
+def build_micro_reduce_distill_prompt(
+    sample_set: CloneSampleSet,
+    selected_samples: list[CloneSample],
+    map_summaries: list[dict],
+    distill_mode: str = "quick",
+) -> str:
+    rows = [_micro_map_summary(summary) for summary in map_summaries]
+    return f"""你是短视频账号规律蒸馏助手。请基于 2-3 条单条视频摘要，输出极简合法 JSON，不要 Markdown。
+
+要求：
+- 总输出尽量控制在 800 个中文字符内。
+- 只归纳共同规律，不重写单条报告。
+- 证据不足写进 evidence_gaps。
+
+返回 JSON：
+{{
+  "summary": "",
+  "creator_positioning": {{"what_the_creator_sells": "", "audience_promise": "", "hidden_genre": "", "audience_assumption": ""}},
+  "expression_patterns": {{"opening_hooks": [], "shot_types": [], "visual_style": [], "subtitle_voice": [], "ending_patterns": []}},
+  "transferable_formulas": [],
+  "creator_clone_spec": {{"taste": "", "topic_selection_rules": [], "structure_rules": [], "expression_rules": [], "visual_rules": [], "anti_patterns": [], "self_check_rubric": []}},
+  "candidate_ideas": [],
+  "evidence_gaps": [],
+  "next_actions": []
+}}
+
+素材池：{sample_set.title}
+模式：{distill_mode}
+样本摘要：{json.dumps(rows, ensure_ascii=False)}
+"""
+
+
+def _map_summary_for_reduce(summary: dict) -> dict:
+    evidence_status = summary.get("evidence_status") if isinstance(summary.get("evidence_status"), dict) else {}
+    return _drop_empty_prompt_values(
+        {
+            "sample_id": summary.get("sample_id") or "",
+            "aweme_id": summary.get("aweme_id") or "",
+            "case_id": summary.get("case_id") or "",
+            "title": _truncate_text(summary.get("title") or "", 100),
+            "media_type": summary.get("media_type") or "",
+            "metrics": summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {},
+            "map_source": summary.get("map_source") or "",
+            "map_error_code": summary.get("map_error_code") or "",
+            "one_line_summary": _truncate_text(summary.get("one_line_summary") or "", 180),
+            "content_category": summary.get("content_category") or "",
+            "hook": summary.get("hook") if isinstance(summary.get("hook"), dict) else {},
+            "visual": summary.get("visual") if isinstance(summary.get("visual"), dict) else {},
+            "content_ratio": summary.get("content_ratio") if isinstance(summary.get("content_ratio"), list) else [],
+            "copyable_points": _short_list(summary.get("copyable_points"), 5, 100),
+            "avoid_copying": _short_list(summary.get("avoid_copying"), 4, 100),
+            "remake_angle": _truncate_text(summary.get("remake_angle") or "", 140),
+            "evidence_gaps": _short_list(summary.get("evidence_gaps") or (summary.get("evidence") or {}).get("evidence_gaps"), 4, 100),
+            "evidence": {
+                "understanding_level": evidence_status.get("understanding_level") or "",
+                "has_keyframes": bool(evidence_status.get("has_keyframes")),
+                "has_asr_text": bool(evidence_status.get("has_asr_text")),
+                "has_ocr_text": bool(evidence_status.get("has_ocr_text")),
+                "has_comments": bool(evidence_status.get("has_comments")),
+                "analysis_status": evidence_status.get("analysis_status") or "",
+            },
+        }
+    )
+
+
+def _micro_map_summary(summary: dict) -> dict:
+    return _drop_empty_prompt_values(
+        {
+            "id": summary.get("sample_id") or summary.get("aweme_id") or "",
+            "title": _truncate_text(summary.get("title") or "", 60),
+            "category": summary.get("content_category") or "",
+            "metrics": summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {},
+            "summary": _truncate_text(summary.get("one_line_summary") or "", 120),
+            "hook": _truncate_text((summary.get("hook") or {}).get("why_stop_scrolling") or (summary.get("hook") or {}).get("first_impression") or "", 90)
+            if isinstance(summary.get("hook"), dict)
+            else "",
+            "style": _short_list((summary.get("visual") or {}).get("style_keywords"), 5, 24) if isinstance(summary.get("visual"), dict) else [],
+            "copyable": _short_list(summary.get("copyable_points"), 3, 70),
+            "avoid": _short_list(summary.get("avoid_copying"), 2, 70),
+        }
+    )
+
+
+def _lite_sample_prompt_payload(sample: CloneSample) -> dict:
+    return {
+        "sample_id": sample.sample_id,
+        "aweme_id": sample.aweme_id,
+        "title": _truncate_text(sample.title or sample.desc or "", 160),
+        "author": sample.author,
+        "media_type": sample.media_type,
+        "like_count": sample.like_count,
+        "comment_count": sample.comment_count,
+        "share_count": sample.share_count,
+        "collect_count": sample.collect_count,
+        "engagement_score": sample.engagement_score,
+        "understanding_level": sample.understanding_level,
+        "evidence": {
+            "has_case": bool(sample.case_id),
+            "has_frames": sample.has_frames,
+            "has_asr": sample.has_asr,
+            "has_ocr": sample.has_ocr,
+            "has_comments": sample.has_comments,
+            "analysis_status": sample.analysis_status,
+        },
+        "notes": _truncate_text(sample.notes, 120),
+    }
+
+
 def selected_evidence_matrix(samples: list[CloneSample]) -> dict:
     rows = list(samples or [])
     total = len(rows)
@@ -904,6 +1366,77 @@ def _truncate_text(value: str, limit: int) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _short_list(value, limit: int = 5, item_limit: int = 120) -> list:
+    if value is None:
+        return []
+    rows = value if isinstance(value, list) else [value]
+    result: list = []
+    for item in rows[:limit]:
+        if isinstance(item, dict):
+            result.append(_short_dict(item, item_limit=item_limit))
+        else:
+            text = _truncate_text(str(item), item_limit)
+            if text:
+                result.append(text)
+    return result
+
+
+def _short_dict(value: dict, item_limit: int = 120) -> dict:
+    shortened = {}
+    for key, item in value.items():
+        if isinstance(item, str):
+            shortened[key] = _truncate_text(item, item_limit)
+        elif isinstance(item, list):
+            shortened[key] = _short_list(item, 4, max(40, item_limit // 2))
+        elif isinstance(item, dict):
+            shortened[key] = _short_dict(item, item_limit=max(40, item_limit // 2))
+        else:
+            shortened[key] = item
+    return _drop_empty_prompt_values(shortened)
+
+
+def _short_content_ratio(value) -> list[dict]:
+    ratios = value if isinstance(value, list) else []
+    result: list[dict] = []
+    for item in ratios[:5]:
+        if isinstance(item, dict):
+            result.append(
+                _drop_empty_prompt_values(
+                    {
+                        "name": _truncate_text(item.get("name") or item.get("label") or "", 40),
+                        "percent": item.get("percent"),
+                        "reason": _truncate_text(item.get("reason") or item.get("description") or "", 100),
+                    }
+                )
+            )
+        else:
+            text = _truncate_text(str(item), 100)
+            if text:
+                result.append({"name": text})
+    return [item for item in result if item]
+
+
+def _short_evidence_list(value) -> list[dict]:
+    rows = value if isinstance(value, list) else []
+    result: list[dict] = []
+    for item in rows[:4]:
+        if isinstance(item, dict):
+            result.append(
+                _drop_empty_prompt_values(
+                    {
+                        "claim": _truncate_text(item.get("claim") or "", 100),
+                        "evidence": _truncate_text(item.get("evidence") or "", 140),
+                        "confidence": item.get("confidence") or "",
+                    }
+                )
+            )
+        else:
+            text = _truncate_text(str(item), 120)
+            if text:
+                result.append({"evidence": text})
+    return [item for item in result if item]
+
+
 def _drop_empty_prompt_values(value):
     if isinstance(value, dict):
         return {
@@ -930,14 +1463,62 @@ def distill_creator_clone(
         sample.selected = sample.sample_id in set(sample_set.selected_sample_ids)
     save_sample_set(sample_set)
 
-    prompt = build_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode, include_case_reports=include_case_reports)
+    use_map_reduce = len(selected_samples) >= 2
     output_dir = creator_clone_dir(sample_set.set_id)
-    (output_dir / "distill_prompt.md").write_text(prompt, encoding="utf-8")
 
     if not llm_is_configured():
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
 
-    result = get_llm_provider().analyze(prompt, [])
+    llm = get_llm_provider()
+    # Keep the web path to one external LLM call. Per-sample LLM Map calls are
+    # useful for future deep mode, but current providers often timeout when a
+    # three-sample distill fans out into 3 Map calls plus 1 Reduce call.
+    map_summaries = build_sample_map_summaries(selected_samples) if use_map_reduce else []
+    if map_summaries:
+        _write_json(output_dir / "map_summaries.json", map_summaries)
+    use_micro_reduce = use_map_reduce and len(selected_samples) >= 3
+    prompt = (
+        build_micro_reduce_distill_prompt(sample_set, selected_samples, map_summaries, distill_mode=distill_mode)
+        if use_micro_reduce
+        else build_reduce_distill_prompt(sample_set, selected_samples, map_summaries, distill_mode=distill_mode)
+        if use_map_reduce
+        else build_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode, include_case_reports=include_case_reports)
+    )
+    (output_dir / "distill_prompt.md").write_text(prompt, encoding="utf-8")
+    if use_micro_reduce:
+        (output_dir / "distill_prompt_micro.md").write_text(prompt, encoding="utf-8")
+        warnings.append("三条及以上样本默认使用 micro reduce，以提高当前大模型网关的成功率。")
+    try:
+        result = llm.analyze(prompt, [])
+    except AppError as error:
+        if use_map_reduce and error.code in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID}:
+            micro_prompt = build_micro_reduce_distill_prompt(
+                sample_set,
+                selected_samples,
+                map_summaries,
+                distill_mode=distill_mode,
+            )
+            (output_dir / "distill_prompt_micro.md").write_text(micro_prompt, encoding="utf-8")
+            try:
+                result = llm.analyze(micro_prompt, [])
+            except AppError:
+                raise error
+            warnings.append("常规 Reduce 蒸馏失败，已使用 micro reduce 短提示重试成功。")
+        elif error.code not in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID} or not include_case_reports:
+            raise
+        else:
+            compact_prompt = build_distill_prompt(
+                sample_set,
+                selected_samples,
+                distill_mode=distill_mode,
+                include_case_reports=False,
+            )
+            (output_dir / "distill_prompt_compact.md").write_text(compact_prompt, encoding="utf-8")
+            try:
+                result = llm.analyze(compact_prompt, [])
+            except AppError:
+                raise error
+            warnings.append("首次蒸馏失败，已使用精简证据包重试成功。")
     normalized = normalize_creator_clone_result(result, sample_set, selected_samples, warnings)
     _write_json(output_dir / "creator_clone_result.json", normalized)
     (output_dir / "creator_clone.md").write_text(render_creator_clone_markdown(normalized), encoding="utf-8")
@@ -946,6 +1527,10 @@ def distill_creator_clone(
         "result": normalized,
         "exports": export_paths(sample_set.set_id),
         "warnings": warnings,
+        "map_reduce": {
+            "enabled": use_map_reduce,
+            "map_summary_count": len(map_summaries),
+        },
     }
 
 
@@ -955,14 +1540,31 @@ def prompt_only_result(sample_set: CloneSampleSet, selected_sample_ids: list[str
     for sample in sample_set.samples:
         sample.selected = sample.sample_id in set(sample_set.selected_sample_ids)
     save_sample_set(sample_set)
-    prompt = build_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode, include_case_reports=include_case_reports)
     output_dir = creator_clone_dir(sample_set.set_id)
+    use_map_reduce = len(selected_samples) >= 2
+    map_summaries = build_sample_map_summaries(selected_samples) if use_map_reduce else []
+    if map_summaries:
+        _write_json(output_dir / "map_summaries.json", map_summaries)
+    use_micro_reduce = use_map_reduce and len(selected_samples) >= 3
+    prompt = (
+        build_micro_reduce_distill_prompt(sample_set, selected_samples, map_summaries, distill_mode=distill_mode)
+        if use_micro_reduce
+        else build_reduce_distill_prompt(sample_set, selected_samples, map_summaries, distill_mode=distill_mode)
+        if use_map_reduce
+        else build_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode, include_case_reports=include_case_reports)
+    )
     (output_dir / "distill_prompt.md").write_text(prompt, encoding="utf-8")
+    if use_micro_reduce:
+        (output_dir / "distill_prompt_micro.md").write_text(prompt, encoding="utf-8")
     return {
         "set": sample_set.to_dict(),
         "prompt": prompt,
         "exports": export_paths(sample_set.set_id),
         "warnings": warnings,
+        "map_reduce": {
+            "enabled": use_map_reduce,
+            "map_summary_count": len(map_summaries),
+        },
     }
 
 
@@ -1097,7 +1699,9 @@ def export_paths(set_id: str) -> dict:
     return {
         "samples_json": str(base / "samples.json"),
         "handoff_manifest_json": str(base / "handoff_manifest.json"),
+        "map_summaries_json": str(base / "map_summaries.json"),
         "distill_prompt_md": str(base / "distill_prompt.md"),
+        "distill_prompt_micro_md": str(base / "distill_prompt_micro.md"),
         "creator_clone_result_json": str(base / "creator_clone_result.json"),
         "creator_clone_md": str(base / "creator_clone.md"),
     }

@@ -26,6 +26,8 @@ from app.services.auto_analyzer import analyze_case_artifact, existing_auto_anal
 from app.services.asr import run_case_asr
 from app.services.douyin_url_parser import extract_aweme_id
 from app.services.profile_scan import (
+    DataSourceManager,
+    DouyinCookieProfileProvider,
     DouyinPublicProfileProvider,
     ManualLinksProfileProvider,
     extract_sec_user_id,
@@ -59,6 +61,11 @@ from app.services.creator_clone import (
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def isolate_runtime_settings_file(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", tmp_path / ".local_settings.json")
 
 
 def detailed_visual_analysis() -> dict:
@@ -272,10 +279,19 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "主页 URL / sec_user_id" in response.text
     assert "导入一组对标素材" in response.text
     assert "1. 导入素材" in response.text
-    assert "2. 选择样本" in response.text
-    assert "3. 富化证据" in response.text
-    assert "4. 大模型蒸馏" in response.text
-    assert "5. 导出规则" in response.text
+    assert "2. 构建素材池" in response.text
+    assert "3. 选择 N 条样本" in response.text
+    assert "4. 证据富化" in response.text
+    assert "5. 大模型蒸馏" in response.text
+    assert "6. 可视化输出" in response.text
+    assert 'id="creator-clone-next-bar"' in response.text
+    assert 'id="creator-clone-current-step"' in response.text
+    assert 'id="creator-clone-next-summary"' in response.text
+    assert 'id="creator-clone-next-button"' in response.text
+    assert "当前步骤：导入素材" in response.text
+    assert "Start Creator Analysis" in response.text
+    assert "数据源设置" in response.text
+    assert "备用动作" in response.text
     assert "粘贴作品链接" in response.text
     assert 'id="profile-scan-button"' in response.text
     assert 'id="profile-sort"' in response.text
@@ -287,7 +303,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-capture-audit"' in response.text
     assert 'id="profile-decision-board"' in response.text
     assert 'id="profile-segments-preview"' in response.text
-    assert "不登录、不使用 Cookie" in response.text
+    assert "默认不依赖 Cookie" in response.text
+    assert "Cookie / Web API 仅作为可选增强层" in response.text
     assert "不绕风控" in response.text
     assert "Creator Clone Lab" in response.text
     assert "浏览器辅助采集" in response.text
@@ -295,7 +312,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "JSON / CSV 导入" in response.text
     assert "已有 Case 导入" in response.text
     assert "高级 / 安全交接包" in response.text
-    assert "导入交接包" in response.text
+    assert "handoff_manifest.json" in response.text
     assert 'id="profile-handoff-file"' in response.text
     assert 'accept=".json,application/json"' in response.text
     assert 'id="profile-handoff-manifest"' in response.text
@@ -304,14 +321,15 @@ def test_home_uses_versioned_static_assets() -> None:
     public_section = response.text[
         response.text.index('id="profile-public-section"') : response.text.index('id="profile-manual-section"')
     ]
-    assert 'id="profile-browser-helper-button"' in public_section
+    assert 'id="profile-browser-helper-button"' not in public_section
+    assert "公开主页扫描（实验）" not in public_section
     assert 'id="profile-chrome-status"' in public_section
     assert "主页 URL / sec_user_id" in public_section
     assert "插件辅助采集" in response.text
     assert "素材池概览" in response.text
     assert "样本选择" in response.text
     assert "证据富化" in response.text
-    assert "导出规则" in response.text
+    assert "可视化输出" in response.text
     assert "插件辅助采集" in response.text
     assert 'id="profile-chrome-status"' in response.text
     assert 'id="profile-helper-tools"' in response.text
@@ -325,6 +343,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-continue-chrome-button"' in response.text
     assert "本机 Chrome 辅助状态：尚未检测" in response.text
     assert "本地文件导入（后续接入）" in response.text
+    assert "手动调整样本" in response.text
     assert "全选" in response.text
     assert "推荐组合" in response.text
     assert "高赞 Top 3" in response.text
@@ -341,19 +360,20 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "启动 Chrome" not in response.text
     assert "复制启动命令" not in response.text
     assert "清理辅助 Profile" not in response.text
-    assert "导入链接" in response.text
-    assert "导入列表" in response.text
-    assert "导入 Case" in response.text
-    assert "summary-actions" in response.text
+    assert "导入链接" not in response.text
+    assert "导入列表" not in response.text
+    assert "导入 Case</button>" not in response.text
     assert "toolbar-actions summary-actions" not in response.text
     assert 'data-profile-source="public"' in response.text
-    assert 'data-profile-source="manual"' in response.text
-    assert 'data-profile-source="structured"' in response.text
-    assert 'data-profile-source="handoff"' in response.text
-    assert 'data-profile-source="case"' in response.text
+    assert 'data-profile-import-mode="manual"' in response.text
+    assert 'data-profile-import-mode="structured"' in response.text
+    assert 'data-profile-import-mode="handoff"' in response.text
+    assert 'data-profile-import-mode="case"' in response.text
     assert 'data-profile-import="' not in response.text
     assert 'data-profile-build="' not in response.text
     assert 'id="profile-selected-import-button"' not in response.text
+    assert "素材明细" in response.text
+    assert response.text.index("素材明细") < response.text.index("<th>选择</th>")
     assert "<th>选择</th>" in response.text
     assert "<th>素材</th>" in response.text
     assert "<th>类型</th>" in response.text
@@ -374,12 +394,39 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "生成素材包" in response.text
     assert "写入富化归档" in response.text
     assert "本地工作流预检" in response.text
+    assert "Creator Clone 数据源" in response.text
+    assert 'id="data-source-status-list"' in response.text
     assert 'id="refresh-preflight-button"' in response.text
     assert 'id="preflight-summary"' in response.text
     assert 'id="preflight-list"' in response.text
     assert "大模型蒸馏" in response.text
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     script = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert "function getWizardStep" in script
+    assert "function getCreatorCloneStage" in script
+    assert "function renderCreatorCloneNextAction" in script
+    assert "function runCreatorCloneNextAction" in script
+    assert "function runCreatorCloneImportStep" in script
+    assert "function useRecommendedProfileSamples" in script
+    assert "creatorCloneExportActions.open = true" in script
+    assert "下一步：使用推荐样本继续" in script
+    assert "下一步：确认样本并富化" in script
+    assert "下一步：开始大模型蒸馏" in script
+    assert "下一步：下载报告" in script
+    assert "SAMPLE_POOL" in script
+    assert "ENRICH" in script
+    assert "/api/settings/data-sources" in script
+    assert "dataset.creatorCloneAction" in script
+    assert "ready_for_profile_scan" in script
+    assert "setActiveImportMode(\"manual\")" in script
+    assert "profileManualLinks?.focus()" in script
+    assert "recommendedProfileSampleMix" in script
+    assert ".creator-clone-next-bar" in stylesheet
+    assert ".primary-cta" in stylesheet
+    assert ".advanced-action-list" in stylesheet
+    assert ".manual-sample-adjustments" in stylesheet
+    assert ".profile-material-details" in stylesheet
+    assert response.text.count("primary-cta") == 1
     assert "// Settings" in script
     assert "// Single Work" in script
     assert "// Creator Clone: import" in script
@@ -690,11 +737,13 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "## 业务模块规划" in readme
     assert "单作品解析：当前可用" in readme
     assert "创作者克隆实验室" in readme
-    assert "公开主页扫描是上线主入口" in readme
+    assert "单主线 Wizard" in readme
+    assert "DataSourceManager" in readme
+    assert "Cookie Web API 只是可选增强层" in readme
     assert "公开网站 / 本机助手模式的目标边界" in readme
     assert "`handoff_manifest.json` 必须带有安全契约声明" in readme
     assert "公开站 / 本机助手边界" in readme
-    assert "首页主流程只暴露“插件辅助采集”" in readme
+    assert "Creator Clone Lab 首页只保留一个主动作" in readme
     assert "状态检查只返回匿名标签页数量和就绪状态" in readme
     assert "真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的“插件辅助采集”" in readme
     assert "扫描主页和清理辅助 profile 除了 token 之外还需要页面确认" in readme
@@ -988,7 +1037,7 @@ def test_llm_settings_returns_unconfigured_status_without_secret(monkeypatch) ->
     assert payload["ok"] is True
     assert payload["llm"]["configured"] is False
     assert payload["llm"]["has_api_key"] is False
-    assert "LLM_PROVIDER" in payload["llm"]["status_message"]
+    assert "设置弹窗" in payload["llm"]["status_message"]
 
 
 def test_llm_settings_masks_configured_api_key(monkeypatch) -> None:
@@ -1006,6 +1055,74 @@ def test_llm_settings_masks_configured_api_key(monkeypatch) -> None:
     assert payload["llm"]["has_api_key"] is True
     assert payload["llm"]["masked_api_key"] == "sk-****abcd"
     assert secret not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_data_source_settings_masks_cookie(monkeypatch) -> None:
+    secret = "sessionid=very-secret-cookie-value"
+    monkeypatch.setattr("app.services.data_source_settings.settings.douyin_cookie", secret)
+    monkeypatch.setattr("app.services.data_source_settings.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.data_source_settings.settings.douyin_referer", "https://www.douyin.com/")
+
+    response = client.get("/api/settings/data-sources")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    status = payload["data_sources"]
+    assert status["configured"] is True
+    assert status["has_cookie"] is True
+    assert status["masked_cookie"].startswith("sess")
+    assert secret not in json.dumps(payload, ensure_ascii=False)
+    assert {source["id"] for source in status["sources"]} >= {"manual_links", "browser_dom", "cookie_api", "external_api"}
+
+
+def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / ".local_settings.json"
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
+
+    response = client.put(
+        "/api/settings/llm",
+        json={
+            "provider": "openai_compatible",
+            "api_base": "https://api.example.test/v1",
+            "api_key": "sk-local-runtime-secret",
+            "model": "vision-model",
+            "timeout_seconds": 42,
+            "temperature": 0.1,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm"]["configured"] is True
+    assert payload["llm"]["masked_api_key"] == "sk-****cret"
+    assert "sk-local-runtime-secret" not in json.dumps(payload, ensure_ascii=False)
+    stored = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert stored["llm"]["api_key"] == "sk-local-runtime-secret"
+
+
+def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / ".local_settings.json"
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
+    secret = "sessionid=local-douyin-cookie-secret"
+
+    response = client.put(
+        "/api/settings/data-sources/douyin",
+        json={
+            "douyin_cookie": secret,
+            "user_agent": "Browser UA",
+            "referer": "https://www.douyin.com/",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    status = payload["data_sources"]
+    assert status["has_cookie"] is True
+    assert status["user_agent"] == "Browser UA"
+    assert secret not in json.dumps(payload, ensure_ascii=False)
+    stored = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert stored["douyin"]["cookie"] == secret
 
 
 def test_llm_settings_accepts_openai_responses_provider(monkeypatch) -> None:
@@ -7628,6 +7745,10 @@ def test_profile_video_item_engagement_score() -> None:
     assert item.engagement_score == 147
 
 
+def test_data_source_manager_declares_supported_sources() -> None:
+    assert DataSourceManager().supported_sources() == ("manual_links", "browser_dom", "cookie_api", "external_api")
+
+
 def test_manual_links_profile_provider_extracts_and_deduplicates_aweme_ids() -> None:
     provider = ManualLinksProfileProvider()
     result = provider.scan(
@@ -7864,6 +7985,109 @@ def test_douyin_public_profile_provider_reports_risk_control_page(monkeypatch) -
     assert "浏览器校验" in raised.value.message
 
 
+def test_douyin_cookie_profile_provider_parses_web_api_payload(monkeypatch) -> None:
+    sec_uid = "MS4wLjABAAAAabc12345"
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "aweme_list": [
+                    {
+                        "aweme_id": "7622653084993647603",
+                        "desc": "Cookie API 作品",
+                        "author": {"nickname": "作者", "sec_uid": sec_uid},
+                        "statistics": {"digg_count": 120, "comment_count": 3, "share_count": 2},
+                        "video": {"duration": 9000, "cover": {"url_list": ["https://example.test/cover.jpg"]}},
+                    }
+                ],
+                "has_more": False,
+                "max_cursor": "0",
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, params=None, headers=None):
+            captured["url"] = url
+            captured["params"] = params or {}
+            captured["headers"] = headers or {}
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_cookie", "sessionid=test-secret-cookie")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_referer", "https://www.douyin.com/")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    result = DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url=f"https://www.douyin.com/user/{sec_uid}", count=20))
+
+    assert result.provider == "cookie_api"
+    assert result.items[0].aweme_id == "7622653084993647603"
+    assert result.items[0].like_count == 120
+    assert result.items[0].source_provider == "cookie_api"
+    assert captured["url"].endswith("/aweme/v1/web/user/post/")
+    assert captured["params"]["sec_user_id"] == sec_uid
+    assert captured["headers"]["Cookie"] == "sessionid=test-secret-cookie"
+
+
+def test_cookie_profile_provider_requires_cookie(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_cookie", "")
+
+    with pytest.raises(AppError) as raised:
+        DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
+
+    assert raised.value.code == "COOKIE_REQUIRED"
+
+
+def test_data_source_manager_falls_back_after_cookie_failure(monkeypatch) -> None:
+    class FakeResponse:
+        def __init__(self, status_code=200, payload=None, text=""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text
+
+        def json(self):
+            if self._payload is None:
+                raise ValueError("not json")
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, **kwargs):
+            if "/aweme/v1/web/user/post/" in url:
+                return FakeResponse(status_code=403, payload={})
+            return FakeResponse(
+                text='<a href="https://www.douyin.com/video/7622653084993647603">作品</a>',
+            )
+
+    monkeypatch.setattr("app.services.profile_scan.settings.profile_scan_provider", "public")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_cookie", "sessionid=expired")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    result = scan_profile(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345", count=20))
+
+    assert result.provider == "douyin_public"
+    assert result.items[0].aweme_id == "7622653084993647603"
+    assert any("COOKIE_INVALID" in warning for warning in result.warnings)
+
+
 def test_profile_scan_endpoint_reports_risk_control_without_html_leak(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200
@@ -8071,19 +8295,28 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "主页 URL / sec_user_id" in response.text
     assert "浏览器辅助采集" in response.text
     assert "插件辅助采集" in response.text
+    assert "Start Creator Analysis" in response.text
+    assert "数据源设置" in response.text
+    assert "备用动作" in response.text
+    assert "手动调整样本" in response.text
+    assert "素材明细" in response.text
     assert "主页扫描</button>" not in response.text
-    assert "不登录、不使用 Cookie" in response.text
+    assert "默认不依赖 Cookie" in response.text
+    assert "Cookie / Web API 仅作为可选增强层" in response.text
     assert "不绕验证码、不绕风控" in response.text
     assert "JSON / CSV 导入" in response.text
     assert "已有 Case 导入" in response.text
     assert "本地文件导入（后续接入）" in response.text
     assert "确认样本并富化" in response.text
+    assert "构建素材池" in response.text
+    assert "选择 N 条样本" in response.text
     assert "素材池概览" in response.text
     assert "样本选择" in response.text
     assert "证据富化" in response.text
     assert "大模型蒸馏" in response.text
     assert "creator-clone-distill-button" in response.text
     assert "报告文件" in response.text
+    assert 'id="creator-clone-export-actions"' in response.text
     assert "复制规则" in response.text
     assert "下载报告" in response.text
     script = Path("app/static/app.js").read_text(encoding="utf-8")
@@ -9112,10 +9345,12 @@ def test_creator_clone_distill_llm_request_failure_returns_prompt_recovery(monke
     assert payload["error_code"] == "LLM_REQUEST_FAILED"
     assert payload["recovery"] == "prompt_only"
     assert "prompt" in payload
-    assert "本地预分层样本" in payload["prompt"]
+    assert "Map 摘要" in payload["prompt"]
+    assert payload["map_reduce"]["enabled"] is True
     assert "7622653084993647603" in payload["prompt"]
     assert payload["set"]["set_id"] == set_id
     assert Path(payload["exports"]["distill_prompt_md"]).is_file()
+    assert Path(payload["exports"]["map_summaries_json"]).is_file()
     assert "sk-" not in Path(payload["exports"]["distill_prompt_md"]).read_text(encoding="utf-8")
 
 
@@ -9164,6 +9399,13 @@ def test_creator_clone_distill_job_unconfigured_returns_prompt(monkeypatch) -> N
 def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) -> None:
     class FakeProvider:
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            if "单条 Map 拆解助手" in prompt:
+                return {
+                    "one_line_summary": "单条样本短拆解",
+                    "content_category": "light_story",
+                    "hook": {"first_impression": "标题判断题带动停留"},
+                    "copyable_points": ["判断题标题"],
+                }
             assert "高赞样本" in prompt
             return {
                 "summary": "用轻剧情和标题判断题驱动停留。",
@@ -9201,9 +9443,101 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
 
 
+def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> None:
+    class FakeProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            self.calls += 1
+            assert "Map 摘要" in prompt
+            assert "case_analysis_report_excerpt" not in prompt
+            return {
+                "summary": "Map-Reduce 蒸馏成功。",
+                "creator_positioning": {"what_the_creator_sells": "稳定审美"},
+                "creator_clone_spec": {"taste": "证据优先"},
+            }
+
+    provider = FakeProvider()
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
+    response = client.post(
+        "/api/creator-clone/distill",
+        json={
+            "samples": [
+                {"sample_id": "sample_retry_a", "title": "样本A", "like_count": 100, "case_id": "case_a"},
+                {"sample_id": "sample_retry_b", "title": "样本B", "like_count": 50, "case_id": "case_b"},
+            ],
+            "selected_sample_ids": ["sample_retry_a", "sample_retry_b"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["result"]["summary"] == "Map-Reduce 蒸馏成功。"
+    assert payload["result"]["sample_overview"]["selected_count"] == 2
+    assert payload["map_reduce"]["enabled"] is True
+    assert payload["map_reduce"]["map_summary_count"] == 2
+    map_summaries = json.loads(Path(payload["exports"]["map_summaries_json"]).read_text(encoding="utf-8"))
+    assert len(map_summaries) == 2
+    assert map_summaries[0]["sample_id"] == "sample_retry_a"
+    assert provider.calls == 1
+
+
+def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) -> None:
+    class FakeProvider:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            self.prompts.append(prompt)
+            assert "样本摘要" in prompt
+            assert "极简合法 JSON" in prompt
+            assert "请严格返回这个 JSON 结构" not in prompt
+            assert "case_analysis_report_excerpt" not in prompt
+            return {
+                "summary": "三条样本 Map-Reduce 蒸馏成功。",
+                "creator_positioning": {"what_the_creator_sells": "美拍氛围和人物吸引"},
+                "creator_clone_spec": {"taste": "短、准、视觉先行"},
+            }
+
+    provider = FakeProvider()
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
+    response = client.post(
+        "/api/creator-clone/distill",
+        json={
+            "samples": [
+                {"sample_id": "sample_lite_a", "title": "样本A", "like_count": 100, "case_id": "case_a"},
+                {"sample_id": "sample_lite_b", "title": "样本B", "like_count": 50, "case_id": "case_b"},
+                {"sample_id": "sample_lite_c", "title": "样本C", "like_count": 20, "case_id": "case_c"},
+            ],
+            "selected_sample_ids": ["sample_lite_a", "sample_lite_b", "sample_lite_c"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["result"]["summary"] == "三条样本 Map-Reduce 蒸馏成功。"
+    assert payload["result"]["sample_overview"]["selected_count"] == 3
+    assert payload["map_reduce"]["enabled"] is True
+    assert len(provider.prompts) == 1
+    assert len(provider.prompts[-1]) < 2500
+    assert Path(payload["exports"]["map_summaries_json"]).is_file()
+    assert Path(payload["exports"]["distill_prompt_micro_md"]).is_file()
+
+
 def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch) -> None:
     class FakeProvider:
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            if "单条 Map 拆解助手" in prompt:
+                return {
+                    "one_line_summary": "后台任务单条 Map 完成",
+                    "content_category": "workflow",
+                    "hook": {"first_impression": "先看高赞高评"},
+                    "copyable_points": ["按表现分层"],
+                }
             assert "高赞样本" in prompt
             return {
                 "summary": "后台任务蒸馏完成。",
