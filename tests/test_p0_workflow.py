@@ -26,6 +26,8 @@ from app.services.auto_analyzer import analyze_case_artifact, existing_auto_anal
 from app.services.asr import run_case_asr
 from app.services.douyin_url_parser import extract_aweme_id
 from app.services.profile_scan import (
+    DataSourceManager,
+    DouyinCookieProfileProvider,
     DouyinPublicProfileProvider,
     ManualLinksProfileProvider,
     extract_sec_user_id,
@@ -272,17 +274,19 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "主页 URL / sec_user_id" in response.text
     assert "导入一组对标素材" in response.text
     assert "1. 导入素材" in response.text
-    assert "2. 选择样本" in response.text
-    assert "3. 富化证据" in response.text
-    assert "4. 大模型蒸馏" in response.text
-    assert "5. 导出规则" in response.text
+    assert "2. 构建素材池" in response.text
+    assert "3. 选择 N 条样本" in response.text
+    assert "4. 证据富化" in response.text
+    assert "5. 大模型蒸馏" in response.text
+    assert "6. 可视化输出" in response.text
     assert 'id="creator-clone-next-bar"' in response.text
     assert 'id="creator-clone-current-step"' in response.text
     assert 'id="creator-clone-next-summary"' in response.text
     assert 'id="creator-clone-next-button"' in response.text
     assert "当前步骤：导入素材" in response.text
-    assert "下一步：开始采集素材" in response.text
-    assert "高级操作" in response.text
+    assert "Start Creator Analysis" in response.text
+    assert "数据源设置" in response.text
+    assert "备用动作" in response.text
     assert "粘贴作品链接" in response.text
     assert 'id="profile-scan-button"' in response.text
     assert 'id="profile-sort"' in response.text
@@ -294,7 +298,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-capture-audit"' in response.text
     assert 'id="profile-decision-board"' in response.text
     assert 'id="profile-segments-preview"' in response.text
-    assert "不登录、不使用 Cookie" in response.text
+    assert "默认不依赖 Cookie" in response.text
+    assert "Cookie / Web API 仅作为可选增强层" in response.text
     assert "不绕风控" in response.text
     assert "Creator Clone Lab" in response.text
     assert "浏览器辅助采集" in response.text
@@ -319,7 +324,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "素材池概览" in response.text
     assert "样本选择" in response.text
     assert "证据富化" in response.text
-    assert "导出规则" in response.text
+    assert "可视化输出" in response.text
     assert "插件辅助采集" in response.text
     assert 'id="profile-chrome-status"' in response.text
     assert 'id="profile-helper-tools"' in response.text
@@ -384,12 +389,15 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "生成素材包" in response.text
     assert "写入富化归档" in response.text
     assert "本地工作流预检" in response.text
+    assert "Creator Clone 数据源" in response.text
+    assert 'id="data-source-status-list"' in response.text
     assert 'id="refresh-preflight-button"' in response.text
     assert 'id="preflight-summary"' in response.text
     assert 'id="preflight-list"' in response.text
     assert "大模型蒸馏" in response.text
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     script = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert "function getWizardStep" in script
     assert "function getCreatorCloneStage" in script
     assert "function renderCreatorCloneNextAction" in script
     assert "function runCreatorCloneNextAction" in script
@@ -400,6 +408,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "下一步：确认样本并富化" in script
     assert "下一步：开始大模型蒸馏" in script
     assert "下一步：下载报告" in script
+    assert "SAMPLE_POOL" in script
+    assert "ENRICH" in script
+    assert "/api/settings/data-sources" in script
     assert "dataset.creatorCloneAction" in script
     assert "ready_for_profile_scan" in script
     assert "setActiveImportMode(\"manual\")" in script
@@ -721,11 +732,13 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "## 业务模块规划" in readme
     assert "单作品解析：当前可用" in readme
     assert "创作者克隆实验室" in readme
-    assert "公开主页扫描是上线主入口" in readme
+    assert "单主线 Wizard" in readme
+    assert "DataSourceManager" in readme
+    assert "Cookie Web API 只是可选增强层" in readme
     assert "公开网站 / 本机助手模式的目标边界" in readme
     assert "`handoff_manifest.json` 必须带有安全契约声明" in readme
     assert "公开站 / 本机助手边界" in readme
-    assert "首页主流程只暴露“插件辅助采集”" in readme
+    assert "Creator Clone Lab 首页只保留一个主动作" in readme
     assert "状态检查只返回匿名标签页数量和就绪状态" in readme
     assert "真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的“插件辅助采集”" in readme
     assert "扫描主页和清理辅助 profile 除了 token 之外还需要页面确认" in readme
@@ -1037,6 +1050,25 @@ def test_llm_settings_masks_configured_api_key(monkeypatch) -> None:
     assert payload["llm"]["has_api_key"] is True
     assert payload["llm"]["masked_api_key"] == "sk-****abcd"
     assert secret not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_data_source_settings_masks_cookie(monkeypatch) -> None:
+    secret = "sessionid=very-secret-cookie-value"
+    monkeypatch.setattr("app.services.data_source_settings.settings.douyin_cookie", secret)
+    monkeypatch.setattr("app.services.data_source_settings.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.data_source_settings.settings.douyin_referer", "https://www.douyin.com/")
+
+    response = client.get("/api/settings/data-sources")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    status = payload["data_sources"]
+    assert status["configured"] is True
+    assert status["has_cookie"] is True
+    assert status["masked_cookie"].startswith("sess")
+    assert secret not in json.dumps(payload, ensure_ascii=False)
+    assert {source["id"] for source in status["sources"]} >= {"manual_links", "browser_dom", "cookie_api", "external_api"}
 
 
 def test_llm_settings_accepts_openai_responses_provider(monkeypatch) -> None:
@@ -7659,6 +7691,10 @@ def test_profile_video_item_engagement_score() -> None:
     assert item.engagement_score == 147
 
 
+def test_data_source_manager_declares_supported_sources() -> None:
+    assert DataSourceManager().supported_sources() == ("manual_links", "browser_dom", "cookie_api", "external_api")
+
+
 def test_manual_links_profile_provider_extracts_and_deduplicates_aweme_ids() -> None:
     provider = ManualLinksProfileProvider()
     result = provider.scan(
@@ -7895,6 +7931,109 @@ def test_douyin_public_profile_provider_reports_risk_control_page(monkeypatch) -
     assert "浏览器校验" in raised.value.message
 
 
+def test_douyin_cookie_profile_provider_parses_web_api_payload(monkeypatch) -> None:
+    sec_uid = "MS4wLjABAAAAabc12345"
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "aweme_list": [
+                    {
+                        "aweme_id": "7622653084993647603",
+                        "desc": "Cookie API 作品",
+                        "author": {"nickname": "作者", "sec_uid": sec_uid},
+                        "statistics": {"digg_count": 120, "comment_count": 3, "share_count": 2},
+                        "video": {"duration": 9000, "cover": {"url_list": ["https://example.test/cover.jpg"]}},
+                    }
+                ],
+                "has_more": False,
+                "max_cursor": "0",
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, params=None, headers=None):
+            captured["url"] = url
+            captured["params"] = params or {}
+            captured["headers"] = headers or {}
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_cookie", "sessionid=test-secret-cookie")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_referer", "https://www.douyin.com/")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    result = DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url=f"https://www.douyin.com/user/{sec_uid}", count=20))
+
+    assert result.provider == "cookie_api"
+    assert result.items[0].aweme_id == "7622653084993647603"
+    assert result.items[0].like_count == 120
+    assert result.items[0].source_provider == "cookie_api"
+    assert captured["url"].endswith("/aweme/v1/web/user/post/")
+    assert captured["params"]["sec_user_id"] == sec_uid
+    assert captured["headers"]["Cookie"] == "sessionid=test-secret-cookie"
+
+
+def test_cookie_profile_provider_requires_cookie(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_cookie", "")
+
+    with pytest.raises(AppError) as raised:
+        DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
+
+    assert raised.value.code == "COOKIE_REQUIRED"
+
+
+def test_data_source_manager_falls_back_after_cookie_failure(monkeypatch) -> None:
+    class FakeResponse:
+        def __init__(self, status_code=200, payload=None, text=""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text
+
+        def json(self):
+            if self._payload is None:
+                raise ValueError("not json")
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, **kwargs):
+            if "/aweme/v1/web/user/post/" in url:
+                return FakeResponse(status_code=403, payload={})
+            return FakeResponse(
+                text='<a href="https://www.douyin.com/video/7622653084993647603">作品</a>',
+            )
+
+    monkeypatch.setattr("app.services.profile_scan.settings.profile_scan_provider", "public")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_cookie", "sessionid=expired")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    result = scan_profile(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345", count=20))
+
+    assert result.provider == "douyin_public"
+    assert result.items[0].aweme_id == "7622653084993647603"
+    assert any("COOKIE_INVALID" in warning for warning in result.warnings)
+
+
 def test_profile_scan_endpoint_reports_risk_control_without_html_leak(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200
@@ -8102,17 +8241,21 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "主页 URL / sec_user_id" in response.text
     assert "浏览器辅助采集" in response.text
     assert "插件辅助采集" in response.text
-    assert "下一步：开始采集素材" in response.text
-    assert "高级操作" in response.text
+    assert "Start Creator Analysis" in response.text
+    assert "数据源设置" in response.text
+    assert "备用动作" in response.text
     assert "手动调整样本" in response.text
     assert "素材明细" in response.text
     assert "主页扫描</button>" not in response.text
-    assert "不登录、不使用 Cookie" in response.text
+    assert "默认不依赖 Cookie" in response.text
+    assert "Cookie / Web API 仅作为可选增强层" in response.text
     assert "不绕验证码、不绕风控" in response.text
     assert "JSON / CSV 导入" in response.text
     assert "已有 Case 导入" in response.text
     assert "本地文件导入（后续接入）" in response.text
     assert "确认样本并富化" in response.text
+    assert "构建素材池" in response.text
+    assert "选择 N 条样本" in response.text
     assert "素材池概览" in response.text
     assert "样本选择" in response.text
     assert "证据富化" in response.text

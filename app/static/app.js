@@ -19,6 +19,8 @@ const llmTestResult = document.getElementById("llm-test-result");
 const refreshPreflightButton = document.getElementById("refresh-preflight-button");
 const preflightSummary = document.getElementById("preflight-summary");
 const preflightList = document.getElementById("preflight-list");
+const dataSourceStatusBadge = document.getElementById("data-source-status-badge");
+const dataSourceStatusList = document.getElementById("data-source-status-list");
 const resultCard = document.getElementById("result-card");
 const caseSummary = document.getElementById("case-summary");
 const homeCaseView = document.getElementById("home-case-view");
@@ -134,6 +136,7 @@ let chromeHelperStatusLoaded = false;
 let profileLastChromeProfileValue = "";
 let profileChromeLaunchCommand = "";
 let profileChromeAvailable = false;
+let creatorCloneEnrichmentRunning = false;
 let preflightCopySnippets = [];
 
 function setStatus(element, value) {
@@ -428,21 +431,36 @@ function hasPendingEnrichment(items = selectedProfileItems()) {
   return normalizeItems(items).some((item) => isProfileItemBuildable(item) && !item.case_id && !item.has_frames);
 }
 
-function getCreatorCloneStage() {
+function getWizardStep() {
   if (currentCreatorCloneResult) {
-    return "export";
+    return "EXPORT";
   }
   if (!profileItems.length) {
-    return "import";
+    return "IMPORT";
   }
   const selected = selectedProfileItems();
+  if (creatorCloneEnrichmentRunning) {
+    return "ENRICH";
+  }
   if (!selected.length) {
-    return "select";
+    return "SAMPLE_POOL";
   }
   if (hasPendingEnrichment(selected)) {
-    return "enrich";
+    return "SELECT";
   }
-  return "distill";
+  return "DISTILL";
+}
+
+function getCreatorCloneStage() {
+  const step = getWizardStep();
+  return {
+    IMPORT: "import",
+    SAMPLE_POOL: "sample_pool",
+    SELECT: "select",
+    ENRICH: "enrich",
+    DISTILL: "distill",
+    EXPORT: "export",
+  }[step] || "import";
 }
 
 function creatorCloneStageMeta(stage = getCreatorCloneStage()) {
@@ -452,13 +470,18 @@ function creatorCloneStageMeta(stage = getCreatorCloneStage()) {
   const labels = {
     import: {
       step: "当前步骤：导入素材",
-      button: "下一步：开始采集素材",
-      summary: "请先选择导入方式并准备素材来源。",
+      button: "Start Creator Analysis",
+      summary: "粘贴作品链接或填写主页 URL 后，点击主按钮开始分析。",
     },
-    select: {
-      step: "当前步骤：选择样本",
+    sample_pool: {
+      step: "当前步骤：构建素材池",
       button: "下一步：使用推荐样本继续",
       summary: `已导入 ${formatNumber(profileItems.length)} 条素材，系统已推荐 ${formatNumber(recommended.length)} 条样本。`,
+    },
+    select: {
+      step: "当前步骤：选择 N 条样本",
+      button: "下一步：确认样本并富化",
+      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
     },
     enrich: {
       step: "当前步骤：富化证据",
@@ -499,7 +522,7 @@ function renderCreatorCloneRecommendation() {
 function renderCreatorCloneNextAction() {
   const stage = getCreatorCloneStage();
   const meta = creatorCloneStageMeta(stage);
-  const flowIndex = {import: 0, select: 1, enrich: 2, distill: 3, export: 4}[stage] || 0;
+  const flowIndex = {import: 0, sample_pool: 1, select: 2, enrich: 3, distill: 4, export: 5}[stage] || 0;
   creatorCloneFlowSteps.forEach((step, index) => {
     step.classList.toggle("active", index === flowIndex);
     step.classList.toggle("completed", index < flowIndex);
@@ -516,7 +539,7 @@ function renderCreatorCloneNextAction() {
   if (creatorCloneNextButton) {
     creatorCloneNextButton.textContent = meta.button;
     creatorCloneNextButton.dataset.creatorCloneAction = stage;
-    creatorCloneNextButton.disabled = stage === "select" && !recommendedProfileSampleMix().length;
+    creatorCloneNextButton.disabled = stage === "sample_pool" && !recommendedProfileSampleMix().length;
   }
   renderCreatorCloneRecommendation();
 }
@@ -1677,11 +1700,11 @@ async function runCreatorCloneNextAction() {
     await runCreatorCloneImportStep();
     return;
   }
-  if (stage === "select") {
+  if (stage === "sample_pool") {
     useRecommendedProfileSamples();
     return;
   }
-  if (stage === "enrich") {
+  if (stage === "select" || stage === "enrich") {
     await buildSelectedProfileQueue();
     return;
   }
@@ -1906,6 +1929,8 @@ async function buildSelectedProfileQueue() {
     return;
   }
   profileSelectedBuildButton.disabled = true;
+  creatorCloneEnrichmentRunning = true;
+  renderCreatorCloneNextAction();
   jobCard.classList.remove("hidden");
   progressBar.style.width = "0%";
   jobMessage.className = "job-message";
@@ -1942,7 +1967,9 @@ async function buildSelectedProfileQueue() {
     profileScanStatus.textContent = jobMessage.textContent;
     updateCreatorCloneSelectionStatus();
   } finally {
+    creatorCloneEnrichmentRunning = false;
     profileSelectedBuildButton.disabled = false;
+    renderCreatorCloneNextAction();
   }
 }
 
@@ -2573,6 +2600,44 @@ async function loadPreflightStatus() {
   return payload;
 }
 
+function renderDataSourceStatus(status = {}) {
+  if (!dataSourceStatusBadge || !dataSourceStatusList) {
+    return;
+  }
+  dataSourceStatusBadge.textContent = status.configured ? "增强已配置" : "主路径可用";
+  dataSourceStatusBadge.className = `status-badge ${status.configured ? "success" : "muted-badge"}`;
+  const sources = normalizeItems(status.sources);
+  dataSourceStatusList.innerHTML = `
+    <dl>
+      <dt>Cookie API</dt><dd>${status.has_cookie ? "已配置" : "未配置"}</dd>
+      <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
+      <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
+      <dt>当前策略</dt><dd>${escapeHtml(status.status_message || "")}</dd>
+    </dl>
+    <ul class="preflight-contract-summary">
+      ${sources.map((source) => `<li><strong>${escapeHtml(source.label || source.id)}</strong>：${escapeHtml(source.message || "")}</li>`).join("")}
+    </ul>
+  `;
+}
+
+async function loadDataSourceStatus() {
+  if (dataSourceStatusList) {
+    dataSourceStatusList.textContent = "正在读取数据源设置...";
+  }
+  try {
+    const response = await fetch("/api/settings/data-sources", {cache: "no-store"});
+    const payload = await readJsonResponse(response);
+    renderDataSourceStatus(payload.data_sources || {});
+  } catch (error) {
+    if (dataSourceStatusBadge) {
+      dataSourceStatusBadge.textContent = "读取失败";
+    }
+    if (dataSourceStatusList) {
+      dataSourceStatusList.textContent = `${error.error_code || "ERROR"}：${error.message || "无法读取数据源设置"}`;
+    }
+  }
+}
+
 function buildFullPrompt(data) {
   const analysisInput = JSON.stringify(data.analysis_input || {}, null, 2);
   return `${data.prompt || ""}\n\n## 附：analysis_input.json\n\n\`\`\`json\n${analysisInput}\n\`\`\``;
@@ -3164,6 +3229,7 @@ downloadHomeAnalysisInputButton.addEventListener("click", () => {
 });
 
 loadLlmStatus();
+loadDataSourceStatus();
 loadPreflightStatus().catch(() => {});
 renderCreatorCloneNextAction();
 setHomeRoute(routeFromHash(), false);

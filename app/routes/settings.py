@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.errors import AppError
 from app.routes.common import error_response
+from app.services import data_source_settings
 from app.services import llm_settings
 from app.services.tool_preflight import preflight_status_payload
 
@@ -27,3 +28,8 @@ def test_llm_settings():
 @router.get("/preflight")
 def get_preflight_settings():
     return {"ok": True, "preflight": preflight_status_payload()}
+
+
+@router.get("/data-sources")
+def get_data_source_settings():
+    return {"ok": True, "data_sources": data_source_settings.data_source_status_payload()}

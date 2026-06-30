@@ -72,6 +72,14 @@ LLM_MODEL=支持图片输入的模型</pre>
                 <div id="preflight-summary" class="muted">读取中...</div>
                 <div id="preflight-list" class="preflight-list"></div>
             </div>
+            <div class="settings-panel wide-settings-panel">
+                <div class="settings-panel-header">
+                    <h3>Creator Clone 数据源</h3>
+                    <span id="data-source-status-badge" class="status-badge">读取中</span>
+                </div>
+                <p class="muted compact-copy">Cookie / Web API 只是可选增强层。默认主路径仍是手动作品链接和浏览器辅助采集；Cookie 不会写入素材包、Prompt 或日志。</p>
+                <div id="data-source-status-list" class="compact-dl"></div>
+            </div>
         </div>
     </section>
 </div>
@@ -147,23 +155,24 @@ LLM_MODEL=支持图片输入的模型</pre>
             <div class="entry-label">Creator Clone Lab</div>
             <h2>创作者克隆实验室</h2>
             <p class="muted">导入一组对标素材，自由选择 N 条样本，通过大模型蒸馏创作者定位、选题规律、表达模板和可复用公式。</p>
-            <div class="notice compact-notice">不登录、不使用 Cookie、不绕验证码、不绕风控；请确保你拥有素材分析权限。</div>
+            <div class="notice compact-notice">默认不依赖 Cookie，不绕验证码、不绕风控；Cookie / Web API 仅作为可选增强层。请确保你拥有素材分析权限。</div>
             <div class="profile-flow-strip profile-main-flow" aria-label="创作者克隆工作流">
                 <span>1. 导入素材</span>
-                <span>2. 选择样本</span>
-                <span>3. 富化证据</span>
-                <span>4. 大模型蒸馏</span>
-                <span>5. 导出规则</span>
+                <span>2. 构建素材池</span>
+                <span>3. 选择 N 条样本</span>
+                <span>4. 证据富化</span>
+                <span>5. 大模型蒸馏</span>
+                <span>6. 可视化输出</span>
             </div>
             <section class="creator-clone-next-bar" id="creator-clone-next-bar" aria-live="polite">
                 <div>
                     <span class="entry-label" id="creator-clone-current-step">当前步骤：导入素材</span>
-                    <strong id="creator-clone-next-summary">请先选择导入方式并准备素材来源。</strong>
+                    <strong id="creator-clone-next-summary">粘贴作品链接或填写主页 URL 后，点击主按钮开始分析。</strong>
                 </div>
                 <div class="creator-clone-next-actions">
-                    <button type="button" id="creator-clone-next-button" class="primary-cta">下一步：开始采集素材</button>
+                    <button type="button" id="creator-clone-next-button" class="primary-cta">Start Creator Analysis</button>
                     <details class="creator-clone-advanced-actions">
-                        <summary>高级操作</summary>
+                        <summary>备用动作</summary>
                         <div class="advanced-action-list">
                             <button type="button" id="profile-browser-helper-button">插件辅助采集</button>
                             <button type="submit" form="profile-form" id="profile-scan-button" data-profile-source="public">公开主页扫描（实验）</button>
@@ -172,28 +181,31 @@ LLM_MODEL=支持图片输入的模型</pre>
                 </div>
             </section>
             <form id="profile-form" class="profile-scan-form">
-                <div class="profile-import-mode-grid" aria-label="导入方式">
-                    <button type="button" class="profile-import-card active" data-profile-import-mode="browser">
-                        <strong>浏览器辅助采集</strong>
-                        <span>适合主页素材池，读取当前可见作品</span>
-                    </button>
-                    <button type="button" class="profile-import-card" data-profile-import-mode="manual">
-                        <strong>粘贴作品链接</strong>
-                        <span>一行一条链接、分享文案或 aweme_id</span>
-                    </button>
-                    <button type="button" class="profile-import-card" data-profile-import-mode="structured">
-                        <strong>JSON / CSV 导入</strong>
-                        <span>导入已整理的作品列表和指标</span>
-                    </button>
-                    <button type="button" class="profile-import-card" data-profile-import-mode="case">
-                        <strong>已有 Case 导入</strong>
-                        <span>把已生成素材包作为高证据样本</span>
-                    </button>
-                    <button type="button" class="profile-import-card" data-profile-import-mode="handoff">
-                        <strong>高级 / 安全交接包</strong>
-                        <span>导入 handoff_manifest 净化元数据</span>
-                    </button>
-                </div>
+                <details class="profile-data-source-details">
+                    <summary>数据源设置（默认会按当前填写内容自动选择）</summary>
+                    <div class="profile-import-mode-grid" aria-label="导入方式">
+                        <button type="button" class="profile-import-card active" data-profile-import-mode="browser">
+                            <strong>主页 / 浏览器辅助</strong>
+                            <span>输入主页 URL 或 sec_user_id，必要时读取当前可见作品</span>
+                        </button>
+                        <button type="button" class="profile-import-card" data-profile-import-mode="manual">
+                            <strong>多作品链接粘贴</strong>
+                            <span>主路径：一行一条链接、分享文案或 aweme_id</span>
+                        </button>
+                        <button type="button" class="profile-import-card" data-profile-import-mode="structured">
+                            <strong>JSON / CSV 导入</strong>
+                            <span>导入已整理的作品列表和指标</span>
+                        </button>
+                        <button type="button" class="profile-import-card" data-profile-import-mode="case">
+                            <strong>已有 Case 导入</strong>
+                            <span>把已生成素材包作为高证据样本</span>
+                        </button>
+                        <button type="button" class="profile-import-card" data-profile-import-mode="handoff">
+                            <strong>高级 / 安全交接包</strong>
+                            <span>导入 handoff_manifest 净化元数据</span>
+                        </button>
+                    </div>
+                </details>
 
                 <div class="profile-import-panel active" id="profile-public-section" data-profile-import-panel="browser">
                     <div class="profile-panel-heading">
