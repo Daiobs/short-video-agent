@@ -229,9 +229,8 @@ LLM_MODEL=支持图片输入的模型</pre>
                         <summary>高级操作</summary>
                         <div class="advanced-action-list">
                             <p>主按钮会按输入内容自动选择导入方式。需要指定数据源、实验扫描、复制 Prompt 或下载 JSON 时，再展开对应区域。</p>
-                            <button type="button" id="profile-browser-helper-button">本机 Chrome 辅助入口</button>
-                            <button type="submit" form="profile-form" id="profile-scan-button" data-profile-source="public">公开扫描实验入口</button>
                             <a href="#profile-data-source-details">切换数据源</a>
+                            <a href="#profile-data-source-details">公开扫描实验入口</a>
                             <a href="#creator-clone-export-actions">复制 Prompt / 下载 JSON</a>
                         </div>
                     </details>
@@ -268,43 +267,46 @@ LLM_MODEL=支持图片输入的模型</pre>
                             <span>导入 handoff_manifest 净化元数据</span>
                         </button>
                     </div>
-                </details>
 
-                <div class="profile-import-panel active" id="profile-public-section" data-profile-import-panel="browser">
-                    <div class="profile-panel-heading">
-                        <div>
-                            <span class="summary-title">浏览器辅助采集</span>
-                            <p class="muted compact-copy">输入主页 URL / sec_user_id。优先在本机调试 Chrome 中打开目标主页，由你确认后读取页面可见作品列表和元数据。</p>
+                    <div class="profile-import-panel active" id="profile-public-section" data-profile-import-panel="browser">
+                        <div class="profile-panel-heading">
+                            <div>
+                                <span class="summary-title">浏览器辅助采集</span>
+                                <p class="muted compact-copy">输入主页 URL / sec_user_id。优先在本机调试 Chrome 中打开目标主页，由你确认后读取页面可见作品列表和元数据。</p>
+                            </div>
+                            <div class="profile-panel-actions">
+                                <button type="button" id="profile-browser-helper-button" class="secondary-button">本机 Chrome 辅助入口</button>
+                                <button type="submit" form="profile-form" id="profile-scan-button" data-profile-source="public" class="secondary-button">公开扫描实验入口</button>
+                            </div>
                         </div>
-                    </div>
-                    <div class="profile-input-grid compact">
-                        <label>主页 URL / sec_user_id
-                            <input name="profile_url" placeholder="https://www.douyin.com/user/... 或 sec_user_id">
-                        </label>
-                    </div>
-                    <input name="count" type="hidden" value="100">
-                    <div id="profile-helper-tools" class="profile-inline-helper">
-                        <div id="profile-chrome-status" class="local-helper-status muted">
-                            本机 Chrome 辅助状态：尚未检测。
-                        </div>
-                        <p class="muted compact-copy">浏览器辅助采集只读取当前页面可见作品，不读取 Cookie 或登录 token。</p>
-                        <details class="profile-helper-advanced">
-                            <summary>高级说明</summary>
-                            <label class="local-helper-confirmation">
-                                <input type="checkbox" id="profile-chrome-confirm">
-                                我确认本次辅助采集由本机 Chrome / 本机 IP 发起，只读取当前页面可见作品列表和元数据，不读取、不上传、不记录 Cookie 或登录 token。
+                        <div class="profile-input-grid compact">
+                            <label>主页 URL / sec_user_id
+                                <input name="profile_url" placeholder="https://www.douyin.com/user/... 或 sec_user_id">
                             </label>
-                        </details>
-                    </div>
-                </div>
-
-                <div class="profile-import-panel" id="profile-manual-section" data-profile-import-panel="manual">
-                    <div class="profile-panel-heading">
-                        <div>
-                            <span class="summary-title">粘贴作品链接</span>
-                            <p class="muted compact-copy">公开主页读取不稳定时，直接粘贴多条作品链接最稳。</p>
+                        </div>
+                        <input name="count" type="hidden" value="100">
+                        <div id="profile-helper-tools" class="profile-inline-helper">
+                            <div id="profile-chrome-status" class="local-helper-status muted">
+                                本机 Chrome 辅助状态：尚未检测。
+                            </div>
+                            <p class="muted compact-copy">浏览器辅助采集只读取当前页面可见作品，不读取 Cookie 或登录 token。</p>
+                            <details class="profile-helper-advanced">
+                                <summary>高级说明</summary>
+                                <label class="local-helper-confirmation">
+                                    <input type="checkbox" id="profile-chrome-confirm">
+                                    我确认本次辅助采集由本机 Chrome / 本机 IP 发起，只读取当前页面可见作品列表和元数据，不读取、不上传、不记录 Cookie 或登录 token。
+                                </label>
+                            </details>
                         </div>
                     </div>
+
+                    <div class="profile-import-panel" id="profile-manual-section" data-profile-import-panel="manual">
+                        <div class="profile-panel-heading">
+                            <div>
+                                <span class="summary-title">粘贴作品链接</span>
+                                <p class="muted compact-copy">公开主页读取不稳定时，直接粘贴多条作品链接最稳。</p>
+                            </div>
+                        </div>
                         <label>作品链接 / 分享文案 / aweme_id
                             <textarea name="manual_links" id="profile-manual-links" rows="6" placeholder="每行一条抖音作品链接、分享文本或 aweme_id。主页扫描失败时推荐使用这里。"></textarea>
                         </label>
@@ -313,40 +315,40 @@ LLM_MODEL=支持图片输入的模型</pre>
 https://v.douyin.com/xxxxxx/
 8.19 abc:/ 作品标题 https://v.douyin.com/xxxxxx/ 复制此链接打开抖音
 1234567890123456789</pre>
-                </div>
-
-                <div class="profile-import-panel" id="profile-structured-section" data-profile-import-panel="structured">
-                    <div class="profile-panel-heading">
-                        <div>
-                            <span class="summary-title">JSON / CSV 导入</span>
-                            <p class="muted compact-copy">适合你已经从其他工具整理好作品 ID、标题和互动数据的情况。</p>
-                        </div>
                     </div>
+
+                    <div class="profile-import-panel" id="profile-structured-section" data-profile-import-panel="structured">
+                        <div class="profile-panel-heading">
+                            <div>
+                                <span class="summary-title">JSON / CSV 导入</span>
+                                <p class="muted compact-copy">适合你已经从其他工具整理好作品 ID、标题和互动数据的情况。</p>
+                            </div>
+                        </div>
                         <label>JSON 数组或 CSV
                             <textarea name="structured_items" id="profile-structured-items" rows="5" placeholder="支持字段：aweme_id/awemeId/id,title/desc,author/nickname,cover_url/cover,source_url,like_count/digg_count,comment_count,share_count,collect_count,view_count,create_time"></textarea>
                         </label>
-                </div>
-
-                <div class="profile-import-panel" id="profile-case-section" data-profile-import-panel="case">
-                    <div class="profile-panel-heading">
-                        <div>
-                            <span class="summary-title">已有 Case 导入</span>
-                            <p class="muted compact-copy">把已有素材包作为更高理解度样本参与账号级蒸馏。</p>
-                        </div>
                     </div>
-                    <label>case_id 列表
-                        <textarea name="case_ids" id="profile-case-ids" rows="3" placeholder="每行一个 case_id。已有素材包会作为更高理解度样本参与蒸馏。"></textarea>
-                    </label>
-                    <p class="muted compact-copy">本轮先支持粘贴 case_id；批量选择已有 Case 的可视化入口后续接入。</p>
-                </div>
 
-                <div class="profile-import-panel" id="profile-handoff-section" data-profile-import-panel="handoff">
-                    <div class="profile-panel-heading">
-                        <div>
-                            <span class="summary-title">高级 / 安全交接包</span>
-                            <p class="muted compact-copy">适用于“本机助手采集，公开站继续分析”的链路。默认折叠为高级入口。</p>
+                    <div class="profile-import-panel" id="profile-case-section" data-profile-import-panel="case">
+                        <div class="profile-panel-heading">
+                            <div>
+                                <span class="summary-title">已有 Case 导入</span>
+                                <p class="muted compact-copy">把已有素材包作为更高理解度样本参与账号级蒸馏。</p>
+                            </div>
                         </div>
+                        <label>case_id 列表
+                            <textarea name="case_ids" id="profile-case-ids" rows="3" placeholder="每行一个 case_id。已有素材包会作为更高理解度样本参与蒸馏。"></textarea>
+                        </label>
+                        <p class="muted compact-copy">本轮先支持粘贴 case_id；批量选择已有 Case 的可视化入口后续接入。</p>
                     </div>
+
+                    <div class="profile-import-panel" id="profile-handoff-section" data-profile-import-panel="handoff">
+                        <div class="profile-panel-heading">
+                            <div>
+                                <span class="summary-title">高级 / 安全交接包</span>
+                                <p class="muted compact-copy">适用于“本机助手采集，公开站继续分析”的链路。默认折叠为高级入口。</p>
+                            </div>
+                        </div>
                         <label class="handoff-file-row">选择 handoff_manifest.json
                             <input type="file" id="profile-handoff-file" accept=".json,application/json">
                         </label>
@@ -358,7 +360,8 @@ https://v.douyin.com/xxxxxx/
                         <summary>本地文件导入（后续接入）</summary>
                         <p class="muted compact-copy">本轮不做复杂本地视频批量上传。需要本地视频时，请先走“单作品解析 / 本地素材包”能力，生成 Case 后再在“已有 Case 导入”中粘贴 case_id。</p>
                     </details>
-                </div>
+                    </div>
+                </details>
 
                 <div id="profile-fallback-hint" class="notice hidden"></div>
                 <div id="profile-scan-status" class="muted"></div>

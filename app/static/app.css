@@ -525,6 +525,13 @@ button:disabled {
     font-weight: 900;
 }
 
+.profile-panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
 .creator-clone-stage {
     margin: 16px 0;
     padding: 16px;
