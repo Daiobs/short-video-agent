@@ -1,3 +1,4 @@
+// Settings
 const settingsToggle = document.getElementById("settings-toggle");
 const settingsModal = document.getElementById("settings-modal");
 const settingsDrawer = document.getElementById("settings-drawer");
@@ -457,6 +458,7 @@ function renderCreatorCloneOverview(summary = {}) {
   setCreatorCloneStep(!profileItems.length ? "import" : !selected.length ? "select" : selectedBuildable.some((item) => !item.has_frames) ? "enrich" : "distill");
 }
 
+// Creator Clone: selection
 function updateCreatorCloneSelectionStatus() {
   const selected = selectedProfileItems();
   const buildable = selected.filter(isProfileItemBuildable);

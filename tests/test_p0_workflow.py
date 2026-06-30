@@ -380,6 +380,14 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "大模型蒸馏" in response.text
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     script = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert "// Settings" in script
+    assert "// Single Work" in script
+    assert "// Creator Clone: import" in script
+    assert "// Creator Clone: sample pool" in script
+    assert "// Creator Clone: selection" in script
+    assert "// Creator Clone: enrichment queue" in script
+    assert "// Creator Clone: distillation" in script
+    assert "// Creator Clone: export" in script
     assert "function firstUrlFromText" in script
     assert "function loadChromeHelperStatus" in script
     assert "function chromeHelperNextAction" in script
@@ -613,6 +621,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "可下载视频超过当前富化上限" in script
     assert "选中样本超过当前蒸馏上限" in script
     assert ".profile-source-card" in stylesheet
+    assert ".profile-selection-stage" in stylesheet
+    assert "#fbf9ff" in stylesheet
     assert ".local-helper-status" in stylesheet
     assert ".helper-readiness" in stylesheet
     assert ".local-helper-status ul" in stylesheet
