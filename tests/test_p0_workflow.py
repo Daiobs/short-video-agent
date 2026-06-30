@@ -63,6 +63,11 @@ from app.services.creator_clone import (
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def isolate_runtime_settings_file(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", tmp_path / ".local_settings.json")
+
+
 def detailed_visual_analysis() -> dict:
     return {
         "scene": "室内近景，背景留白突出主体",
