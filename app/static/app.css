@@ -307,6 +307,121 @@ button:disabled {
     gap: 16px;
 }
 
+.compact-notice {
+    padding: 10px 12px;
+    border-color: rgba(148, 163, 184, .28);
+    background: #f8fafc;
+    color: #475569;
+}
+
+.profile-main-flow {
+    margin: 14px 0 2px;
+}
+
+.profile-import-mode-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.profile-import-card {
+    display: grid;
+    gap: 5px;
+    min-height: 86px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+    text-align: left;
+    box-shadow: none;
+}
+
+.profile-import-card:hover,
+.profile-import-card.active {
+    border-color: rgba(15, 23, 42, .26);
+    background: #f8fafc;
+    transform: none;
+}
+
+.profile-import-card strong {
+    font-size: 14px;
+}
+
+.profile-import-card span {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.profile-import-panel {
+    display: none;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+}
+
+.profile-import-panel.active {
+    display: grid;
+    gap: 12px;
+}
+
+.profile-panel-heading,
+.stage-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.profile-panel-heading .summary-title {
+    display: block;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 900;
+}
+
+.creator-clone-stage {
+    margin: 16px 0;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+}
+
+.profile-overview-stage {
+    background: #fbfcff;
+}
+
+.profile-selection-stage {
+    background: #fff;
+}
+
+.gated-stage {
+    border-color: rgba(15, 23, 42, .18);
+    background: #f8fafc;
+}
+
+.profile-selection-controls {
+    display: grid;
+    grid-template-columns: minmax(150px, 180px) minmax(150px, 180px) minmax(0, 1fr);
+    gap: 10px;
+    align-items: end;
+    margin: 12px 0;
+}
+
+.profile-more-stats {
+    margin-top: 8px;
+}
+
+.profile-more-stats > summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 800;
+}
+
 .profile-source-card {
     padding: 14px;
     border: 1px solid var(--line);
@@ -435,10 +550,10 @@ button:disabled {
     align-items: center;
     min-height: 30px;
     padding: 6px 10px;
-    border: 1px solid rgba(37, 99, 235, .16);
+    border: 1px solid rgba(15, 23, 42, .12);
     border-radius: 999px;
     background: #fff;
-    color: #1e3a8a;
+    color: #334155;
     font-size: 12px;
     font-weight: 800;
 }
@@ -784,7 +899,7 @@ button:disabled {
     padding: 14px;
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: #f8fbff;
+    background: #fff;
 }
 
 .profile-summary-grid article.wide {
@@ -1341,9 +1456,9 @@ button:disabled {
 .profile-preset-grid button {
     min-height: 36px;
     padding: 7px 10px;
-    border-color: rgba(124, 58, 237, .18);
-    background: #faf5ff;
-    color: #5b21b6;
+    border-color: rgba(15, 23, 42, .12);
+    background: #fff;
+    color: #334155;
     font-size: 13px;
 }
 
@@ -1359,9 +1474,9 @@ button:disabled {
     gap: 10px;
     margin-top: 12px;
     padding: 12px;
-    border: 1px solid rgba(124, 58, 237, .16);
+    border: 1px solid rgba(15, 23, 42, .14);
     border-radius: 10px;
-    background: #faf5ff;
+    background: #f8fafc;
 }
 
 .selection-basket-head,
@@ -1673,6 +1788,41 @@ button:disabled {
     background: #f3f6fb;
     color: var(--muted);
     font-size: 12px;
+}
+
+.profile-material-cell {
+    display: grid;
+    grid-template-columns: 68px minmax(0, 1fr);
+    gap: 10px;
+    align-items: flex-start;
+    min-width: 260px;
+}
+
+.profile-material-cell strong {
+    display: block;
+    max-width: 420px;
+}
+
+.profile-material-cell code {
+    display: inline-block;
+    margin-top: 6px;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.profile-metric-stack {
+    display: grid;
+    gap: 4px;
+    min-width: 92px;
+    color: #475569;
+    font-size: 12px;
+}
+
+.profile-row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 96px;
 }
 
 .primary-entry {
