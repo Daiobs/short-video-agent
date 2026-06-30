@@ -215,9 +215,9 @@ class DouyinCookieProfileProvider:
             raise AppError(ErrorCode.SEC_USER_ID_NOT_FOUND)
 
         headers = _douyin_cookie_api_headers(douyin_settings, referer=profile_url)
-        max_pages = max(1, min(int(request.max_pages or settings.profile_scan_max_pages), 5))
+        max_pages = max(1, min(int(request.max_pages or settings.profile_scan_max_pages), 20))
         count = _safe_count(request.count)
-        page_count = max(1, min(count, settings.profile_scan_count_per_page or 20, 50))
+        page_count = max(1, min(count, 50))
         endpoint_failures: list[tuple[str, AppError]] = []
         selected_endpoint = ""
         items: list[ProfileVideoItem] = []
@@ -246,6 +246,16 @@ class DouyinCookieProfileProvider:
             raise AppError(ErrorCode.EMPTY_AWEME_LIST, "Cookie API 没有返回可解析作品。")
 
         sorted_items = sorted_profile_items(items[:count], request.sort_by)
+        warnings = [
+            "Cookie API 是可选增强层，只用于提高公开 Web API 成功率；Cookie 不会写入素材包、prompt 或日志。",
+            f"Cookie API 使用候选接口：{_safe_endpoint_path(selected_endpoint)}。",
+        ]
+        if len(sorted_items) < count and not has_more:
+            warnings.append(
+                f"Cookie API 本次实际返回 {len(sorted_items)} 条可解析作品；"
+                "抖音主页显示的总作品数可能包含接口不可见、权限受限、已隐藏或当前 Web API 未继续返回的作品。"
+            )
+
         result = ProfileScanResult(
             provider=self.name,
             profile_url=profile_url,
@@ -253,10 +263,7 @@ class DouyinCookieProfileProvider:
             items=sorted_items,
             has_more=has_more or len(items) > len(sorted_items),
             next_cursor=max_cursor,
-            warnings=[
-                "Cookie API 是可选增强层，只用于提高公开 Web API 成功率；Cookie 不会写入素材包、prompt 或日志。",
-                f"Cookie API 使用候选接口：{_safe_endpoint_path(selected_endpoint)}。",
-            ],
+            warnings=warnings,
         )
         result.summary = build_profile_summary(result)
         return result
@@ -482,7 +489,7 @@ def normalize_profile_scan_request(request: ProfileScanRequest) -> ProfileScanRe
         manual_links=(request.manual_links or "").strip() or None,
         structured_items=(request.structured_items or "").strip() or None,
         count=_safe_count(request.count),
-        max_pages=max(1, min(int(request.max_pages or settings.profile_scan_max_pages), 5)),
+        max_pages=max(1, min(int(request.max_pages or settings.profile_scan_max_pages), 20)),
         sort_by=request.sort_by or "like_count",
     )
 
@@ -1218,6 +1225,6 @@ def _safe_int(value) -> int:
 
 def _safe_count(value) -> int:
     try:
-        return max(1, min(int(value or settings.profile_scan_count_per_page), 100))
+        return max(1, min(int(value or settings.profile_scan_count_per_page), 200))
     except (TypeError, ValueError):
         return settings.profile_scan_count_per_page

@@ -1598,6 +1598,11 @@ function renderCompactProfileTable() {
     .join("");
 }
 
+function profileScanMaxPagesForCount(count) {
+  const target = Number(count || 20);
+  return Math.max(1, Math.min(20, Math.ceil(target / 10)));
+}
+
 async function scanProfile(sourceMode = "public") {
   let activeSource = "public";
   profileScanButton.disabled = true;
@@ -1612,13 +1617,15 @@ async function scanProfile(sourceMode = "public") {
     const profileValue = firstUrlFromText(rawProfileValue) || rawProfileValue;
     const isUrl = /^https?:\/\//i.test(profileValue);
     activeSource = ["public", "manual", "structured", "handoff", "case"].includes(sourceMode) ? sourceMode : "public";
+    const requestedCount = Number(formData.get("count") || 20);
+    const requestedMaxPages = activeSource === "public" ? profileScanMaxPagesForCount(requestedCount) : 1;
     const profilePayload = {
       profile_url: activeSource === "public" && isUrl ? profileValue : "",
       sec_user_id: activeSource === "public" && !isUrl ? profileValue : "",
       manual_links: activeSource === "manual" ? String(formData.get("manual_links") || "") : "",
       structured_items: activeSource === "structured" ? String(formData.get("structured_items") || "") : "",
-      count: Number(formData.get("count") || 20),
-      max_pages: 1,
+      count: requestedCount,
+      max_pages: requestedMaxPages,
       sort_by: String(profileSort?.value || "like_count"),
     };
     const clonePayload = {
@@ -1630,6 +1637,7 @@ async function scanProfile(sourceMode = "public") {
       structured_items: profilePayload.structured_items,
       case_ids: activeSource === "case" ? String(formData.get("case_ids") || "") : "",
       count: profilePayload.count,
+      max_pages: profilePayload.max_pages,
       sort_by: profilePayload.sort_by,
     };
     let endpoint = "/api/creator-clone/import";

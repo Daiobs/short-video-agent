@@ -18,7 +18,7 @@ from app.main import app
 from app.models import CaseArtifact, DouyinVideoItem, VideoQualityCandidate
 from app.providers.base import VideoQualityCandidateDTO
 from app.providers.douyin_web import DouyinWebProvider, normalize_douyin_detail_payload, normalize_douyin_html_payload
-from app.providers.profile_base import ProfileScanRequest, ProfileVideoItem, profile_engagement_score, sorted_profile_items
+from app.providers.profile_base import ProfileScanRequest, ProfileScanResult, ProfileVideoItem, profile_engagement_score, sorted_profile_items
 from app.routes import cases as case_routes
 from app.services.analysis_taxonomy import explain_content_category
 from app.services.analysis_worksheet import normalize_worksheet, worksheet_quality_review
@@ -46,6 +46,7 @@ from app.services.creator_clone import (
     CloneSample,
     CloneSampleSet,
     MAX_DISTILL_SAMPLES,
+    build_sample_set,
     build_distill_prompt,
     dedupe_samples,
     load_sample_set,
@@ -425,6 +426,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-auto-distill"' in response.text
     assert "富化完成后自动大模型蒸馏" in response.text
     assert 'id="profile-auto-analyze"' not in response.text
+    assert 'name="count" type="hidden" value="150"' in response.text
     assert 'id="profile-evidence-status"' in response.text
     assert 'id="profile-distill-readiness"' in response.text
     assert "富化后会回填视频、关键帧、OCR、ASR" in response.text
@@ -448,6 +450,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderCreatorCloneNextAction" in script
     assert "function runCreatorCloneNextAction" in script
     assert "function runCreatorCloneImportStep" in script
+    assert "function profileScanMaxPagesForCount" in script
+    assert "max_pages: profilePayload.max_pages" in script
     assert "function useRecommendedProfileSamples" in script
     assert "creatorCloneExportActions.open = true" in script
     assert "下一步：使用推荐样本继续" in script
@@ -8179,6 +8183,71 @@ def test_douyin_cookie_profile_provider_tries_next_endpoint_after_404(monkeypatc
     assert result.items[0].like_count == 9
 
 
+def test_douyin_cookie_profile_provider_paginates_until_count(monkeypatch) -> None:
+    sec_uid = "MS4wLjABAAAAabc12345"
+    cursors: list[str] = []
+    page_counts: list[int] = []
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def __init__(self, cursor: str):
+            page = int(cursor or "0")
+            self._payload = {
+                "aweme_list": [
+                    {
+                        "aweme_id": str(7622653084993647600 + page * 10 + index),
+                        "desc": f"分页作品 {page}-{index}",
+                        "statistics": {"digg_count": page * 10 + index},
+                        "video": {"duration": 1000},
+                    }
+                    for index in range(10)
+                ],
+                "has_more": page < 6,
+                "max_cursor": str(page + 1),
+            }
+            self.text = json.dumps(self._payload)
+            self.content = self.text.encode("utf-8")
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, params=None, headers=None):
+            cursor = str((params or {}).get("max_cursor") or "0")
+            cursors.append(cursor)
+            page_counts.append(int((params or {}).get("count") or 0))
+            return FakeResponse(cursor)
+
+    monkeypatch.setattr(
+        "app.services.profile_scan.settings.douyin_cookie",
+        "sessionid=secret; sid_guard=guard; uid_tt=uid; uid_tt_ss=uidss; sid_tt=sid; ttwid=tt; odin_tt=odin; s_v_web_id=webid",
+    )
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_referer", "https://www.douyin.com/")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    result = DouyinCookieProfileProvider().scan(
+        ProfileScanRequest(profile_url=f"https://www.douyin.com/user/{sec_uid}", count=65, max_pages=7)
+    )
+
+    assert cursors == ["0", "1", "2", "3", "4", "5", "6"]
+    assert page_counts == [50, 50, 50, 50, 50, 50, 50]
+    assert len(result.items) == 65
+    assert result.has_more is True
+    assert result.next_cursor == "7"
+
+
 def test_cookie_profile_provider_requires_cookie(monkeypatch) -> None:
     monkeypatch.setattr("app.services.profile_scan.settings.douyin_cookie", "")
 
@@ -8558,7 +8627,6 @@ def test_creator_clone_import_profile_url_prioritizes_public_scan(monkeypatch) -
             }
         ]
     }
-
     class FakeResponse:
         status_code = 200
         text = f'<script id="RENDER_DATA" type="application/json">{json.dumps(html_payload)}</script>'
@@ -8579,7 +8647,7 @@ def test_creator_clone_import_profile_url_prioritizes_public_scan(monkeypatch) -
     monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
     response = client.post(
         "/api/creator-clone/import",
-        json={"profile_url": "https://www.douyin.com/user/MS4wLjABAAAAabc12345", "count": 20},
+        json={"profile_url": "https://www.douyin.com/user/MS4wLjABAAAAabc12345", "count": 150, "max_pages": 15},
     )
 
     assert response.status_code == 200
@@ -8592,6 +8660,38 @@ def test_creator_clone_import_profile_url_prioritizes_public_scan(monkeypatch) -
     assert payload["set"]["performance_segments"]["highest_like_samples"][0]["title"] == "主页公开扫描样本"
     assert payload["set"]["performance_segments"]["highest_comment_samples"][0]["metric_value"] == 12
     assert any("公开主页扫描优先执行" in warning for warning in payload["set"]["warnings"])
+
+
+def test_creator_clone_build_sample_set_passes_profile_max_pages(monkeypatch) -> None:
+    captured = {}
+
+    def fake_scan_profile(request: ProfileScanRequest):
+        captured["request"] = request
+        return ProfileScanResult(
+            provider="cookie_api",
+            profile_url=request.profile_url or "",
+            sec_user_id="MS4wLjABAAAAabc12345",
+            items=[
+                ProfileVideoItem(
+                    aweme_id="7622653084993647603",
+                    title="分页样本",
+                    like_count=1,
+                    source_provider="cookie_api",
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.services.creator_clone.scan_profile", fake_scan_profile)
+
+    sample_set = build_sample_set(
+        profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345",
+        count=150,
+        max_pages=15,
+    )
+
+    assert captured["request"].count == 150
+    assert captured["request"].max_pages == 15
+    assert len(sample_set.samples) == 1
 
 
 def test_creator_clone_import_structured_aweme_list_and_nested_statistics() -> None:

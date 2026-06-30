@@ -183,6 +183,7 @@ def build_sample_set(
     structured_items: str = "",
     case_ids: str = "",
     count: int = 20,
+    max_pages: int = 1,
     sort_by: str = "engagement_score",
 ) -> CloneSampleSet:
     samples: list[CloneSample] = []
@@ -195,6 +196,7 @@ def build_sample_set(
                     profile_url=profile_url,
                     sec_user_id=sec_user_id,
                     count=count,
+                    max_pages=max_pages,
                     sort_by=sort_by,
                 )
             )
