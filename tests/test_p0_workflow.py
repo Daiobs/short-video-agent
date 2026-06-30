@@ -326,6 +326,8 @@ def test_home_uses_versioned_static_assets() -> None:
     ]
     assert "插件辅助采集" not in next_bar
     assert "公开主页扫描（实验）" not in next_bar
+    assert 'id="profile-browser-helper-button"' not in next_bar
+    assert 'id="profile-scan-button"' not in next_bar
     data_source_details = response.text[
         response.text.index('id="profile-data-source-details"') : response.text.index('id="profile-fallback-hint"')
     ]
@@ -335,10 +337,15 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'data-profile-import-mode="structured"' in data_source_details
     assert 'data-profile-import-mode="case"' in data_source_details
     assert 'data-profile-import-mode="handoff"' in data_source_details
+    assert 'id="profile-public-section"' in data_source_details
+    assert 'id="profile-browser-helper-button"' in data_source_details
+    assert 'id="profile-scan-button"' in data_source_details
+    assert '<details class="profile-data-source-details" id="profile-data-source-details">' in response.text
     public_section = response.text[
         response.text.index('id="profile-public-section"') : response.text.index('id="profile-manual-section"')
     ]
-    assert 'id="profile-browser-helper-button"' not in public_section
+    assert 'id="profile-browser-helper-button"' in public_section
+    assert 'id="profile-scan-button"' in public_section
     assert "公开主页扫描（实验）" not in public_section
     assert 'id="profile-chrome-status"' in public_section
     assert "主页 URL / sec_user_id" in public_section
@@ -454,6 +461,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".creator-clone-next-bar" in stylesheet
     assert ".primary-cta" in stylesheet
     assert ".advanced-action-list" in stylesheet
+    assert ".profile-panel-actions" in stylesheet
     assert ".manual-sample-adjustments" in stylesheet
     assert ".profile-material-details" in stylesheet
     assert response.text.count("primary-cta") == 1
