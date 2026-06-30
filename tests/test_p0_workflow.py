@@ -37,7 +37,7 @@ from app.services.profile_scan import (
     scan_profile,
 )
 from app.services.quality_resolver import resolve_quality_candidates
-from app.services.ffmpeg_service import plan_keyframe_timestamps
+from app.services.ffmpeg_service import extract_keyframes, plan_keyframe_timestamps
 from app.services.llm_provider import AnthropicCompatibleProvider, OpenAICompatibleProvider, OpenAIResponsesProvider, parse_json_text
 from app.services.ocr import run_case_ocr
 from app.services.video_importer import engagement_score
@@ -1004,6 +1004,39 @@ def test_keyframe_plan_caps_long_video_at_30_frames() -> None:
     assert len(timestamps) == 30
     assert timestamps[0] == 0
     assert timestamps[-1] < 120
+
+
+def test_keyframe_plan_avoids_video_end_boundary() -> None:
+    timestamps = plan_keyframe_timestamps(12.165011)
+
+    assert timestamps[0] == 0
+    assert timestamps[-1] < 12
+    assert 12.0 not in timestamps
+
+
+def test_extract_keyframes_skips_failed_terminal_frame(monkeypatch, tmp_path: Path) -> None:
+    class FakeCompleted:
+        def __init__(self, returncode: int, stderr: str = ""):
+            self.returncode = returncode
+            self.stderr = stderr
+            self.stdout = ""
+
+    def fake_run(command, capture_output=True, text=True, timeout=30, check=False):
+        frame_path = Path(command[-1])
+        if "12.00s" in frame_path.name:
+            return FakeCompleted(234, "Nothing was written into output file")
+        frame_path.write_bytes(b"jpeg")
+        return FakeCompleted(0)
+
+    monkeypatch.setattr("app.services.ffmpeg_service.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("app.services.ffmpeg_service.plan_keyframe_timestamps", lambda duration: [0.0, 1.0, 12.0])
+    monkeypatch.setattr("app.services.ffmpeg_service.subprocess.run", fake_run)
+
+    frames = extract_keyframes(tmp_path / "video.mp4", tmp_path / "frames", 12.165011)
+
+    assert [frame["timestamp"] for frame in frames] == [0.0, 1.0]
+    assert [frame["index"] for frame in frames] == [0, 1]
+    assert len(list((tmp_path / "frames").glob("*.jpg"))) == 2
 
 
 def test_invalid_local_upload_returns_error_code(tmp_path: Path) -> None:

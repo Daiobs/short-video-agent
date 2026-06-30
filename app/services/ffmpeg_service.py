@@ -11,6 +11,8 @@ from PIL import Image, ImageDraw, ImageFont
 from app.config import settings
 from app.errors import AppError, ErrorCode
 
+KEYFRAME_END_GUARD_SECONDS = 0.35
+
 
 def _require_binary(name: str, error_code: str) -> str:
     path = shutil.which(name)
@@ -108,10 +110,15 @@ def plan_keyframe_timestamps(duration: float) -> list[float]:
     interval = max(0.1, settings.keyframe_interval_seconds)
     if duration <= 0:
         return [0.0]
-    if duration <= max_count * interval:
-        count = min(max_count, max(1, int(math.ceil(duration / interval))))
+    safe_end = max(0.0, duration - KEYFRAME_END_GUARD_SECONDS)
+    if safe_end <= 0:
+        return [0.0]
+    if safe_end <= max_count * interval:
+        count = min(max_count, max(1, int(math.ceil(safe_end / interval))))
         return [round(index * interval, 2) for index in range(count)]
-    step = duration / max_count
+    if max_count == 1:
+        return [0.0]
+    step = safe_end / (max_count - 1)
     return [round(index * step, 2) for index in range(max_count)]
 
 
@@ -119,8 +126,10 @@ def extract_keyframes(video_path: Path, output_dir: Path, duration: float) -> li
     _require_binary("ffmpeg", ErrorCode.FFMPEG_NOT_FOUND)
     output_dir.mkdir(parents=True, exist_ok=True)
     frames = []
-    for index, timestamp in enumerate(plan_keyframe_timestamps(duration)):
-        frame_name = f"frame_{index:04d}_{timestamp:05.2f}s.jpg"
+    failed_messages: list[str] = []
+    for planned_index, timestamp in enumerate(plan_keyframe_timestamps(duration)):
+        frame_index = len(frames)
+        frame_name = f"frame_{frame_index:04d}_{timestamp:05.2f}s.jpg"
         frame_path = output_dir / frame_name
         command = [
             "ffmpeg",
@@ -137,8 +146,14 @@ def extract_keyframes(video_path: Path, output_dir: Path, duration: float) -> li
         ]
         result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
         if result.returncode != 0 or not frame_path.exists():
-            raise AppError(ErrorCode.KEYFRAME_EXTRACT_FAILED, (result.stderr or result.stdout)[:500])
-        frames.append({"index": index, "timestamp": timestamp, "path": str(frame_path)})
+            frame_path.unlink(missing_ok=True)
+            message = (result.stderr or result.stdout or "").strip()
+            failed_messages.append(f"{planned_index}@{timestamp:.2f}s: {message[-300:]}")
+            continue
+        frames.append({"index": frame_index, "timestamp": timestamp, "path": str(frame_path)})
+    if not frames:
+        detail = "；".join(failed_messages)[:500] if failed_messages else "没有抽取到任何关键帧。"
+        raise AppError(ErrorCode.KEYFRAME_EXTRACT_FAILED, detail)
     return frames
 
 
@@ -176,4 +191,3 @@ def build_contact_sheet(frames: list[dict], output_path: Path) -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(output_path, quality=92)
-
