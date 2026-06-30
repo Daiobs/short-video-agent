@@ -38,6 +38,8 @@ const douyinRefererInput = document.getElementById("douyin-referer-input");
 const douyinClearCookieInput = document.getElementById("douyin-clear-cookie-input");
 const saveDouyinSettingsButton = document.getElementById("save-douyin-settings-button");
 const douyinSaveResult = document.getElementById("douyin-save-result");
+const testDouyinCookieButton = document.getElementById("test-douyin-cookie-button");
+const douyinCookieTestResult = document.getElementById("douyin-cookie-test-result");
 const resultCard = document.getElementById("result-card");
 const caseSummary = document.getElementById("case-summary");
 const homeCaseView = document.getElementById("home-case-view");
@@ -2801,6 +2803,7 @@ function renderDataSourceStatus(status = {}) {
       <dt>Cookie API</dt><dd>${status.has_cookie ? "已配置" : "未配置"}</dd>
       <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
       <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
+      ${renderDouyinCookieDiagnosticsRows(status.cookie_diagnostics || {})}
       <dt>当前策略</dt><dd>${escapeHtml(status.status_message || "")}</dd>
     </dl>
     <ul class="preflight-contract-summary">
@@ -2820,6 +2823,57 @@ function renderDataSourceStatus(status = {}) {
   if (douyinClearCookieInput) {
     douyinClearCookieInput.checked = false;
   }
+}
+
+function renderDouyinCookieDiagnosticsRows(diagnostics = {}) {
+  if (!diagnostics.has_cookie) {
+    return "";
+  }
+  const important = normalizeItems(diagnostics.present_important_keys).join(" / ") || "未检测到";
+  const missing = normalizeItems(diagnostics.missing_login_keys).join(" / ") || "无";
+  return `
+    <dt>Cookie 字段</dt><dd>${formatNumber(diagnostics.pair_count || 0)} 个；登录态字段 ${formatNumber(diagnostics.login_key_count || 0)} 个</dd>
+    <dt>关键字段</dt><dd>${escapeHtml(important)}</dd>
+    <dt>缺失登录字段</dt><dd>${escapeHtml(missing)}</dd>
+  `;
+}
+
+function creatorCloneCurrentProfileValue() {
+  const quick = creatorCloneUnifiedInputValue();
+  if (quick) {
+    return firstUrlFromText(quick) || quick;
+  }
+  if (!profileForm) {
+    return "";
+  }
+  const formData = new FormData(profileForm);
+  return String(formData.get("profile_url") || "").trim();
+}
+
+function renderDouyinCookieTestResult(test = {}) {
+  if (!douyinCookieTestResult) {
+    return;
+  }
+  const diagnostics = test.cookie_diagnostics || {};
+  const statusClass = test.status === "ok" ? "success" : ["config_only", "not_configured"].includes(test.status) ? "muted-badge" : "warning";
+  const rows = [
+    ["自检状态", test.status || ""],
+    ["Cookie 结构", diagnostics.has_cookie ? `${formatNumber(diagnostics.pair_count || 0)} 个字段，${formatNumber(diagnostics.login_key_count || 0)} 个登录态字段` : "未配置"],
+    ["关键字段", normalizeItems(diagnostics.present_important_keys).join(" / ") || "未检测到"],
+    ["API 请求", test.api_checked ? `已请求，HTTP ${test.status_code || "未知"}` : "未请求"],
+    ["返回类型", test.api_checked ? `${test.is_json ? "JSON" : "非 JSON"}${test.content_type ? ` · ${test.content_type}` : ""}` : "未检测"],
+    ["返回作品", test.api_checked ? `${formatNumber(test.aweme_count || 0)} 条` : "未检测"],
+    ["接口消息", test.api_status_msg || ""],
+  ].filter(([, value]) => value !== "");
+  const nextSteps = normalizeItems(test.safe_next_steps);
+  douyinCookieTestResult.className = `settings-test-result ${statusClass}`;
+  douyinCookieTestResult.innerHTML = `
+    <strong>${escapeHtml(test.message || "Cookie API 自检完成。")}</strong>
+    <dl>
+      ${rows.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd>`).join("")}
+    </dl>
+    ${nextSteps.length ? `<ul>${nextSteps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul>` : ""}
+  `;
 }
 
 async function loadDataSourceStatus() {
@@ -3043,6 +3097,34 @@ douyinSettingsForm?.addEventListener("submit", async (event) => {
     douyinSaveResult.textContent = `${error.error_code || "ERROR"}：${error.message || "保存失败"}`;
   } finally {
     saveDouyinSettingsButton.disabled = false;
+  }
+});
+
+testDouyinCookieButton?.addEventListener("click", async () => {
+  testDouyinCookieButton.disabled = true;
+  if (douyinCookieTestResult) {
+    douyinCookieTestResult.textContent = "正在自检 Cookie 结构和 Cookie API...";
+  }
+  try {
+    const profileValue = creatorCloneCurrentProfileValue();
+    const payload = {
+      profile_url: firstUrlFromText(profileValue) || profileValue,
+      count: 5,
+    };
+    const response = await fetch("/api/settings/data-sources/douyin/test", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const result = await readJsonResponse(response);
+    renderDouyinCookieTestResult(result.test || {});
+    await loadDataSourceStatus();
+  } catch (error) {
+    if (douyinCookieTestResult) {
+      douyinCookieTestResult.textContent = `${error.error_code || "ERROR"}：${error.message || "Cookie API 自检失败"}`;
+    }
+  } finally {
+    testDouyinCookieButton.disabled = false;
   }
 });
 

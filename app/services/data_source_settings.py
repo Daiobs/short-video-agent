@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.config import settings
+from app.services.profile_scan import inspect_douyin_cookie, test_douyin_cookie_api
 from app.services.runtime_settings import effective_douyin_settings, update_douyin_runtime_settings
 
 
@@ -57,6 +58,7 @@ def data_source_status_payload() -> dict:
         "provider": "cookie_api",
         "has_cookie": has_cookie,
         "masked_cookie": mask_cookie(effective["cookie"]),
+        "cookie_diagnostics": inspect_douyin_cookie(effective["cookie"]),
         "user_agent_configured": has_user_agent,
         "user_agent": effective["user_agent"],
         "referer": referer,
@@ -72,7 +74,14 @@ def data_source_status_payload() -> dict:
             "Cookie 不是默认依赖，也不用于绕验证码或风控。",
             "公开扫描失败时，请使用多作品链接粘贴或浏览器辅助采集。",
         ],
-    }
+}
+
+
+def normalize_cookie_input(value: str) -> str:
+    cleaned = (value or "").strip()
+    if cleaned.lower().startswith("cookie:"):
+        cleaned = cleaned.split(":", 1)[1].strip()
+    return cleaned
 
 
 def update_douyin_settings_payload(payload: dict) -> dict:
@@ -83,6 +92,14 @@ def update_douyin_settings_payload(payload: dict) -> dict:
     if payload.get("clear_cookie"):
         values["cookie"] = ""
     elif str(payload.get("douyin_cookie") or payload.get("cookie") or "").strip():
-        values["cookie"] = str(payload.get("douyin_cookie") or payload.get("cookie") or "").strip()
+        values["cookie"] = normalize_cookie_input(str(payload.get("douyin_cookie") or payload.get("cookie") or ""))
     update_douyin_runtime_settings(values)
     return data_source_status_payload()
+
+
+def test_douyin_settings_payload(payload: dict) -> dict:
+    return test_douyin_cookie_api(
+        profile_url=str(payload.get("profile_url") or "").strip(),
+        sec_user_id=str(payload.get("sec_user_id") or "").strip(),
+        count=int(payload.get("count") or 5),
+    )

@@ -30,6 +30,7 @@ from app.services.profile_scan import (
     DouyinCookieProfileProvider,
     DouyinPublicProfileProvider,
     ManualLinksProfileProvider,
+    inspect_douyin_cookie,
     extract_sec_user_id,
     extract_profile_items_from_html,
     normalize_profile_url,
@@ -433,6 +434,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "本地工作流预检" in response.text
     assert "Creator Clone 数据源" in response.text
     assert 'id="data-source-status-list"' in response.text
+    assert 'id="test-douyin-cookie-button"' in response.text
+    assert 'id="douyin-cookie-test-result"' in response.text
+    assert "自检 Cookie API" in response.text
     assert 'id="refresh-preflight-button"' in response.text
     assert 'id="preflight-summary"' in response.text
     assert 'id="preflight-list"' in response.text
@@ -466,6 +470,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".profile-material-details" in stylesheet
     assert response.text.count("primary-cta") == 1
     assert "// Settings" in script
+    assert "/api/settings/data-sources/douyin/test" in script
+    assert "function renderDouyinCookieTestResult" in script
     assert "// Single Work" in script
     assert "// Creator Clone: import" in script
     assert "// Creator Clone: sample pool" in script
@@ -1112,6 +1118,9 @@ def test_data_source_settings_masks_cookie(monkeypatch) -> None:
     assert status["masked_cookie"].startswith("sess")
     assert secret not in json.dumps(payload, ensure_ascii=False)
     assert {source["id"] for source in status["sources"]} >= {"manual_links", "browser_dom", "cookie_api", "external_api"}
+    assert status["cookie_diagnostics"]["has_cookie"] is True
+    assert status["cookie_diagnostics"]["pair_count"] == 1
+    assert "very-secret-cookie-value" not in json.dumps(status["cookie_diagnostics"], ensure_ascii=False)
 
 
 def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypatch, tmp_path) -> None:
@@ -1142,12 +1151,12 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
 def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypatch, tmp_path) -> None:
     runtime_path = tmp_path / ".local_settings.json"
     monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
-    secret = "sessionid=local-douyin-cookie-secret"
+    secret = "sessionid=local-douyin-cookie-secret; sid_guard=guard; uid_tt=uid; sid_tt=sid"
 
     response = client.put(
         "/api/settings/data-sources/douyin",
         json={
-            "douyin_cookie": secret,
+            "douyin_cookie": f"Cookie: {secret}",
             "user_agent": "Browser UA",
             "referer": "https://www.douyin.com/",
         },
@@ -1161,6 +1170,40 @@ def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypat
     assert secret not in json.dumps(payload, ensure_ascii=False)
     stored = json.loads(runtime_path.read_text(encoding="utf-8"))
     assert stored["douyin"]["cookie"] == secret
+    assert not stored["douyin"]["cookie"].lower().startswith("cookie:")
+
+
+def test_douyin_cookie_api_test_reports_safe_config_diagnostics(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / ".local_settings.json"
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
+    secret = "sessionid=local-secret; sid_guard=guard; uid_tt=uid; uid_tt_ss=uidss; sid_tt=sid; ttwid=tt; odin_tt=odin"
+    client.put(
+        "/api/settings/data-sources/douyin",
+        json={"douyin_cookie": secret, "user_agent": "UA", "referer": "https://www.douyin.com/"},
+    )
+
+    response = client.post("/api/settings/data-sources/douyin/test", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    test = payload["test"]
+    assert test["configured"] is True
+    assert test["api_checked"] is False
+    assert test["status"] == "config_only"
+    assert test["cookie_diagnostics"]["pair_count"] == 7
+    assert test["cookie_diagnostics"]["login_key_count"] == 5
+    assert "local-secret" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_inspect_douyin_cookie_never_returns_values() -> None:
+    diagnostics = inspect_douyin_cookie("Cookie: sessionid=secret-value; sid_guard=guard; uid_tt=uid; sid_tt=sid")
+
+    assert diagnostics["has_cookie"] is True
+    assert diagnostics["has_cookie_prefix"] is True
+    assert diagnostics["pair_count"] == 4
+    assert "sessionid" in diagnostics["present_important_keys"]
+    assert "secret-value" not in json.dumps(diagnostics, ensure_ascii=False)
 
 
 def test_llm_settings_accepts_openai_responses_provider(monkeypatch) -> None:
@@ -8084,6 +8127,46 @@ def test_cookie_profile_provider_requires_cookie(monkeypatch) -> None:
         DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
 
     assert raised.value.code == "COOKIE_REQUIRED"
+
+
+def test_cookie_profile_provider_empty_payload_explains_browser_context(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        text = '{"aweme_list":[]}'
+        content = b'{"aweme_list":[]}'
+
+        def json(self):
+            return {"aweme_list": [], "has_more": False}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "app.services.profile_scan.settings.douyin_cookie",
+        "sessionid=secret; sid_guard=guard; uid_tt=uid; uid_tt_ss=uidss; sid_tt=sid; ttwid=tt; odin_tt=odin; s_v_web_id=webid",
+    )
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_referer", "https://www.douyin.com/")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    with pytest.raises(AppError) as raised:
+        DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
+
+    assert raised.value.code == "EMPTY_AWEME_LIST"
+    assert "Cookie 结构看起来完整" in raised.value.message
+    assert "浏览器签名/风控上下文" in raised.value.message
+    assert "secret" not in raised.value.message
 
 
 def test_data_source_manager_falls_back_after_cookie_failure(monkeypatch) -> None:

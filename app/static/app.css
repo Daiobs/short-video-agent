@@ -2194,6 +2194,50 @@ button:disabled {
     margin-top: 12px;
 }
 
+.settings-test-result {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.settings-test-result.success {
+    border-color: rgba(22, 163, 74, .24);
+    background: #f0fdf4;
+    color: #14532d;
+}
+
+.settings-test-result.warning {
+    border-color: rgba(234, 179, 8, .3);
+    background: #fefce8;
+    color: #713f12;
+}
+
+.settings-test-result dl {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 6px 10px;
+    margin: 0;
+}
+
+.settings-test-result dt {
+    font-weight: 900;
+}
+
+.settings-test-result dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.settings-test-result ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
 .settings-inline-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
