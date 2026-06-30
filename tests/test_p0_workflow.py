@@ -9434,6 +9434,46 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
 
 
+def test_creator_clone_distill_retries_with_compact_prompt_after_llm_failure(monkeypatch) -> None:
+    class FlakyProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            self.calls += 1
+            if self.calls == 1:
+                raise AppError(ErrorCode.LLM_REQUEST_FAILED, "上下文过长或网关超时。")
+            assert "case_analysis_report_excerpt" not in prompt
+            return {
+                "summary": "精简证据包蒸馏成功。",
+                "creator_positioning": {"what_the_creator_sells": "稳定审美"},
+                "creator_clone_spec": {"taste": "证据优先"},
+            }
+
+    provider = FlakyProvider()
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
+    response = client.post(
+        "/api/creator-clone/distill",
+        json={
+            "samples": [
+                {"sample_id": "sample_retry_a", "title": "样本A", "like_count": 100, "case_id": "case_a"},
+                {"sample_id": "sample_retry_b", "title": "样本B", "like_count": 50, "case_id": "case_b"},
+                {"sample_id": "sample_retry_c", "title": "样本C", "like_count": 20, "case_id": "case_c"},
+            ],
+            "selected_sample_ids": ["sample_retry_a", "sample_retry_b", "sample_retry_c"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["result"]["summary"] == "精简证据包蒸馏成功。"
+    assert payload["result"]["sample_overview"]["selected_count"] == 3
+    assert any("精简证据包重试成功" in warning for warning in payload["result"]["sample_overview"]["warnings"])
+    assert provider.calls == 2
+
+
 def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch) -> None:
     class FakeProvider:
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:

@@ -937,7 +937,24 @@ def distill_creator_clone(
     if not llm_is_configured():
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
 
-    result = get_llm_provider().analyze(prompt, [])
+    llm = get_llm_provider()
+    try:
+        result = llm.analyze(prompt, [])
+    except AppError as error:
+        if error.code not in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID} or not include_case_reports:
+            raise
+        compact_prompt = build_distill_prompt(
+            sample_set,
+            selected_samples,
+            distill_mode=distill_mode,
+            include_case_reports=False,
+        )
+        (output_dir / "distill_prompt_compact.md").write_text(compact_prompt, encoding="utf-8")
+        try:
+            result = llm.analyze(compact_prompt, [])
+        except AppError:
+            raise error
+        warnings.append("首次多样本蒸馏失败，已使用精简证据包重试成功。")
     normalized = normalize_creator_clone_result(result, sample_set, selected_samples, warnings)
     _write_json(output_dir / "creator_clone_result.json", normalized)
     (output_dir / "creator_clone.md").write_text(render_creator_clone_markdown(normalized), encoding="utf-8")
