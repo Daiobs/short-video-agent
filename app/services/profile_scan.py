@@ -38,6 +38,10 @@ COOKIE_IMPORTANT_KEYS = (
     "msToken",
     "odin_tt",
 )
+DOUYIN_COOKIE_API_ENDPOINTS = (
+    "https://www.douyin.com/aweme/v1/web/aweme/post/",
+    "https://www.douyin.com/aweme/v1/web/user/post/",
+)
 
 
 class ManualLinksProfileProvider:
@@ -197,7 +201,8 @@ class DouyinPublicProfileProvider:
 
 class DouyinCookieProfileProvider:
     name = "cookie_api"
-    endpoint = "https://www.douyin.com/aweme/v1/web/user/post/"
+    endpoint = DOUYIN_COOKIE_API_ENDPOINTS[0]
+    endpoints = DOUYIN_COOKIE_API_ENDPOINTS
 
     def scan(self, request: ProfileScanRequest) -> ProfileScanResult:
         douyin_settings = effective_douyin_settings()
@@ -210,67 +215,35 @@ class DouyinCookieProfileProvider:
             raise AppError(ErrorCode.SEC_USER_ID_NOT_FOUND)
 
         headers = _douyin_cookie_api_headers(douyin_settings, referer=profile_url)
-        items: list[ProfileVideoItem] = []
-        seen: set[str] = set()
-        max_cursor = "0"
-        has_more = False
         max_pages = max(1, min(int(request.max_pages or settings.profile_scan_max_pages), 5))
         count = _safe_count(request.count)
         page_count = max(1, min(count, settings.profile_scan_count_per_page or 20, 50))
-        try:
-            with httpx.Client(timeout=8.0, follow_redirects=False, trust_env=False) as client:
-                for _ in range(max_pages):
-                    response = client.get(
-                        self.endpoint,
-                        params={
-                            "sec_user_id": sec_user_id,
-                            "max_cursor": max_cursor,
-                            "count": page_count,
-                            "aid": "6383",
-                            "device_platform": "webapp",
-                        },
-                        headers=headers,
-                    )
-                    if response.status_code in {401, 403}:
-                        raise _cookie_api_error_from_response(response, cookie_diagnostics, fallback_code=ErrorCode.COOKIE_INVALID)
-                    if response.status_code == 429:
-                        raise _cookie_api_error_from_response(response, cookie_diagnostics, fallback_code=ErrorCode.DOUYIN_RISK_CONTROL)
-                    if response.status_code >= 400:
-                        raise _cookie_api_error_from_response(response, cookie_diagnostics, fallback_code=ErrorCode.PROFILE_SCAN_FAILED)
-                    payload = _json_response(response)
-                    raw_items = payload.get("aweme_list") or payload.get("awemeList") or []
-                    if not isinstance(raw_items, list):
-                        raise AppError(
-                            ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED,
-                            _cookie_api_structure_message(payload, cookie_diagnostics),
-                        )
-                    for raw_item in raw_items:
-                        if not isinstance(raw_item, dict):
-                            continue
-                        item = normalize_profile_video_item(raw_item, sec_user_id=sec_user_id)
-                        if not item or item.aweme_id in seen:
-                            continue
-                        item.source_provider = self.name
-                        seen.add(item.aweme_id)
-                        items.append(item)
-                    has_more = bool(payload.get("has_more") or payload.get("hasMore"))
-                    max_cursor = str(payload.get("max_cursor") or payload.get("maxCursor") or "")
-                    if not has_more or len(items) >= count:
-                        break
-        except AppError:
-            raise
-        except httpx.HTTPError as error:
-            raise AppError(
-                ErrorCode.PROFILE_SCAN_FAILED,
-                f"Cookie API 请求失败：{str(error)[:160]}。{_cookie_structure_hint(cookie_diagnostics)}",
-            ) from error
+        endpoint_failures: list[tuple[str, AppError]] = []
+        selected_endpoint = ""
+        items: list[ProfileVideoItem] = []
+        max_cursor = "0"
+        has_more = False
+        for endpoint in self.endpoints:
+            try:
+                items, max_cursor, has_more = _fetch_douyin_cookie_api_items(
+                    endpoint=endpoint,
+                    sec_user_id=sec_user_id,
+                    headers=headers,
+                    max_pages=max_pages,
+                    count=count,
+                    page_count=page_count,
+                    cookie_diagnostics=cookie_diagnostics,
+                )
+                selected_endpoint = endpoint
+                break
+            except AppError as error:
+                endpoint_failures.append((endpoint, error))
+                continue
 
         if not items:
-            raise AppError(
-                ErrorCode.EMPTY_AWEME_LIST,
-                f"Cookie API 返回 JSON，但 aweme_list 为空或无法归一化作品。{_cookie_structure_hint(cookie_diagnostics)} "
-                "这通常表示 Cookie 虽有登录字段，但 Web API 仍需要浏览器签名/风控上下文，或该主页没有返回公开视频。",
-            )
+            if endpoint_failures:
+                raise _combined_cookie_api_error(endpoint_failures, cookie_diagnostics)
+            raise AppError(ErrorCode.EMPTY_AWEME_LIST, "Cookie API 没有返回可解析作品。")
 
         sorted_items = sorted_profile_items(items[:count], request.sort_by)
         result = ProfileScanResult(
@@ -282,6 +255,7 @@ class DouyinCookieProfileProvider:
             next_cursor=max_cursor,
             warnings=[
                 "Cookie API 是可选增强层，只用于提高公开 Web API 成功率；Cookie 不会写入素材包、prompt 或日志。",
+                f"Cookie API 使用候选接口：{_safe_endpoint_path(selected_endpoint)}。",
             ],
         )
         result.summary = build_profile_summary(result)
@@ -400,6 +374,7 @@ def test_douyin_cookie_api(profile_url: str = "", sec_user_id: str = "", count: 
     result = {
         "provider": DouyinCookieProfileProvider.name,
         "endpoint": DouyinCookieProfileProvider.endpoint,
+        "candidate_endpoints": [_safe_endpoint_path(endpoint) for endpoint in DouyinCookieProfileProvider.endpoints],
         "configured": bool(cookie_diagnostics["has_cookie"]),
         "cookie_diagnostics": cookie_diagnostics,
         "user_agent_configured": bool((douyin_settings["user_agent"] or "").strip()),
@@ -424,23 +399,28 @@ def test_douyin_cookie_api(profile_url: str = "", sec_user_id: str = "", count: 
         if not target_sec_user_id:
             raise AppError(ErrorCode.SEC_USER_ID_NOT_FOUND)
         headers = _douyin_cookie_api_headers(douyin_settings, referer=normalized_url)
-        with httpx.Client(timeout=8.0, follow_redirects=False, trust_env=False) as client:
-            response = client.get(
-                DouyinCookieProfileProvider.endpoint,
-                params={
-                    "sec_user_id": target_sec_user_id,
-                    "max_cursor": "0",
-                    "count": max(1, min(int(count or 5), 20)),
-                    "aid": "6383",
-                    "device_platform": "webapp",
-                },
+        endpoint_results = []
+        selected_diag = None
+        for endpoint in DouyinCookieProfileProvider.endpoints:
+            endpoint_result = _test_douyin_cookie_api_endpoint(
+                endpoint=endpoint,
+                sec_user_id=target_sec_user_id,
                 headers=headers,
+                count=max(1, min(int(count or 5), 20)),
             )
-        response_diag = _cookie_api_response_diagnostics(response)
+            endpoint_results.append(endpoint_result)
+            if endpoint_result.get("status") == "ok":
+                selected_diag = endpoint_result
+                break
+            if selected_diag is None and endpoint_result.get("status_code") != 404:
+                selected_diag = endpoint_result
+        response_diag = selected_diag or (endpoint_results[-1] if endpoint_results else {})
         result.update(
             {
                 "api_checked": True,
-                "status_code": response.status_code,
+                "endpoint_results": endpoint_results,
+                "selected_endpoint": response_diag.get("endpoint", ""),
+                "status_code": response_diag.get("status_code"),
                 "content_type": response_diag["content_type"],
                 "is_json": response_diag["is_json"],
                 "risk_control_markers": response_diag["risk_control_markers"],
@@ -451,21 +431,21 @@ def test_douyin_cookie_api(profile_url: str = "", sec_user_id: str = "", count: 
                 "has_more": response_diag["has_more"],
             }
         )
-        if response.status_code in {401, 403}:
+        if response_diag.get("status") == "ok":
+            result["status"] = "ok"
+            result["message"] = f"Cookie API 可用，本次通过 {response_diag.get('endpoint', '候选接口')} 返回 {response_diag['aweme_count']} 条作品。"
+        elif response_diag.get("status_code") in {401, 403}:
             result["status"] = "cookie_rejected"
             result["message"] = "Cookie API 返回未授权或禁止访问，Cookie 可能过期、账号状态异常，或缺少浏览器风控上下文。"
-        elif response.status_code == 429:
+        elif response_diag.get("status_code") == 429:
             result["status"] = "risk_control"
             result["message"] = "Cookie API 返回限流或风控。"
-        elif response.status_code >= 400:
+        elif response_diag.get("status_code", 0) >= 400:
             result["status"] = "http_failed"
-            result["message"] = f"Cookie API 请求失败：HTTP {response.status_code}。"
+            result["message"] = f"Cookie API 候选接口请求失败：HTTP {response_diag.get('status_code')}。"
         elif not response_diag["is_json"]:
             result["status"] = "non_json"
             result["message"] = "Cookie API 返回非 JSON，可能是 HTML 风控页、验证码页或跳转页。"
-        elif response_diag["aweme_count"] > 0:
-            result["status"] = "ok"
-            result["message"] = f"Cookie API 可用，本次返回 {response_diag['aweme_count']} 条作品。"
         else:
             result["status"] = "empty"
             result["message"] = "Cookie API 返回 JSON，但 aweme_list 为空或结构无法归一化。"
@@ -917,6 +897,132 @@ def _douyin_cookie_api_headers(douyin_settings: dict[str, str], referer: str = "
     }
 
 
+def _fetch_douyin_cookie_api_items(
+    endpoint: str,
+    sec_user_id: str,
+    headers: dict[str, str],
+    max_pages: int,
+    count: int,
+    page_count: int,
+    cookie_diagnostics: dict,
+) -> tuple[list[ProfileVideoItem], str, bool]:
+    items: list[ProfileVideoItem] = []
+    seen: set[str] = set()
+    max_cursor = "0"
+    has_more = False
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=False, trust_env=False) as client:
+            for _ in range(max_pages):
+                response = client.get(
+                    endpoint,
+                    params={
+                        "sec_user_id": sec_user_id,
+                        "max_cursor": max_cursor,
+                        "count": page_count,
+                        "aid": "6383",
+                        "device_platform": "webapp",
+                    },
+                    headers=headers,
+                )
+                if response.status_code in {401, 403}:
+                    raise _cookie_api_error_from_response(response, cookie_diagnostics, fallback_code=ErrorCode.COOKIE_INVALID)
+                if response.status_code == 429:
+                    raise _cookie_api_error_from_response(response, cookie_diagnostics, fallback_code=ErrorCode.DOUYIN_RISK_CONTROL)
+                if response.status_code >= 400:
+                    raise _cookie_api_error_from_response(response, cookie_diagnostics, fallback_code=ErrorCode.PROFILE_SCAN_FAILED)
+                payload = _json_response(response)
+                raw_items = payload.get("aweme_list") or payload.get("awemeList") or []
+                if not isinstance(raw_items, list):
+                    raise AppError(
+                        ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED,
+                        _cookie_api_structure_message(payload, cookie_diagnostics),
+                    )
+                for raw_item in raw_items:
+                    if not isinstance(raw_item, dict):
+                        continue
+                    item = normalize_profile_video_item(raw_item, sec_user_id=sec_user_id)
+                    if not item or item.aweme_id in seen:
+                        continue
+                    item.source_provider = DouyinCookieProfileProvider.name
+                    seen.add(item.aweme_id)
+                    items.append(item)
+                has_more = bool(payload.get("has_more") or payload.get("hasMore"))
+                max_cursor = str(payload.get("max_cursor") or payload.get("maxCursor") or "")
+                if not has_more or len(items) >= count:
+                    break
+    except AppError:
+        raise
+    except httpx.HTTPError as error:
+        raise AppError(
+            ErrorCode.PROFILE_SCAN_FAILED,
+            f"Cookie API 请求失败：{str(error)[:160]}。{_cookie_structure_hint(cookie_diagnostics)}",
+        ) from error
+
+    if not items:
+        raise AppError(
+            ErrorCode.EMPTY_AWEME_LIST,
+            f"Cookie API 返回 JSON，但 aweme_list 为空或无法归一化作品。{_cookie_structure_hint(cookie_diagnostics)} "
+            "这通常表示 Cookie 虽有登录字段，但 Web API 仍需要浏览器签名/风控上下文，或该主页没有返回公开视频。",
+        )
+    return items, max_cursor, has_more
+
+
+def _test_douyin_cookie_api_endpoint(endpoint: str, sec_user_id: str, headers: dict[str, str], count: int) -> dict:
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=False, trust_env=False) as client:
+            response = client.get(
+                endpoint,
+                params={
+                    "sec_user_id": sec_user_id,
+                    "max_cursor": "0",
+                    "count": count,
+                    "aid": "6383",
+                    "device_platform": "webapp",
+                },
+                headers=headers,
+            )
+    except httpx.HTTPError as error:
+        return {
+            "endpoint": _safe_endpoint_path(endpoint),
+            "status": "request_failed",
+            "status_code": None,
+            "content_type": "",
+            "is_json": False,
+            "risk_control_markers": False,
+            "payload_keys": [],
+            "api_status_code": None,
+            "api_status_msg": str(error)[:180],
+            "aweme_count": 0,
+            "has_more": False,
+        }
+    diagnostics = _cookie_api_response_diagnostics(response)
+    if response.status_code in {401, 403}:
+        status = "cookie_rejected"
+    elif response.status_code == 429 or diagnostics["risk_control_markers"]:
+        status = "risk_control"
+    elif response.status_code >= 400:
+        status = "http_failed"
+    elif not diagnostics["is_json"]:
+        status = "non_json"
+    elif diagnostics["aweme_count"] > 0:
+        status = "ok"
+    else:
+        status = "empty"
+    return {
+        "endpoint": _safe_endpoint_path(endpoint),
+        "status": status,
+        "status_code": response.status_code,
+        "content_type": diagnostics["content_type"],
+        "is_json": diagnostics["is_json"],
+        "risk_control_markers": diagnostics["risk_control_markers"],
+        "payload_keys": diagnostics["payload_keys"],
+        "api_status_code": diagnostics["api_status_code"],
+        "api_status_msg": diagnostics["api_status_msg"],
+        "aweme_count": diagnostics["aweme_count"],
+        "has_more": diagnostics["has_more"],
+    }
+
+
 def _cookie_api_response_diagnostics(response: httpx.Response) -> dict:
     headers = getattr(response, "headers", {}) or {}
     content_type = headers.get("content-type", "") if hasattr(headers, "get") else ""
@@ -1024,6 +1130,34 @@ def _cookie_test_next_steps(result: dict) -> list[str]:
     if status == "config_only":
         return ["填入主页 URL 或 sec_user_id 后再次自检。"]
     return ["检查 Cookie、User-Agent、Referer，或改用本机 Chrome 辅助采集。"]
+
+
+def _combined_cookie_api_error(endpoint_failures: list[tuple[str, AppError]], cookie_diagnostics: dict) -> AppError:
+    if not endpoint_failures:
+        return AppError(ErrorCode.EMPTY_AWEME_LIST, "Cookie API 没有返回可解析作品。")
+    priority = [
+        ErrorCode.COOKIE_INVALID,
+        ErrorCode.DOUYIN_RISK_CONTROL,
+        ErrorCode.PROFILE_SCAN_STRUCTURE_CHANGED,
+        ErrorCode.EMPTY_AWEME_LIST,
+        ErrorCode.PROFILE_SCAN_FAILED,
+    ]
+    selected = endpoint_failures[0][1]
+    for code in priority:
+        matched = next((error for _, error in endpoint_failures if error.code == code), None)
+        if matched:
+            selected = matched
+            break
+    attempts = "；".join(f"{_safe_endpoint_path(endpoint)} -> {error.code}" for endpoint, error in endpoint_failures)
+    return AppError(
+        selected.code,
+        f"Cookie API 候选接口都未返回可解析作品：{attempts}。{_cookie_structure_hint(cookie_diagnostics)}",
+    )
+
+
+def _safe_endpoint_path(endpoint: str) -> str:
+    parsed = urlparse(endpoint)
+    return parsed.path or endpoint
 
 
 def _default_douyin_user_agent() -> str:

@@ -2238,6 +2238,19 @@ button:disabled {
     padding-left: 18px;
 }
 
+.endpoint-test-list {
+    display: grid;
+    gap: 5px;
+}
+
+.endpoint-test-list span {
+    display: block;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, .72);
+    overflow-wrap: anywhere;
+}
+
 .settings-inline-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

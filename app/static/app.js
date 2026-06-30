@@ -2866,12 +2866,21 @@ function renderDouyinCookieTestResult(test = {}) {
     ["接口消息", test.api_status_msg || ""],
   ].filter(([, value]) => value !== "");
   const nextSteps = normalizeItems(test.safe_next_steps);
+  const endpointResults = normalizeItems(test.endpoint_results);
   douyinCookieTestResult.className = `settings-test-result ${statusClass}`;
   douyinCookieTestResult.innerHTML = `
     <strong>${escapeHtml(test.message || "Cookie API 自检完成。")}</strong>
     <dl>
       ${rows.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd>`).join("")}
     </dl>
+    ${endpointResults.length ? `
+      <div class="endpoint-test-list">
+        <strong>候选接口</strong>
+        ${endpointResults.map((item) => `
+          <span>${escapeHtml(item.endpoint || "")} · ${escapeHtml(item.status || "")}${item.status_code ? ` · HTTP ${escapeHtml(String(item.status_code))}` : ""}${item.aweme_count ? ` · ${formatNumber(item.aweme_count)} 条` : ""}</span>
+        `).join("")}
+      </div>
+    ` : ""}
     ${nextSteps.length ? `<ul>${nextSteps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul>` : ""}
   `;
 }

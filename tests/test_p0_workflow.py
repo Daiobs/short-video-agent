@@ -8115,9 +8115,68 @@ def test_douyin_cookie_profile_provider_parses_web_api_payload(monkeypatch) -> N
     assert result.items[0].aweme_id == "7622653084993647603"
     assert result.items[0].like_count == 120
     assert result.items[0].source_provider == "cookie_api"
-    assert captured["url"].endswith("/aweme/v1/web/user/post/")
+    assert captured["url"].endswith("/aweme/v1/web/aweme/post/")
     assert captured["params"]["sec_user_id"] == sec_uid
     assert captured["headers"]["Cookie"] == "sessionid=test-secret-cookie"
+
+
+def test_douyin_cookie_profile_provider_tries_next_endpoint_after_404(monkeypatch) -> None:
+    sec_uid = "MS4wLjABAAAAabc12345"
+    called_urls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, status_code=200, payload=None):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.headers = {"content-type": "application/json" if status_code == 200 else "text/plain"}
+            self.text = json.dumps(self._payload) if status_code == 200 else "404 page not found"
+            self.content = self.text.encode("utf-8")
+
+        def json(self):
+            if self.status_code != 200:
+                raise ValueError("not json")
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, params=None, headers=None):
+            called_urls.append(url)
+            if url.endswith("/aweme/v1/web/aweme/post/"):
+                return FakeResponse(status_code=404)
+            return FakeResponse(
+                payload={
+                    "aweme_list": [
+                        {
+                            "aweme_id": "7622653084993647603",
+                            "desc": "旧候选接口成功",
+                            "statistics": {"digg_count": 9},
+                            "video": {"duration": 1000},
+                        }
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(
+        "app.services.profile_scan.settings.douyin_cookie",
+        "sessionid=secret; sid_guard=guard; uid_tt=uid; uid_tt_ss=uidss; sid_tt=sid; ttwid=tt; odin_tt=odin; s_v_web_id=webid",
+    )
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_referer", "https://www.douyin.com/")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    result = DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url=f"https://www.douyin.com/user/{sec_uid}", count=20))
+
+    assert [url.rsplit("/aweme/v1/web/", 1)[-1] for url in called_urls] == ["aweme/post/", "user/post/"]
+    assert result.items[0].aweme_id == "7622653084993647603"
+    assert result.items[0].like_count == 9
 
 
 def test_cookie_profile_provider_requires_cookie(monkeypatch) -> None:
