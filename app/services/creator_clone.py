@@ -753,6 +753,70 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
 """
 
 
+def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[CloneSample], distill_mode: str = "quick") -> str:
+    lite_samples = [_lite_sample_prompt_payload(sample) for sample in selected_samples]
+    segments = performance_segments(selected_samples)
+    evidence_matrix = selected_evidence_matrix(selected_samples)
+    evidence_constraints = selected_evidence_constraints(selected_samples)
+    return f"""你是短视频账号规律蒸馏助手。请基于样本列表输出简洁、合法 JSON，不要 Markdown。
+
+任务：提炼这个账号/创作者的定位、流量来源、内容公式、可复刻规则和下一步建议。
+要求：
+- 只根据证据推断，不确定就写进 evidence_gaps。
+- 美拍/COS/颜值类样本重点看视觉吸引、人物人设、动作节奏、标题话题和互动引导。
+- 输出要短而有用，适合网页展示。
+
+返回 JSON 字段：
+{{
+  "summary": "",
+  "creator_positioning": {{"what_the_creator_sells": "", "audience_promise": "", "hidden_genre": "", "audience_assumption": ""}},
+  "performance_segments": {{"highest_like_samples": [], "highest_comment_samples": [], "highest_share_samples": [], "highest_collect_samples": [], "weak_or_reference_samples": []}},
+  "topic_buckets": [],
+  "thinking_patterns": {{"assumptions": [], "tension_sources": [], "detail_selection_rules": [], "novelty_vs_familiarity": ""}},
+  "expression_patterns": {{"opening_hooks": [], "scene_order": [], "shot_types": [], "subtitle_voice": [], "visual_style": [], "ending_patterns": []}},
+  "transferable_formulas": [],
+  "creator_clone_spec": {{"taste": "", "topic_selection_rules": [], "structure_rules": [], "expression_rules": [], "visual_rules": [], "caption_voice": "", "ending_rules": [], "anti_patterns": [], "self_check_rubric": []}},
+  "candidate_ideas": [],
+  "evidence_gaps": [],
+  "next_actions": []
+}}
+
+蒸馏模式：{distill_mode}
+素材池标题：{sample_set.title}
+创作者：{sample_set.creator_name or "未知"}
+平台：{sample_set.source_platform}
+证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
+证据约束：{json.dumps(evidence_constraints, ensure_ascii=False)}
+本地分层：{json.dumps(segments, ensure_ascii=False)}
+样本：{json.dumps(lite_samples, ensure_ascii=False)}
+"""
+
+
+def _lite_sample_prompt_payload(sample: CloneSample) -> dict:
+    return {
+        "sample_id": sample.sample_id,
+        "aweme_id": sample.aweme_id,
+        "title": _truncate_text(sample.title or sample.desc or "", 160),
+        "author": sample.author,
+        "media_type": sample.media_type,
+        "like_count": sample.like_count,
+        "comment_count": sample.comment_count,
+        "share_count": sample.share_count,
+        "collect_count": sample.collect_count,
+        "engagement_score": sample.engagement_score,
+        "understanding_level": sample.understanding_level,
+        "evidence": {
+            "has_case": bool(sample.case_id),
+            "has_frames": sample.has_frames,
+            "has_asr": sample.has_asr,
+            "has_ocr": sample.has_ocr,
+            "has_comments": sample.has_comments,
+            "analysis_status": sample.analysis_status,
+        },
+        "notes": _truncate_text(sample.notes, 120),
+    }
+
+
 def selected_evidence_matrix(samples: list[CloneSample]) -> dict:
     rows = list(samples or [])
     total = len(rows)
@@ -930,7 +994,12 @@ def distill_creator_clone(
         sample.selected = sample.sample_id in set(sample_set.selected_sample_ids)
     save_sample_set(sample_set)
 
-    prompt = build_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode, include_case_reports=include_case_reports)
+    use_lite_prompt = len(selected_samples) >= 3
+    prompt = (
+        build_lite_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode)
+        if use_lite_prompt
+        else build_distill_prompt(sample_set, selected_samples, distill_mode=distill_mode, include_case_reports=include_case_reports)
+    )
     output_dir = creator_clone_dir(sample_set.set_id)
     (output_dir / "distill_prompt.md").write_text(prompt, encoding="utf-8")
 
@@ -941,7 +1010,7 @@ def distill_creator_clone(
     try:
         result = llm.analyze(prompt, [])
     except AppError as error:
-        if error.code not in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID} or not include_case_reports:
+        if error.code not in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID} or not include_case_reports or use_lite_prompt:
             raise
         compact_prompt = build_distill_prompt(
             sample_set,

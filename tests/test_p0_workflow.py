@@ -9459,9 +9459,8 @@ def test_creator_clone_distill_retries_with_compact_prompt_after_llm_failure(mon
             "samples": [
                 {"sample_id": "sample_retry_a", "title": "样本A", "like_count": 100, "case_id": "case_a"},
                 {"sample_id": "sample_retry_b", "title": "样本B", "like_count": 50, "case_id": "case_b"},
-                {"sample_id": "sample_retry_c", "title": "样本C", "like_count": 20, "case_id": "case_c"},
             ],
-            "selected_sample_ids": ["sample_retry_a", "sample_retry_b", "sample_retry_c"],
+            "selected_sample_ids": ["sample_retry_a", "sample_retry_b"],
         },
     )
 
@@ -9469,9 +9468,48 @@ def test_creator_clone_distill_retries_with_compact_prompt_after_llm_failure(mon
     payload = response.json()
     assert payload["ok"] is True
     assert payload["result"]["summary"] == "精简证据包蒸馏成功。"
-    assert payload["result"]["sample_overview"]["selected_count"] == 3
+    assert payload["result"]["sample_overview"]["selected_count"] == 2
     assert any("精简证据包重试成功" in warning for warning in payload["result"]["sample_overview"]["warnings"])
     assert provider.calls == 2
+
+
+def test_creator_clone_distill_uses_lite_prompt_for_three_samples(monkeypatch) -> None:
+    class FakeProvider:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            self.prompts.append(prompt)
+            assert "返回 JSON 字段" in prompt
+            assert "请严格返回这个 JSON 结构" not in prompt
+            assert "case_analysis_report_excerpt" not in prompt
+            return {
+                "summary": "三条样本轻量蒸馏成功。",
+                "creator_positioning": {"what_the_creator_sells": "美拍氛围和人物吸引"},
+                "creator_clone_spec": {"taste": "短、准、视觉先行"},
+            }
+
+    provider = FakeProvider()
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
+    response = client.post(
+        "/api/creator-clone/distill",
+        json={
+            "samples": [
+                {"sample_id": "sample_lite_a", "title": "样本A", "like_count": 100, "case_id": "case_a"},
+                {"sample_id": "sample_lite_b", "title": "样本B", "like_count": 50, "case_id": "case_b"},
+                {"sample_id": "sample_lite_c", "title": "样本C", "like_count": 20, "case_id": "case_c"},
+            ],
+            "selected_sample_ids": ["sample_lite_a", "sample_lite_b", "sample_lite_c"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["result"]["summary"] == "三条样本轻量蒸馏成功。"
+    assert payload["result"]["sample_overview"]["selected_count"] == 3
+    assert len(provider.prompts) == 1
+    assert len(provider.prompts[0]) < 7000
 
 
 def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch) -> None:
