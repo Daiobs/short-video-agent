@@ -2007,6 +2007,7 @@ function renderProfileQueueSummary({completedCount, failedCount, referenceOnlyCo
     ["参考", pipelineSummary.reference_only_count],
     ["下载", pipelineSummary.downloaded_count],
     ["素材包", pipelineSummary.case_count],
+    ["复用", pipelineSummary.reused_case_count],
     ["富化", pipelineSummary.enriched_count],
     ["ASR", pipelineSummary.asr_success_count],
     ["OCR", pipelineSummary.ocr_success_count],

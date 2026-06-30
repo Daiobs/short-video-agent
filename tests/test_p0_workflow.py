@@ -2971,6 +2971,122 @@ def test_profile_build_cases_queue_backfills_asr_ocr_evidence_into_sample_set(mo
     assert "甜美反差感" in prompt
 
 
+def test_profile_build_cases_queue_reuses_existing_case_without_redownload(monkeypatch) -> None:
+    set_id = "clone_profile_queue_reuse_existing_case"
+    aweme_id = "7650000000000000901"
+    case_id = "case_profile_queue_reuse_existing_case"
+    case_dir = settings.cases_dir / case_id
+    shutil.rmtree(settings.creator_clones_dir / set_id, ignore_errors=True)
+    shutil.rmtree(case_dir, ignore_errors=True)
+    case_dir.mkdir(parents=True)
+    (case_dir / "keyframes").mkdir()
+    (case_dir / "enrichment" / "asr").mkdir(parents=True)
+    (case_dir / "enrichment" / "ocr").mkdir(parents=True)
+    (case_dir / "video.mp4").write_bytes(b"video")
+    (case_dir / "contact_sheet.jpg").write_bytes(b"image")
+    (case_dir / "metadata.json").write_text(json.dumps({"title": "已存在素材包"}, ensure_ascii=False), encoding="utf-8")
+    (case_dir / "analysis_input.json").write_text(json.dumps({"case_id": case_id}, ensure_ascii=False), encoding="utf-8")
+    (case_dir / "prompt.md").write_text("prompt", encoding="utf-8")
+    (case_dir / "qualities.json").write_text("[]", encoding="utf-8")
+    (case_dir / "ffprobe.json").write_text("{}", encoding="utf-8")
+    (case_dir / "enrichment" / "manifest.json").write_text(json.dumps({"status": "success"}, ensure_ascii=False), encoding="utf-8")
+    (case_dir / "enrichment" / "asr" / "transcript.json").write_text(json.dumps({"status": "success"}, ensure_ascii=False), encoding="utf-8")
+    (case_dir / "enrichment" / "ocr" / "frame_ocr.json").write_text(json.dumps({"status": "success"}, ensure_ascii=False), encoding="utf-8")
+
+    db = SessionLocal()
+    try:
+        existing = db.get(CaseArtifact, case_id)
+        if existing:
+            db.delete(existing)
+            db.commit()
+        db.add(
+            CaseArtifact(
+                case_id=case_id,
+                aweme_id=aweme_id,
+                local_video_id=f"local_{aweme_id}",
+                video_path=str(case_dir / "video.mp4"),
+                metadata_path=str(case_dir / "metadata.json"),
+                qualities_path=str(case_dir / "qualities.json"),
+                ffprobe_path=str(case_dir / "ffprobe.json"),
+                analysis_input_path=str(case_dir / "analysis_input.json"),
+                prompt_path=str(case_dir / "prompt.md"),
+                contact_sheet_path=str(case_dir / "contact_sheet.jpg"),
+                keyframes_dir=str(case_dir / "keyframes"),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    save_sample_set(
+        CloneSampleSet(
+            set_id=set_id,
+            title="队列复用已有素材包测试",
+            source_platform="douyin",
+            samples=[
+                CloneSample(
+                    sample_id=f"sample_{aweme_id}",
+                    aweme_id=aweme_id,
+                    title="已存在素材包",
+                    media_type="video",
+                    like_count=100,
+                )
+            ],
+        )
+    )
+
+    def should_not_call(*args, **kwargs):
+        raise AssertionError("复用已有素材包时不应重新解析、下载或建包")
+
+    monkeypatch.setattr("app.routes.jobs.resolve_quality_candidates", should_not_call)
+    monkeypatch.setattr("app.routes.jobs.download_candidate", should_not_call)
+    monkeypatch.setattr("app.routes.jobs.build_case_from_local_video", should_not_call)
+
+    create_response = client.post(
+        "/api/jobs/profile-build-cases",
+        json={
+            "items": [{"aweme_id": aweme_id, "sample_id": f"sample_{aweme_id}", "title": "已存在素材包", "media_type": "video"}],
+            "sample_set_id": set_id,
+            "selected_sample_ids": [f"sample_{aweme_id}"],
+            "auto_enrich": True,
+            "auto_asr": True,
+            "auto_ocr": True,
+            "auto_analyze": False,
+        },
+    )
+    assert create_response.status_code == 200
+    job_id = create_response.json()["job_id"]
+
+    deadline = time.time() + 10
+    job = None
+    while time.time() < deadline:
+        response = client.get(f"/api/jobs/{job_id}")
+        assert response.status_code == 200
+        job = response.json()["job"]
+        if job["status"] in {"success", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert job is not None
+    assert job["status"] == "success"
+    result = job["result_json"]
+    item = result["items"][0]
+    assert item["status"] == "completed"
+    assert item["case_reused"] is True
+    assert item["message"] == "已复用已有素材包"
+    assert item["case_id"] == case_id
+    assert item["enrichment_reused"] is True
+    assert item["asr_reused"] is True
+    assert item["ocr_reused"] is True
+    assert result["pipeline_summary"]["reused_case_count"] == 1
+    assert any("本地复用" in note for note in result["pipeline_summary"]["notes"])
+    updated_sample = load_sample_set(set_id).samples[0]
+    assert updated_sample.case_id == case_id
+    assert updated_sample.has_frames is True
+    assert updated_sample.has_asr is True
+    assert updated_sample.has_ocr is True
+
+
 def test_profile_build_cases_queue_skips_text_items_without_download() -> None:
     set_id = "clone_profile_queue_selection_skip"
     shutil.rmtree(settings.creator_clones_dir / set_id, ignore_errors=True)
