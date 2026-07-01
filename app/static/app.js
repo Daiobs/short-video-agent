@@ -631,6 +631,78 @@ function legacyProfileItemFromCreatorSample(sample = {}) {
   };
 }
 
+function creatorSampleFromLegacyProfileItem(item = {}) {
+  const key = profileItemKey(item);
+  const evidenceLevel = item.understanding_level || (item.has_frames || item.has_asr || item.has_ocr || item.has_comments ? "partial" : "metadata_only");
+  return {
+    sample_id: key,
+    source: item.source_type || "douyin",
+    source_url: item.source_url || item.webpage_url || "",
+    platform_item_id: item.aweme_id || "",
+    title: item.title || item.desc || "",
+    description: item.desc || "",
+    author: item.author || "",
+    cover_url: item.cover_url || "",
+    media_kind: item.media_type || "unknown",
+    metrics: {
+      like_count: Number(item.like_count || 0),
+      comment_count: Number(item.comment_count || 0),
+      share_count: Number(item.share_count || 0),
+      collect_count: Number(item.collect_count || 0),
+      view_count: Number(item.view_count || 0),
+      engagement_score: Number(item.engagement_score || 0),
+    },
+    evidence: {
+      level: evidenceLevel,
+      has_video: Boolean(item.has_video),
+      has_frames: Boolean(item.has_frames),
+      has_asr: Boolean(item.has_asr),
+      has_ocr: Boolean(item.has_ocr),
+      has_comments: Boolean(item.has_comments),
+      enrichment_status: item.enrichment_status || "pending",
+      asr_status: item.asr_status || "pending",
+      ocr_status: item.ocr_status || "pending",
+      analysis_status: item.analysis_status || "not_analyzed",
+    },
+    case_id: item.case_id || "",
+    tags: normalizeItems(item.tags),
+    created_at: item.create_time || "",
+    selected: Boolean(item.selected),
+    raw: {...item},
+  };
+}
+
+function creatorProjectFromCloneSet(set = {}) {
+  if (!set?.set_id) {
+    return null;
+  }
+  const profile = set.profile_metadata || {};
+  const samples = normalizeItems(set.samples).map(creatorSampleFromLegacyProfileItem);
+  const selected = normalizeItems(set.selected_sample_ids);
+  return {
+    project_id: set.set_id,
+    title: set.title || "创作者蒸馏素材池",
+    profile: {
+      creator_id: profile.sec_user_id || set.creator_name || set.set_id,
+      display_name: set.creator_name || profile.nickname || "",
+      platform: set.source_platform || profile.source_platform || "unknown",
+      source_url: profile.profile_url || "",
+      bio: profile.bio || "",
+      audience: profile.audience || "",
+      content_direction: set.content_profile || profile.content_direction || "",
+      style_bias: profile.style_bias || "",
+      raw_profile: {...profile},
+    },
+    samples,
+    selected_sample_ids: selected,
+    warnings: normalizeItems(set.warnings),
+    sample_count: samples.length,
+    selected_count: selected.length || samples.filter((sample) => sample.selected).length,
+    created_at: set.created_at || "",
+    updated_at: set.updated_at || "",
+  };
+}
+
 function creatorProjectProfileItems() {
   return normalizeItems(currentCreatorIntelligenceProject?.samples).map(legacyProfileItemFromCreatorSample);
 }
@@ -1063,7 +1135,7 @@ function hasPendingEnrichment(items = selectedProfileItems()) {
 
 function applyCreatorIntelligencePayload(payload = {}) {
   const intelligence = payload?.creator_intelligence || payload?.set?.creator_intelligence || null;
-  currentCreatorIntelligenceProject = intelligence?.project || payload?.project || currentCreatorIntelligenceProject;
+  currentCreatorIntelligenceProject = intelligence?.project || payload?.project || creatorProjectFromCloneSet(payload?.set) || currentCreatorIntelligenceProject;
   currentCreatorIntelligenceWorkflow = intelligence?.workflow || null;
   currentCreatorIntelligenceBehavior = intelligence?.behavior_model || null;
   currentCreatorIntelligenceStrategy = intelligence?.strategy_output || payload?.strategy_output || currentCreatorIntelligenceStrategy;
@@ -3002,7 +3074,7 @@ function refreshProfilePoolFromSet(set) {
   renderProfileSummary(cloneSummaryFromSet(set) || {});
   renderProfileDecisionBoard({set});
   renderProfileTable();
-  setProfileSelection(profileItems.filter((item) => selectedIds.has(profileItemKey(item))));
+  setProfileSelection(activeProfileItems().filter((item) => selectedIds.has(profileItemKey(item))));
   updateCreatorCloneSelectionStatus();
   const warnings = normalizeItems(set.warnings);
   profileWarnings.classList.toggle("hidden", !warnings.length);
