@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -376,3 +377,20 @@ def test_creator_clone_result_exposes_structured_strategy_contract() -> None:
         "idea_bank": [{"title": "粉色妆造回头杀", "formula_used": "近景眼神钩子"}],
         "validation_rules": ["第一眼是否有人物亮点"],
     }
+
+
+def test_creator_intelligence_v2_doc_tracks_completion_evidence() -> None:
+    doc = Path("docs/creator-intelligence-v2.md").read_text(encoding="utf-8")
+
+    assert "## Current Completion Evidence" in doc
+    assert "Workflow Engine As Single State Contract" in doc
+    assert "Unified Creator Project Model" in doc
+    assert "Cognitive Modeling Layer" in doc
+    assert "Structured Generation Contract" in doc
+    assert "State-Driven Frontend Wizard" in doc
+    assert "Async Job Contract Alignment" in doc
+    assert "Compatibility Boundary" in doc
+    assert "dispatch_creator_workflow" in doc
+    assert "profile-build-cases" in doc
+    assert "prompt-only recovery" in doc
+    assert "Retire remaining legacy frontend names" in doc

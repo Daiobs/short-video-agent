@@ -243,3 +243,160 @@ Initial integration:
 - Samples, evidence, and creator clone output have stable contracts.
 - LLM prompts are generated from a cognitive representation layer.
 - Existing v1 capabilities remain usable while v2 internals become cleaner.
+
+## Current Completion Evidence
+
+This section records the current branch state so the v2 refactor can be reviewed
+against the North Star instead of judged as a collection of unrelated patches.
+
+### Workflow Engine As Single State Contract
+
+Implemented:
+
+- `app/services/creator_intelligence/workflow.py` defines `WorkflowState`,
+  `WorkflowAction`, `WorkflowSnapshot`, and `WorkflowEngine`.
+- `app/services/creator_intelligence/dispatch.py` centralizes workflow action
+  dispatch through `dispatch_creator_workflow()` for both new v2 routes and
+  legacy creator-clone routes.
+- `POST /api/creator-intelligence/projects/{project_id}/workflow` supports
+  `SELECT_SAMPLES`, `MARK_EVIDENCE_READY`, and `START_DISTILLATION`.
+- `POST /api/creator-clone/sets/{set_id}/workflow` remains available for legacy
+  callers but delegates to the same dispatch service.
+
+Verification:
+
+- `tests/test_creator_intelligence_v2.py`
+  - `test_workflow_engine_controls_creator_distillation_state`
+  - `test_creator_intelligence_workflow_api_dispatches_selection`
+  - `test_creator_intelligence_workflow_api_advances_evidence_and_distillation_state`
+  - `test_creator_clone_legacy_workflow_endpoint_advances_distillation_state`
+  - `test_shared_creator_workflow_dispatch_service_selects_samples`
+
+### Unified Creator Project Model
+
+Implemented:
+
+- `CreatorProject`, `CreatorProfile`, `CreatorSample`, `Evidence`,
+  `BehaviorRepresentation`, and `CreatorCloneStrategy` are stable domain
+  objects in `app/services/creator_intelligence/models.py`.
+- `app/services/creator_intelligence/adapters.py` converts the current
+  `CloneSampleSet` / `CloneSample` storage model into a normalized
+  `CreatorProject`.
+- Legacy response payloads now include `creator_intelligence.project`.
+- Frontend view-model helpers adapt old `set` payloads into `CreatorProject`
+  and prefer `CreatorProject.samples` over the legacy `profileItems` array.
+- Queue evidence updates are synced back into the frontend `CreatorProject`
+  view model.
+
+Verification:
+
+- `tests/test_creator_intelligence_v2.py`
+  - `test_clone_sample_set_adapts_to_creator_project`
+  - `test_creator_clone_set_endpoint_exposes_creator_intelligence_state`
+  - `test_creator_intelligence_project_api_exposes_v2_contract`
+- `tests/test_p0_workflow.py`
+  - static frontend assertions for `creatorProjectFromCloneSet`,
+    `activeProfileItems`, and `syncCreatorProjectSamplesFromProfileItems`.
+
+### Cognitive Modeling Layer
+
+Implemented:
+
+- `app/services/creator_intelligence/cognition.py` builds
+  `BehaviorRepresentation` from selected samples, media mix, evidence matrix,
+  performance segments, and evidence constraints.
+- Creator clone prompt builders include the compact behavior representation so
+  the LLM path is no longer only raw UI data -> LLM.
+- Enrichment jobs now return `creator_intelligence.behavior_model` when a
+  sample set is updated with case evidence.
+
+Verification:
+
+- `tests/test_creator_intelligence_v2.py`
+  - `test_behavior_representation_builds_evidence_and_segments`
+  - `test_selection_adapter_keeps_behavior_model_scoped_to_selected_samples`
+- `tests/test_p0_workflow.py`
+  - `test_profile_build_cases_queue_backfills_asr_ocr_evidence_into_sample_set`
+
+### Structured Generation Contract
+
+Implemented:
+
+- `CreatorCloneStrategy.empty_schema()` defines the v2 strategy contract:
+  `positioning`, `content_strategy`, `hooks`, `templates`, `anti_patterns`,
+  `idea_bank`, and `validation_rules`.
+- `normalize_creator_clone_result()` always emits `creator_clone_strategy`,
+  mapping legacy model fields into the schema.
+- Sync and async distillation success responses return
+  `creator_intelligence.strategy_output`.
+- Prompt-only recovery responses also return `creator_intelligence`, so the UI
+  can keep a stable project/workflow/behavior contract even without model output.
+- The public report renders strategy output first and keeps legacy sections as
+  compatibility detail.
+
+Verification:
+
+- `tests/test_creator_intelligence_v2.py`
+  - `test_creator_clone_result_exposes_structured_strategy_contract`
+- `tests/test_p0_workflow.py`
+  - `test_creator_clone_distill_with_mock_llm_saves_visual_result`
+  - `test_creator_clone_distill_job_with_mock_llm_saves_visual_result`
+  - `test_creator_clone_distill_job_unconfigured_returns_prompt`
+
+### State-Driven Frontend Wizard
+
+Implemented:
+
+- The creator distillation wizard reads `creator_intelligence.workflow` first
+  through `workflowStateFromCreatorIntelligence()` and
+  `getCreatorCloneWizardStateFromWorkflow()`.
+- Selection, enrichment, single distillation, and batch distillation paths
+  dispatch workflow actions before changing major UI stages.
+- Recent project restore reads `/api/creator-intelligence/projects/{project_id}`
+  and reconstructs table/report state from v2 payloads.
+- Completed strategy reports restore without rerunning the LLM.
+
+Verification:
+
+- `tests/test_p0_workflow.py`
+  - static assertions for `dispatchCreatorIntelligenceWorkflowAction`,
+    `markCreatorCloneDistillationStarted`, `profilePayloadFromCreatorIntelligenceProject`,
+    and restored `DONE` report rendering.
+
+### Async Job Contract Alignment
+
+Implemented:
+
+- `profile-build-cases` success results include `creator_intelligence` when a
+  sample set is available.
+- `creator-clone-distill` success results include `strategy_output` and
+  `DONE` workflow state.
+- `creator-clone-distill` prompt-only recovery results include
+  `creator_intelligence` with the selected sample workflow state.
+- `creator-clone-batch-distill` results include the same v2 payload contract.
+
+Verification:
+
+- `tests/test_p0_workflow.py`
+  - profile build queue tests for enriched evidence payloads.
+  - distillation job tests for success and prompt-only recovery payloads.
+
+### Compatibility Boundary
+
+Preserved:
+
+- Existing creator-clone endpoints remain callable.
+- Existing single-work parsing and case analysis flows are not changed by this
+  branch.
+- No new crawler/provider capability is introduced.
+- No risk-control, captcha, signing, or login bypass behavior is added.
+
+Remaining cleanup after this branch:
+
+- Retire remaining legacy frontend names such as `profileItems` once the UI no
+  longer needs compatibility adapters.
+- Persist all transient workflow transitions if a future product decision needs
+  resumable `DISTILLING` state across server restarts.
+- Move prompt builders fully from compatibility payloads to the
+  `BehaviorRepresentation` contract once older report fields are no longer
+  needed.
