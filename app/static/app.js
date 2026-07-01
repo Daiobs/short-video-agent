@@ -2861,21 +2861,36 @@ async function syncCreatorCloneWorkflowSelection() {
   if (!selectedIds.length) {
     return null;
   }
+  return dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES", {selected_sample_ids: selectedIds});
+}
+
+async function dispatchCreatorIntelligenceWorkflowAction(action, requestPayload = {}) {
+  if (!currentCloneSetId) {
+    return null;
+  }
   const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(currentCloneSetId)}/workflow`, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
-      action: "SELECT_SAMPLES",
-      selected_sample_ids: selectedIds,
+      action,
+      ...requestPayload,
     }),
   });
-  const payload = await readJsonResponse(response);
-  const profilePayload = profilePayloadFromCreatorIntelligenceProject(payload);
+  const responsePayload = await readJsonResponse(response);
+  const profilePayload = profilePayloadFromCreatorIntelligenceProject(responsePayload);
   applyCreatorIntelligencePayload(profilePayload);
   if (profilePayload.set) {
     refreshProfilePoolFromSet(profilePayload.set);
   }
-  return payload;
+  return responsePayload;
+}
+
+async function markCreatorCloneDistillationStarted() {
+  if (!currentCloneSetId) {
+    return null;
+  }
+  await dispatchCreatorIntelligenceWorkflowAction("MARK_EVIDENCE_READY");
+  return dispatchCreatorIntelligenceWorkflowAction("START_DISTILLATION");
 }
 
 async function useRecommendedProfileSamples() {
@@ -3907,6 +3922,7 @@ async function distillSelectedCreatorClone(options = {}) {
   try {
     const selectedIds = selected.map(profileItemKey);
     await syncCreatorCloneWorkflowSelection();
+    await markCreatorCloneDistillationStarted();
     placeJobCard("profile");
     resetJobCard("正在创建创作者蒸馏任务...");
     scrollProfileTaskPanel();
@@ -3964,6 +3980,7 @@ async function batchDistillSelectedCreatorClone(options = {}) {
   renderCreatorCloneNextAction();
   try {
     await syncCreatorCloneWorkflowSelection();
+    await markCreatorCloneDistillationStarted();
     placeJobCard("profile");
     resetJobCard(options.triggeredByQueue ? "富化完成，正在创建分批蒸馏任务..." : "正在创建分批蒸馏任务...");
     scrollProfileTaskPanel();

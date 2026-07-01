@@ -557,9 +557,14 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function wizardStateFromWorkflowState" in script
     assert "function getCreatorCloneWizardStateFromWorkflow" in script
     assert "function syncCreatorCloneWorkflowSelection" in script
+    assert "function dispatchCreatorIntelligenceWorkflowAction" in script
+    assert "function markCreatorCloneDistillationStarted" in script
+    assert 'dispatchCreatorIntelligenceWorkflowAction("MARK_EVIDENCE_READY")' in script
+    assert 'dispatchCreatorIntelligenceWorkflowAction("START_DISTILLATION")' in script
+    assert "await markCreatorCloneDistillationStarted();" in script
     assert "/api/creator-intelligence/projects/${encodeURIComponent(currentCloneSetId)}/workflow" in script
     assert "/api/creator-clone/sets/${encodeURIComponent(currentCloneSetId)}/workflow" not in script
-    assert 'action: "SELECT_SAMPLES"' in script
+    assert 'dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES"' in script
     assert "creator_intelligence" in script
     assert "creatorCloneExportActions.open = true" in script
     assert "下一步：使用推荐样本继续" in script
