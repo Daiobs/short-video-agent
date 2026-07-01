@@ -30,6 +30,7 @@ from app.services.creator_clone import (
     dedupe_samples,
     distill_creator_clone,
     load_sample_set,
+    normalize_content_profile,
     prompt_only_result,
     sample_from_dict,
     save_sample_set,
@@ -95,6 +96,7 @@ class CreatorCloneDistillJobRequest(BaseModel):
     title: str = ""
     creator_name: str = ""
     source_platform: str = "unknown"
+    content_profile: str = "auto"
 
 
 class CreatorCloneBatchDistillJobRequest(BaseModel):
@@ -107,6 +109,7 @@ class CreatorCloneBatchDistillJobRequest(BaseModel):
     title: str = ""
     creator_name: str = ""
     source_platform: str = "unknown"
+    content_profile: str = "auto"
 
 
 class AnalyzeCaseJobRequest(BaseModel):
@@ -1136,6 +1139,7 @@ def _inline_creator_clone_sample_set(payload: dict) -> CloneSampleSet:
         title=str(payload.get("title") or "创作者克隆实验室素材池"),
         creator_name=str(payload.get("creator_name") or ""),
         source_platform=str(payload.get("source_platform") or "unknown"),
+        content_profile=normalize_content_profile(str(payload.get("content_profile") or "auto")),
         samples=unique_samples,
         warnings=warnings,
     )
@@ -1146,8 +1150,13 @@ def _inline_creator_clone_sample_set(payload: dict) -> CloneSampleSet:
 def _load_creator_clone_distill_set(payload: dict) -> CloneSampleSet:
     sample_set_id = str(payload.get("sample_set_id") or "")
     if sample_set_id:
-        return load_sample_set(sample_set_id)
-    return _inline_creator_clone_sample_set(payload)
+        sample_set = load_sample_set(sample_set_id)
+    else:
+        sample_set = _inline_creator_clone_sample_set(payload)
+    if "content_profile" in payload:
+        sample_set.content_profile = normalize_content_profile(str(payload.get("content_profile") or "auto"))
+        save_sample_set(sample_set)
+    return sample_set
 
 
 def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
@@ -1303,11 +1312,50 @@ def _create_job(job_type: str, message: str) -> Job:
         db.close()
 
 
+def _job_response_payload(job: Job) -> dict:
+    return {
+        "id": job.id,
+        "type": job.type,
+        "status": job.status,
+        "progress": job.progress,
+        "message": job.message,
+        "result_json": job.result(),
+        "error_code": job.error_code,
+        "created_at": job.created_at.isoformat() if job.created_at else "",
+        "updated_at": job.updated_at.isoformat() if job.updated_at else "",
+    }
+
+
 @router.post("/build-case")
 def create_build_case_job(payload: BuildCaseJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("build-case", "等待生成素材包")
     background_tasks.add_task(_run_build_case_job, job.id, payload.local_video_id)
     return {"ok": True, "job_id": job.id}
+
+
+@router.get("/profile-build-cases/recent")
+def get_recent_profile_build_cases_job(sample_set_id: str = ""):
+    db = SessionLocal()
+    try:
+        jobs = (
+            db.query(Job)
+            .filter(Job.type == "profile-build-cases")
+            .order_by(Job.updated_at.desc())
+            .limit(20)
+            .all()
+        )
+        for job in jobs:
+            result = job.result()
+            result_set_id = str((result.get("set") or {}).get("set_id") or "")
+            if sample_set_id:
+                if result_set_id and result_set_id != sample_set_id:
+                    continue
+                if not result_set_id and job.status not in {"pending", "running"}:
+                    continue
+            return {"ok": True, "job": _job_response_payload(job)}
+        return error_response(AppError("JOB_NOT_FOUND", "没有找到最近的素材包队列。"), status_code=404)
+    finally:
+        db.close()
 
 
 @router.get("/{job_id}")
@@ -1317,20 +1365,7 @@ def get_job(job_id: str):
         job = db.get(Job, job_id)
         if not job:
             return error_response(AppError("JOB_NOT_FOUND", "任务不存在。"), status_code=404)
-        return {
-            "ok": True,
-            "job": {
-                "id": job.id,
-                "type": job.type,
-                "status": job.status,
-                "progress": job.progress,
-                "message": job.message,
-                "result_json": job.result(),
-                "error_code": job.error_code,
-                "created_at": job.created_at.isoformat() if job.created_at else "",
-                "updated_at": job.updated_at.isoformat() if job.updated_at else "",
-            },
-        }
+        return {"ok": True, "job": _job_response_payload(job)}
     finally:
         db.close()
 

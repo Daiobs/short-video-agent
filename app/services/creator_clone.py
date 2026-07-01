@@ -29,6 +29,32 @@ from app.providers.profile_base import ProfileScanRequest
 VALID_SOURCE_TYPES = {"douyin", "xhs", "bili", "local", "manual", "unknown"}
 VALID_MEDIA_TYPES = {"video", "image", "mixed", "text", "unknown"}
 VALID_UNDERSTANDING_LEVELS = {"full", "partial", "metadata_only"}
+VALID_CONTENT_PROFILES = {
+    "auto",
+    "beauty_cos",
+    "emotional_copy",
+    "knowledge",
+    "story_twist",
+    "commerce_seed",
+    "general",
+}
+CONTENT_PROFILE_LABELS = {
+    "auto": "自动判断",
+    "beauty_cos": "美拍 / COS / 颜值",
+    "emotional_copy": "鸡汤 / 情绪文案",
+    "knowledge": "教学 / 知识",
+    "story_twist": "剧情 / 反转",
+    "commerce_seed": "带货 / 种草",
+    "general": "通用短视频",
+}
+CONTENT_PROFILE_GUIDANCE = {
+    "beauty_cos": "优先分析第一眼视觉吸引、人物人设、妆造/服装/发型/道具、镜头距离/角度/光线、动作节奏、标题话题、互动引导，以及适合安全复刻的拍摄公式。弱化长文案结构拆解。",
+    "emotional_copy": "优先分析前 3 秒钩子、情绪冲突、文案段落逻辑、共鸣路径、身份代入、金句结构、结尾情绪落点和可复刻脚本模板。",
+    "knowledge": "优先分析问题切入、知识承诺、信息分层、案例/证明、步骤化表达、保存理由、可信度来源和可复用教学结构。",
+    "story_twist": "优先分析角色关系、冲突设置、悬念铺垫、反转节点、节奏控制、结尾回收和评论讨论点。",
+    "commerce_seed": "优先分析种草场景、痛点承诺、产品/道具露出、信任证据、转化理由、收藏/购买动机和风险边界。",
+    "general": "先判断内容类型，再提炼选题、表达、视觉和互动规律；不要把某一类模板强行套到所有样本。",
+}
 MAX_DISTILL_SAMPLES = 20
 BATCH_DISTILL_MAX_SAMPLES = 150
 HANDOFF_SENSITIVE_RE = re.compile(
@@ -139,6 +165,7 @@ class CloneSampleSet:
     title: str = "创作者克隆实验室素材池"
     creator_name: str = ""
     source_platform: str = "unknown"
+    content_profile: str = "auto"
     profile_metadata: dict[str, Any] = field(default_factory=dict)
     samples: list[CloneSample] = field(default_factory=list)
     selected_sample_ids: list[str] = field(default_factory=list)
@@ -152,6 +179,7 @@ class CloneSampleSet:
             "title": self.title,
             "creator_name": self.creator_name,
             "source_platform": self.source_platform,
+            "content_profile": normalize_content_profile(self.content_profile),
             "profile_metadata": dict(self.profile_metadata),
             "samples": [sample.to_dict() for sample in self.samples],
             "selected_sample_ids": list(self.selected_sample_ids),
@@ -598,6 +626,7 @@ def load_sample_set(set_id: str) -> CloneSampleSet:
         title=str(payload.get("title") or "创作者克隆实验室素材池"),
         creator_name=str(payload.get("creator_name") or ""),
         source_platform=normalize_source_type(str(payload.get("source_platform") or "unknown")),
+        content_profile=normalize_content_profile(str(payload.get("content_profile") or "auto")),
         profile_metadata=payload.get("profile_metadata") if isinstance(payload.get("profile_metadata"), dict) else {},
         samples=samples,
         selected_sample_ids=[str(value) for value in payload.get("selected_sample_ids", [])],
@@ -724,6 +753,7 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
     segments = performance_segments(selected_samples)
     evidence_matrix = selected_evidence_matrix(selected_samples)
     evidence_constraints = selected_evidence_constraints(selected_samples)
+    profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
     schema = creator_clone_schema()
     return f"""你是 Creator Clone Lab 的创作者规律蒸馏引擎。
 
@@ -741,6 +771,7 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
 素材池标题：{sample_set.title}
 创作者：{sample_set.creator_name or "未知"}
 平台：{sample_set.source_platform}
+{profile_prompt}
 账号可见资料：{json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False)}
 样本数：{len(selected_samples)}
 理解状态统计：{json.dumps(counts, ensure_ascii=False)}
@@ -762,6 +793,7 @@ def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list
     segments = performance_segments(selected_samples)
     evidence_matrix = selected_evidence_matrix(selected_samples)
     evidence_constraints = selected_evidence_constraints(selected_samples)
+    profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
     return f"""你是短视频账号规律蒸馏助手。请基于样本列表输出简洁、合法 JSON，不要 Markdown。
 
 任务：提炼这个账号/创作者的定位、流量来源、内容公式、可复刻规则和下一步建议。
@@ -789,6 +821,7 @@ def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list
 素材池标题：{sample_set.title}
 创作者：{sample_set.creator_name or "未知"}
 平台：{sample_set.source_platform}
+{profile_prompt}
 证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
 证据约束：{json.dumps(evidence_constraints, ensure_ascii=False)}
 本地分层：{json.dumps(segments, ensure_ascii=False)}
@@ -1075,6 +1108,7 @@ def build_reduce_distill_prompt(
     evidence_matrix = selected_evidence_matrix(selected_samples)
     evidence_constraints = selected_evidence_constraints(selected_samples)
     reduce_summaries = [_map_summary_for_reduce(summary) for summary in map_summaries]
+    profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
     return f"""你是 Creator Clone Lab 的 Reduce 蒸馏助手。请只基于下面的单条视频 Map 摘要做跨样本归纳，输出合法 JSON，不要 Markdown。
 
 工作方式：
@@ -1103,6 +1137,7 @@ def build_reduce_distill_prompt(
 素材池标题：{sample_set.title}
 创作者：{sample_set.creator_name or "未知"}
 平台：{sample_set.source_platform}
+{profile_prompt}
 账号可见资料：{json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False)}
 证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
 证据约束：{json.dumps(evidence_constraints, ensure_ascii=False)}
@@ -1118,6 +1153,7 @@ def build_micro_reduce_distill_prompt(
     distill_mode: str = "quick",
 ) -> str:
     rows = [_micro_map_summary(summary) for summary in map_summaries]
+    profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
     return f"""你是短视频账号规律蒸馏助手。请基于一组单条视频摘要，输出极简合法 JSON，不要 Markdown。
 
 要求：
@@ -1139,6 +1175,7 @@ def build_micro_reduce_distill_prompt(
 
 素材池：{sample_set.title}
 模式：{distill_mode}
+{profile_prompt}
 样本摘要：{json.dumps(rows, ensure_ascii=False)}
 """
 
@@ -1608,13 +1645,14 @@ def build_final_creator_clone_reduce_prompt(
     ]
     segments = performance_segments(selected_samples)
     evidence_matrix = selected_evidence_matrix(selected_samples)
+    profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
     return f"""你是 Creator Clone Lab 的最终汇总 Reduce 助手。请基于多个批次蒸馏摘要，输出账号级创作者规律 JSON，不要 Markdown。
 
 工作方式：
 - 每个 batch 已经代表 1 组样本的局部规律，你现在只做跨批次汇总。
 - 优先找跨批次反复出现的流量来源、视觉人设、标题话题、动作节奏、可复刻公式和风险边界。
 - 不要逐条复述样本；如果批次失败或证据不足，写进 evidence_gaps。
-- 美拍/COS/颜值类优先归纳：第一眼吸引、人物人设、妆造光线、动作节奏、标题话题和评论互动。
+- 按“账号类型 / 分析模板”的指导选择分析重点，不要把不匹配的模板强行套到账号上。
 
 返回 JSON 字段：
 {{
@@ -1635,6 +1673,7 @@ def build_final_creator_clone_reduce_prompt(
 素材池标题：{sample_set.title}
 创作者：{sample_set.creator_name or "未知"}
 平台：{sample_set.source_platform}
+{profile_prompt}
 总样本数：{len(selected_samples)}
 账号可见资料：{json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False)}
 全局证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
@@ -1923,6 +1962,7 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
     result = creator_clone_schema()
     _deep_merge(result, raw if isinstance(raw, dict) else {})
     result["summary"] = str(result.get("summary") or "创作者克隆蒸馏完成。")
+    result["content_profile"] = content_profile_prompt_block(sample_set, selected_samples)
     result["sample_overview"] = {
         "set_id": sample_set.set_id,
         "sample_count": len(sample_set.samples),
@@ -1930,6 +1970,7 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
         "understanding_counts": understanding_counts(selected_samples),
         "confidence": _confidence_label(selected_samples),
         "warnings": list(warnings or []),
+        "content_profile": result["content_profile"],
     }
     fallback_segments = performance_segments(selected_samples)
     current_segments = result.get("performance_segments") if isinstance(result.get("performance_segments"), dict) else {}
@@ -1943,6 +1984,13 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
 def creator_clone_schema() -> dict:
     return {
         "summary": "",
+        "content_profile": {
+            "requested": "",
+            "requested_label": "",
+            "effective": "",
+            "effective_label": "",
+            "guidance": "",
+        },
         "creator_positioning": {
             "what_the_creator_sells": "",
             "audience_promise": "",
@@ -1992,10 +2040,17 @@ def creator_clone_schema() -> dict:
 def render_creator_clone_markdown(result: dict) -> str:
     positioning = result.get("creator_positioning") or {}
     spec = result.get("creator_clone_spec") or {}
+    content_profile = result.get("content_profile") or {}
     lines = [
         "# Creator Clone Report",
         "",
         f"## Summary\n\n{result.get('summary') or ''}",
+        "",
+        "## Analysis Template",
+        "",
+        f"- Requested: {content_profile.get('requested_label') or content_profile.get('requested') or ''}",
+        f"- Effective: {content_profile.get('effective_label') or content_profile.get('effective') or ''}",
+        f"- Guidance: {content_profile.get('guidance') or ''}",
         "",
         "## Creator Positioning",
         "",
@@ -2003,10 +2058,6 @@ def render_creator_clone_markdown(result: dict) -> str:
         f"- Audience promise: {positioning.get('audience_promise') or ''}",
         f"- Hidden genre: {positioning.get('hidden_genre') or ''}",
         f"- Audience assumption: {positioning.get('audience_assumption') or ''}",
-        "",
-        "## Performance Segments",
-        "",
-        _markdown_list(result.get("performance_segments")),
         "",
         "## Topic Buckets",
         "",
@@ -2041,6 +2092,10 @@ def render_creator_clone_markdown(result: dict) -> str:
         "",
         _markdown_list(result.get("next_actions")),
         "",
+        "## Performance Segments",
+        "",
+        _markdown_list(result.get("performance_segments")),
+        "",
     ]
     return "\n".join(lines)
 
@@ -2063,6 +2118,86 @@ def export_paths(set_id: str) -> dict:
 def normalize_source_type(value: str) -> str:
     candidate = (value or "unknown").strip().lower()
     return candidate if candidate in VALID_SOURCE_TYPES else "unknown"
+
+
+def normalize_content_profile(value: str) -> str:
+    candidate = (value or "auto").strip().lower().replace("-", "_")
+    aliases = {
+        "beauty": "beauty_cos",
+        "cos": "beauty_cos",
+        "cosplay": "beauty_cos",
+        "visual": "beauty_cos",
+        "颜值": "beauty_cos",
+        "美拍": "beauty_cos",
+        "情绪": "emotional_copy",
+        "鸡汤": "emotional_copy",
+        "copywriting": "emotional_copy",
+        "teaching": "knowledge",
+        "education": "knowledge",
+        "知识": "knowledge",
+        "剧情": "story_twist",
+        "反转": "story_twist",
+        "commerce": "commerce_seed",
+        "带货": "commerce_seed",
+        "种草": "commerce_seed",
+    }
+    candidate = aliases.get(candidate, candidate)
+    return candidate if candidate in VALID_CONTENT_PROFILES else "auto"
+
+
+def infer_content_profile(sample_set: CloneSampleSet, selected_samples: list[CloneSample]) -> str:
+    requested = normalize_content_profile(sample_set.content_profile)
+    if requested != "auto":
+        return requested
+    corpus_parts = [
+        sample_set.title,
+        sample_set.creator_name,
+        json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False),
+    ]
+    for sample in selected_samples:
+        corpus_parts.extend([sample.title, sample.desc, " ".join(sample.tags or [])])
+    corpus = " ".join(str(part or "").lower() for part in corpus_parts)
+    scores = {
+        "beauty_cos": _keyword_score(corpus, ["cos", "cosplay", "写真", "美拍", "颜值", "妆造", "穿搭", "舞蹈", "甜妹", "御姐", "氛围感", "擦边", "变装", "制服"]),
+        "emotional_copy": _keyword_score(corpus, ["情绪", "文案", "人生", "低谷", "治愈", "扎心", "共鸣", "励志", "鸡汤", "关系", "爱自己"]),
+        "knowledge": _keyword_score(corpus, ["教程", "教学", "干货", "知识", "方法", "技巧", "避坑", "步骤", "怎么", "攻略"]),
+        "story_twist": _keyword_score(corpus, ["剧情", "反转", "短剧", "后续", "悬念", "没想到", "结局", "身份", "冲突"]),
+        "commerce_seed": _keyword_score(corpus, ["同款", "种草", "测评", "好物", "产品", "购买", "链接", "推荐", "开箱", "店铺"]),
+    }
+    best_profile, best_score = max(scores.items(), key=lambda item: item[1])
+    if best_score > 0:
+        return best_profile
+    video_count = sum(1 for sample in selected_samples if sample.media_type == "video")
+    text_count = sum(1 for sample in selected_samples if sample.media_type == "text")
+    if video_count and video_count >= text_count:
+        return "beauty_cos"
+    return "general"
+
+
+def _keyword_score(corpus: str, keywords: list[str]) -> int:
+    return sum(1 for keyword in keywords if keyword.lower() in corpus)
+
+
+def content_profile_prompt_block(sample_set: CloneSampleSet, selected_samples: list[CloneSample]) -> dict:
+    requested = normalize_content_profile(sample_set.content_profile)
+    effective = infer_content_profile(sample_set, selected_samples)
+    return {
+        "requested": requested,
+        "requested_label": CONTENT_PROFILE_LABELS.get(requested, requested),
+        "effective": effective,
+        "effective_label": CONTENT_PROFILE_LABELS.get(effective, effective),
+        "guidance": CONTENT_PROFILE_GUIDANCE.get(effective, CONTENT_PROFILE_GUIDANCE["general"]),
+    }
+
+
+def content_profile_prompt_text(sample_set: CloneSampleSet, selected_samples: list[CloneSample]) -> str:
+    profile = content_profile_prompt_block(sample_set, selected_samples)
+    return (
+        f"账号类型 / 分析模板：{json.dumps(profile, ensure_ascii=False)}\n"
+        f"模板执行要求：{profile['guidance']}\n"
+        "如果 requested=auto，先根据标题、标签、媒体类型和样本证据自动判断内容类型；"
+        "如果用户手动指定模板，则以该模板的分析重点为准。"
+    )
 
 
 def normalize_media_type(value: str) -> str:
