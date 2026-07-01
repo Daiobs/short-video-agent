@@ -2625,7 +2625,7 @@ async function syncCreatorCloneWorkflowSelection() {
   if (!selectedIds.length) {
     return null;
   }
-  const response = await fetch(`/api/creator-clone/sets/${encodeURIComponent(currentCloneSetId)}/workflow`, {
+  const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(currentCloneSetId)}/workflow`, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
@@ -2634,9 +2634,10 @@ async function syncCreatorCloneWorkflowSelection() {
     }),
   });
   const payload = await readJsonResponse(response);
-  applyCreatorIntelligencePayload(payload);
-  if (payload.set) {
-    refreshProfilePoolFromSet(payload.set);
+  const profilePayload = profilePayloadFromCreatorIntelligenceProject(payload);
+  applyCreatorIntelligencePayload(profilePayload);
+  if (profilePayload.set) {
+    refreshProfilePoolFromSet(profilePayload.set);
   }
   return payload;
 }

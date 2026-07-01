@@ -535,7 +535,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function wizardStateFromWorkflowState" in script
     assert "function getCreatorCloneWizardStateFromWorkflow" in script
     assert "function syncCreatorCloneWorkflowSelection" in script
-    assert "/api/creator-clone/sets/${encodeURIComponent(currentCloneSetId)}/workflow" in script
+    assert "/api/creator-intelligence/projects/${encodeURIComponent(currentCloneSetId)}/workflow" in script
+    assert "/api/creator-clone/sets/${encodeURIComponent(currentCloneSetId)}/workflow" not in script
     assert 'action: "SELECT_SAMPLES"' in script
     assert "creator_intelligence" in script
     assert "creatorCloneExportActions.open = true" in script
