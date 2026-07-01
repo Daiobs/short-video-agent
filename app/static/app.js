@@ -157,6 +157,8 @@ let profileScanPayload = null;
 let currentCloneSetId = "";
 let currentDistillPrompt = "";
 let currentCreatorCloneResult = null;
+let currentCreatorIntelligenceWorkflow = null;
+let currentCreatorIntelligenceBehavior = null;
 let chromeHelperStatusLoaded = false;
 let profileLastChromeProfileValue = "";
 let profileChromeLaunchCommand = "";
@@ -916,6 +918,64 @@ function hasPendingEnrichment(items = selectedProfileItems()) {
   return normalizeItems(items).some((item) => isProfileItemBuildable(item) && !item.case_id && !item.has_frames);
 }
 
+function applyCreatorIntelligencePayload(payload = {}) {
+  const intelligence = payload?.creator_intelligence || payload?.set?.creator_intelligence || null;
+  currentCreatorIntelligenceWorkflow = intelligence?.workflow || null;
+  currentCreatorIntelligenceBehavior = intelligence?.behavior_model || null;
+}
+
+function workflowStateFromCreatorIntelligence() {
+  return currentCreatorIntelligenceWorkflow?.state || "";
+}
+
+function numberFromWorkflow(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function wizardStateFromWorkflowState(workflowState) {
+  if (!workflowState) {
+    return "";
+  }
+  const sampleCount = numberFromWorkflow(currentCreatorIntelligenceWorkflow?.sample_count);
+  const selectedCount = numberFromWorkflow(currentCreatorIntelligenceWorkflow?.selected_count);
+  const evidenceReadyCount = numberFromWorkflow(currentCreatorIntelligenceWorkflow?.evidence_ready_count);
+  const selected = selectedProfileItems();
+  const selectedHasFrontendDelta = selected.length > 0 && selected.length !== selectedCount;
+  if (selectedHasFrontendDelta) {
+    return "";
+  }
+  if (workflowState === "IMPORT") {
+    return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
+  }
+  if (workflowState === "INGESTED") {
+    return sampleCount ? "POOL_READY" : "IMPORT_READY";
+  }
+  if (workflowState === "SAMPLE_READY") {
+    return recommendedProfileSampleMix().length ? "RECOMMENDED_READY" : "POOL_READY";
+  }
+  if (workflowState === "SAMPLE_SELECTED") {
+    if (!selectedCount) return "SELECT_EMPTY";
+    return hasPendingEnrichment(selected) ? "SELECT_TO_ENRICH" : "SELECT_TO_DISTILL";
+  }
+  if (workflowState === "EVIDENCE_READY") {
+    if (!selectedCount) return "SELECT_EMPTY";
+    if (evidenceReadyCount < selectedCount && hasPendingEnrichment(selected)) return "SELECT_TO_ENRICH";
+    return selectedCount > CREATOR_CLONE_MAX_DISTILL_SAMPLES ? "BATCH_DISTILL_READY" : "DISTILL_READY";
+  }
+  if (workflowState === "DISTILLING") {
+    return "DISTILLING";
+  }
+  if (workflowState === "DONE") {
+    return currentCreatorCloneResult || currentCreatorIntelligenceWorkflow?.has_strategy_output ? "EXPORT_READY" : "EXPORT_EMPTY";
+  }
+  return "";
+}
+
+function getCreatorCloneWizardStateFromWorkflow() {
+  return wizardStateFromWorkflowState(workflowStateFromCreatorIntelligence());
+}
+
 function getCreatorCloneWizardState() {
   if (currentCreatorCloneResult) {
     return "EXPORT_READY";
@@ -925,6 +985,10 @@ function getCreatorCloneWizardState() {
   }
   if (creatorCloneEnrichmentRunning) {
     return "ENRICHING";
+  }
+  const workflowState = getCreatorCloneWizardStateFromWorkflow();
+  if (workflowState) {
+    return workflowState;
   }
   if (!profileItems.length) {
     return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
@@ -1714,6 +1778,7 @@ function renderProfileResults(payload) {
   profileScanPayload = payload;
   currentCreatorCloneResult = null;
   currentDistillPrompt = "";
+  applyCreatorIntelligencePayload(payload);
   creatorCloneResultCard?.classList.add("hidden");
   const cloneSet = payload.set || null;
   currentCloneSetId = cloneSet?.set_id || "";
@@ -2732,6 +2797,7 @@ function refreshProfilePoolFromSet(set) {
   if (!set) {
     return;
   }
+  applyCreatorIntelligencePayload({set});
   const selectedIds = new Set(selectedProfileItems().map(profileItemKey));
   currentCloneSetId = set.set_id || currentCloneSetId;
   if (currentCloneSetId) {
@@ -3385,6 +3451,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
 }
 
 function applyCreatorCloneDistillPayload(payload) {
+  applyCreatorIntelligencePayload(payload);
   const batch = payload.batch_distill || {};
   const recoveryHint = payload.recovery === "prompt_only"
     ? (payload.error_code === "LLM_NOT_CONFIGURED"

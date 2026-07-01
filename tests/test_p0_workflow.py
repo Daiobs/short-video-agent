@@ -523,6 +523,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function profileScanMaxPagesForCount" in script
     assert "max_pages: profilePayload.max_pages" in script
     assert "function useRecommendedProfileSamples" in script
+    assert "currentCreatorIntelligenceWorkflow" in script
+    assert "currentCreatorIntelligenceBehavior" in script
+    assert "function applyCreatorIntelligencePayload" in script
+    assert "function workflowStateFromCreatorIntelligence" in script
+    assert "function wizardStateFromWorkflowState" in script
+    assert "function getCreatorCloneWizardStateFromWorkflow" in script
+    assert "creator_intelligence" in script
     assert "creatorCloneExportActions.open = true" in script
     assert "下一步：使用推荐样本继续" in script
     assert "下一步：开始富化证据" in script
@@ -9038,6 +9045,12 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "recommendedProfileSampleMix" in script
     assert "dedupeProfileItems" in script
     assert "function getCreatorCloneWizardState()" in script
+    assert "currentCreatorIntelligenceWorkflow" in script
+    assert "function applyCreatorIntelligencePayload" in script
+    assert "function getCreatorCloneWizardStateFromWorkflow" in script
+    assert "wizardStateFromWorkflowState(workflowStateFromCreatorIntelligence())" in script
+    assert "selectedHasFrontendDelta" in script
+    assert "creator_intelligence" in script
     assert "function renderWizardPrimaryAction" in script
     assert "function handleWizardPrimaryAction" in script
     assert "function creatorCloneActionStateForCurrentView" in script
