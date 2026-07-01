@@ -669,12 +669,38 @@ function profilePayloadFromCreatorIntelligenceProject(payload = {}) {
       behavior_model: payload.behavior_model || null,
       strategy_output: payload.strategy_output || null,
     },
+    exports: payload.exports || {},
     provider: "creator intelligence project",
   };
 }
 
 function creatorStrategyFromResult(result = {}) {
   return result?.creator_clone_strategy || currentCreatorIntelligenceStrategy || null;
+}
+
+function creatorCloneResultFromStrategyOutput(strategy = {}) {
+  if (!strategy || typeof strategy !== "object") {
+    return null;
+  }
+  return {
+    summary: strategy.positioning || "创作者策略输出已恢复。",
+    creator_clone_strategy: strategy,
+    creator_positioning: {
+      what_the_creator_sells: strategy.positioning || "",
+    },
+    topic_buckets: normalizeItems(strategy.content_strategy).map((item) => ({name: formatReportValue(item)})),
+    expression_patterns: {
+      opening_hooks: normalizeItems(strategy.hooks),
+    },
+    transferable_formulas: normalizeItems(strategy.templates),
+    creator_clone_spec: {
+      anti_patterns: normalizeItems(strategy.anti_patterns),
+      self_check_rubric: normalizeItems(strategy.validation_rules),
+    },
+    candidate_ideas: normalizeItems(strategy.idea_bank),
+    evidence_gaps: [],
+    next_actions: normalizeItems(strategy.validation_rules),
+  };
 }
 
 function formatReportValue(value) {
@@ -1898,6 +1924,17 @@ function renderProfileResults(payload) {
     setProfileStageView("pool");
   } else {
     renderProfileStageView();
+  }
+  const restoredStrategy = payload.creator_intelligence?.strategy_output || null;
+  const workflowState = payload.creator_intelligence?.workflow?.state || "";
+  if (restoredStrategy && workflowState === "DONE") {
+    renderCreatorCloneResult(
+      creatorCloneResultFromStrategyOutput(restoredStrategy),
+      cloneSet,
+      currentDistillPrompt,
+      payload.exports || {},
+      {scroll: false},
+    );
   }
 }
 
@@ -3527,7 +3564,7 @@ function creatorCloneOverviewFromSet(set) {
 }
 
 // Creator Clone: export
-function renderCreatorCloneResult(result, set, prompt, exports = {}) {
+function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {}) {
   currentCreatorCloneResult = result || null;
   currentDistillPrompt = prompt || currentDistillPrompt || "";
   setProfileStageView("export");
@@ -3535,7 +3572,9 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
   if (creatorCloneExportActions) {
     creatorCloneExportActions.open = true;
   }
-  creatorCloneResultCard.scrollIntoView({behavior: "smooth", block: "start"});
+  if (options.scroll !== false) {
+    creatorCloneResultCard.scrollIntoView({behavior: "smooth", block: "start"});
+  }
   const overview = result?.sample_overview || creatorCloneOverviewFromSet(set);
   creatorCloneConfidence.textContent = overview.confidence || (result ? "distilled" : "prompt only");
   if (downloadCreatorCloneJson && exports.creator_clone_result_json && set?.set_id) {
