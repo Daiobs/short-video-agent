@@ -529,6 +529,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function workflowStateFromCreatorIntelligence" in script
     assert "function wizardStateFromWorkflowState" in script
     assert "function getCreatorCloneWizardStateFromWorkflow" in script
+    assert "function syncCreatorCloneWorkflowSelection" in script
+    assert "/api/creator-clone/sets/${encodeURIComponent(currentCloneSetId)}/workflow" in script
+    assert 'action: "SELECT_SAMPLES"' in script
     assert "creator_intelligence" in script
     assert "creatorCloneExportActions.open = true" in script
     assert "下一步：使用推荐样本继续" in script
@@ -9048,6 +9051,7 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "currentCreatorIntelligenceWorkflow" in script
     assert "function applyCreatorIntelligencePayload" in script
     assert "function getCreatorCloneWizardStateFromWorkflow" in script
+    assert "function syncCreatorCloneWorkflowSelection" in script
     assert "wizardStateFromWorkflowState(workflowStateFromCreatorIntelligence())" in script
     assert "selectedHasFrontendDelta" in script
     assert "creator_intelligence" in script

@@ -25,8 +25,10 @@ from app.services.creator_clone import (
     prompt_only_result,
     sample_from_dict,
     save_sample_set,
+    update_sample_set_selection,
 )
 from app.services.creator_intelligence import (
+    WorkflowAction,
     WorkflowEngine,
     WorkflowState,
     build_behavior_representation,
@@ -75,6 +77,11 @@ class CreatorCloneDistillRequest(BaseModel):
 class CreatorCloneHandoffImportRequest(BaseModel):
     handoff_manifest: dict = Field(default_factory=dict)
     handoff_token: str = ""
+
+
+class CreatorCloneWorkflowDispatchRequest(BaseModel):
+    action: str
+    selected_sample_ids: list[str] = Field(default_factory=list)
 
 
 def _cleanup_handoff_tokens() -> None:
@@ -163,6 +170,22 @@ def creator_intelligence_payload(sample_set, strategy_output: dict | None = None
     return payload
 
 
+def normalize_selected_sample_ids(sample_set, selected_sample_ids: list[str]) -> list[str]:
+    selected_keys = {str(value) for value in selected_sample_ids if str(value)}
+    selected: list[str] = []
+    for sample in sample_set.samples:
+        if (
+            sample.sample_id in selected_keys
+            or sample.aweme_id in selected_keys
+            or sample.case_id in selected_keys
+            or sample.source_url in selected_keys
+        ):
+            selected.append(sample.sample_id)
+    if not selected:
+        raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "请至少选择 1 条素材。")
+    return selected
+
+
 @router.post("/import-handoff")
 def import_creator_clone_handoff(payload: CreatorCloneHandoffImportRequest):
     try:
@@ -194,6 +217,30 @@ def get_creator_clone_set(set_id: str):
             "handoff_manifest": load_handoff_manifest(set_id),
             "exports": export_paths(set_id),
         }
+    except AppError as error:
+        return error_response(error)
+
+
+@router.post("/sets/{set_id}/workflow")
+def dispatch_creator_clone_workflow(set_id: str, payload: CreatorCloneWorkflowDispatchRequest):
+    try:
+        action = WorkflowAction(payload.action)
+        if action != WorkflowAction.SELECT_SAMPLES:
+            raise AppError(ErrorCode.PROFILE_SCAN_FAILED, f"当前仅支持 {WorkflowAction.SELECT_SAMPLES.value} workflow action。")
+        sample_set = load_sample_set(set_id)
+        selected_sample_ids = normalize_selected_sample_ids(sample_set, payload.selected_sample_ids)
+        project = project_from_clone_sample_set(sample_set)
+        engine = WorkflowEngine.from_project(project)
+        engine.dispatch(action, {"selected_sample_ids": selected_sample_ids})
+        sample_set = update_sample_set_selection(set_id, selected_sample_ids)
+        return {
+            "ok": True,
+            "set": sample_set.to_dict(),
+            "creator_intelligence": creator_intelligence_payload(sample_set),
+            "exports": export_paths(set_id),
+        }
+    except ValueError as error:
+        return error_response(AppError(ErrorCode.PROFILE_SCAN_FAILED, str(error)))
     except AppError as error:
         return error_response(error)
 

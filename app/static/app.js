@@ -2538,13 +2538,43 @@ async function runCreatorCloneImportStep() {
   await scanProfile(sourceMode);
 }
 
-function useRecommendedProfileSamples() {
+async function syncCreatorCloneWorkflowSelection() {
+  if (!currentCloneSetId) {
+    return null;
+  }
+  const selectedIds = selectedProfileItems().map(profileItemKey).filter(Boolean);
+  if (!selectedIds.length) {
+    return null;
+  }
+  const response = await fetch(`/api/creator-clone/sets/${encodeURIComponent(currentCloneSetId)}/workflow`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      action: "SELECT_SAMPLES",
+      selected_sample_ids: selectedIds,
+    }),
+  });
+  const payload = await readJsonResponse(response);
+  applyCreatorIntelligencePayload(payload);
+  if (payload.set) {
+    refreshProfilePoolFromSet(payload.set);
+  }
+  return payload;
+}
+
+async function useRecommendedProfileSamples() {
   const recommended = recommendedProfileSampleMix();
   if (!recommended.length) {
     profileScanStatus.textContent = "当前素材池还没有可推荐样本，请展开“手动调整样本”自行选择。";
     return;
   }
   setProfileSelection(recommended);
+  try {
+    await syncCreatorCloneWorkflowSelection();
+  } catch (error) {
+    profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "样本选择同步失败"}`;
+    return;
+  }
   setProfileStageView("select", {scroll: true});
   profileScanStatus.textContent = `已使用推荐样本继续：${recommended.length} 条。`;
 }
@@ -2562,7 +2592,7 @@ async function handleWizardPrimaryAction() {
     return;
   }
   if (["POOL_READY", "RECOMMENDED_READY"].includes(state)) {
-    useRecommendedProfileSamples();
+    await useRecommendedProfileSamples();
     return;
   }
   if (state === "SELECT_TO_ENRICH") {
@@ -2880,6 +2910,7 @@ async function buildSelectedProfileQueue() {
   setCreatorCloneEnrichmentLocked(true);
   renderCreatorCloneNextAction();
   try {
+    await syncCreatorCloneWorkflowSelection();
     placeJobCard("profile");
     resetJobCard(buildableCount
       ? `创建素材富化队列：视频 ${buildableCount} 条，参考样本 ${referenceOnlyCount} 条。`
@@ -3519,6 +3550,7 @@ async function distillSelectedCreatorClone(options = {}) {
   renderCreatorCloneNextAction();
   try {
     const selectedIds = selected.map(profileItemKey);
+    await syncCreatorCloneWorkflowSelection();
     placeJobCard("profile");
     resetJobCard("正在创建创作者蒸馏任务...");
     scrollProfileTaskPanel();
@@ -3575,6 +3607,7 @@ async function batchDistillSelectedCreatorClone(options = {}) {
   setCreatorCloneDistillButtonsLocked(true);
   renderCreatorCloneNextAction();
   try {
+    await syncCreatorCloneWorkflowSelection();
     placeJobCard("profile");
     resetJobCard(options.triggeredByQueue ? "富化完成，正在创建分批蒸馏任务..." : "正在创建分批蒸馏任务...");
     scrollProfileTaskPanel();

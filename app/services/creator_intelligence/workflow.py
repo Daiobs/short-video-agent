@@ -129,6 +129,9 @@ class WorkflowEngine:
             selected_ids = tuple(str(item) for item in (payload.get("selected_sample_ids") or []) if str(item))
             if not selected_ids:
                 raise ValueError("SELECT_SAMPLES requires selected_sample_ids.")
+            available_ids = {sample.sample_id for sample in self.project.samples}
+            if not any(sample_id in available_ids for sample_id in selected_ids):
+                raise ValueError("SELECT_SAMPLES did not match any project samples.")
             self.project = replace(self.project, selected_sample_ids=selected_ids, updated_at=_now())
             self.state = WorkflowState.SAMPLE_SELECTED
             self.behavior_model = None

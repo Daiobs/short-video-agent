@@ -183,6 +183,52 @@ def test_creator_clone_set_endpoint_restores_done_state_from_strategy_output() -
     shutil.rmtree(output_dir, ignore_errors=True)
 
 
+def test_creator_clone_workflow_dispatch_selects_samples_and_persists_state() -> None:
+    sample_set = sample_set_for_v2()
+    sample_set.selected_sample_ids = []
+    for sample in sample_set.samples:
+        sample.selected = False
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    response = client.post(
+        f"/api/creator-clone/sets/{sample_set.set_id}/workflow",
+        json={"action": WorkflowAction.SELECT_SAMPLES.value, "selected_sample_ids": ["7650000000000000001"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["set"]["selected_sample_ids"] == ["sample_ready"]
+    assert payload["creator_intelligence"]["workflow"]["state"] == WorkflowState.EVIDENCE_READY
+    assert payload["creator_intelligence"]["workflow"]["selected_count"] == 1
+    assert payload["creator_intelligence"]["behavior_model"]["selected_count"] == 1
+
+    reloaded = client.get(f"/api/creator-clone/sets/{sample_set.set_id}").json()
+    assert reloaded["set"]["selected_sample_ids"] == ["sample_ready"]
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
+def test_creator_clone_workflow_dispatch_rejects_unknown_sample_ids() -> None:
+    sample_set = sample_set_for_v2()
+    sample_set.selected_sample_ids = []
+    for sample in sample_set.samples:
+        sample.selected = False
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    response = client.post(
+        f"/api/creator-clone/sets/{sample_set.set_id}/workflow",
+        json={"action": WorkflowAction.SELECT_SAMPLES.value, "selected_sample_ids": ["missing_sample"]},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "AWEME_ID_NOT_FOUND"
+    reloaded = client.get(f"/api/creator-clone/sets/{sample_set.set_id}").json()
+    assert reloaded["set"]["selected_sample_ids"] == []
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
 def test_creator_clone_result_exposes_structured_strategy_contract() -> None:
     sample_set = sample_set_for_v2()
     raw = {

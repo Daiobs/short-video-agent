@@ -194,6 +194,7 @@ Bridge into the existing API:
 
 - `GET /api/creator-clone/sets/{set_id}` now returns `creator_intelligence.workflow`.
 - When samples are selected, the same payload also returns `creator_intelligence.behavior_model`.
+- `POST /api/creator-clone/sets/{set_id}/workflow` now accepts the first explicit workflow action: `SELECT_SAMPLES`.
 
 ### M3: UI State-Driven Wizard
 
@@ -204,6 +205,7 @@ Initial integration:
 
 - Frontend wizard state now first reads `creator_intelligence.workflow` when present.
 - If the user has newer local selection state than the backend snapshot, the UI falls back to the existing frontend inference instead of being pulled backward.
+- Recommended selection, enrichment, and distillation entry points now sync selected samples through the workflow dispatch API before advancing.
 
 ### M4: Cognition Layer Contract
 
