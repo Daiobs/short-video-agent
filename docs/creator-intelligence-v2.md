@@ -287,6 +287,9 @@ Implemented:
 - `app/services/creator_intelligence/adapters.py` converts the current
   `CloneSampleSet` / `CloneSample` storage model into a normalized
   `CreatorProject`.
+- `CloneSampleSet` / `CloneSample` are retained as legacy on-disk DTOs only;
+  v2 workflow, cognition, and strategy output cross the boundary through
+  `project_from_clone_sample_set()` / `CreatorProject`.
 - Legacy response payloads now include `creator_intelligence.project`.
 - Frontend view-model helpers adapt old `set` payloads into `CreatorProject`
   and prefer `CreatorProject.samples` over the legacy `profileItems` array.
@@ -406,6 +409,12 @@ Verification:
 Preserved:
 
 - Existing creator-clone endpoints remain callable.
+- `app/services/creator_clone.py` is now documented as the legacy persistence
+  and compatibility layer for existing sample-set files.
+- `app/services/creator_intelligence/{models,adapters,cognition,workflow}.py`
+  do not import the legacy creator-clone DTO module; only
+  `creator_intelligence.dispatch` crosses the boundary to coordinate persisted
+  sample-set state.
 - Existing single-work parsing and case analysis flows are not changed by this
   branch.
 - No new crawler/provider capability is introduced.
@@ -417,6 +426,5 @@ Remaining cleanup after this branch:
   longer needs compatibility adapters.
 - Persist all transient workflow transitions if a future product decision needs
   resumable `DISTILLING` state across server restarts.
-- Move prompt builders fully from compatibility payloads to the
-  `BehaviorRepresentation` contract once older report fields are no longer
-  needed.
+- Move remaining compatibility prompt details out of `creator_clone.py` once
+  older report fields are no longer needed.

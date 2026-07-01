@@ -1,3 +1,12 @@
+"""Legacy creator-clone persistence and compatibility helpers.
+
+Creator Intelligence v2 domain code lives in ``app.services.creator_intelligence``.
+The ``CloneSample`` and ``CloneSampleSet`` classes in this module are retained as
+on-disk DTOs for existing sample-pool files and legacy routes. Workflow,
+cognition, and public strategy output must adapt these DTOs into
+``CreatorProject`` / ``CreatorSample`` before making domain decisions.
+"""
+
 from __future__ import annotations
 
 import csv
@@ -97,6 +106,8 @@ HANDOFF_ALLOWED_AUDIT_PATHS = {
 
 @dataclass
 class CloneSample:
+    """Legacy sample DTO persisted in creator clone sample-set JSON files."""
+
     sample_id: str
     source_type: str = "unknown"
     source_url: str = ""
@@ -168,6 +179,8 @@ class CloneSample:
 
 @dataclass
 class CloneSampleSet:
+    """Legacy sample-set DTO; convert to ``CreatorProject`` for v2 logic."""
+
     set_id: str
     title: str = "创作者克隆实验室素材池"
     creator_name: str = ""

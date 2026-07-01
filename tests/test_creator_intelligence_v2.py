@@ -511,7 +511,35 @@ def test_creator_intelligence_v2_doc_tracks_completion_evidence() -> None:
     assert "State-Driven Frontend Wizard" in doc
     assert "Async Job Contract Alignment" in doc
     assert "Compatibility Boundary" in doc
+    assert "legacy on-disk DTOs only" in doc
+    assert "do not import the legacy creator-clone DTO module" in doc
     assert "dispatch_creator_workflow" in doc
     assert "profile-build-cases" in doc
     assert "prompt-only recovery" in doc
     assert "Retire remaining legacy frontend names" in doc
+
+
+def test_creator_intelligence_core_does_not_depend_on_legacy_creator_clone_dtos() -> None:
+    core_files = [
+        Path("app/services/creator_intelligence/models.py"),
+        Path("app/services/creator_intelligence/adapters.py"),
+        Path("app/services/creator_intelligence/cognition.py"),
+        Path("app/services/creator_intelligence/workflow.py"),
+    ]
+
+    for path in core_files:
+        source = path.read_text(encoding="utf-8")
+        assert "from app.services.creator_clone" not in source
+        assert "import app.services.creator_clone" not in source
+
+    dispatch = Path("app/services/creator_intelligence/dispatch.py").read_text(encoding="utf-8")
+    assert "dispatch_creator_workflow" in dispatch
+    assert "from app.services.creator_clone" in dispatch
+
+
+def test_legacy_creator_clone_module_documents_dto_boundary() -> None:
+    source = Path("app/services/creator_clone.py").read_text(encoding="utf-8")
+
+    assert "Legacy creator-clone persistence and compatibility helpers." in source
+    assert "on-disk DTOs" in source
+    assert "convert to ``CreatorProject`` for v2 logic" in source
