@@ -785,6 +785,34 @@ function activeProfileItems() {
   return merged;
 }
 
+function syncCreatorProjectSamplesFromProfileItems(items = profileItems) {
+  if (!currentCreatorIntelligenceProject?.project_id) {
+    return;
+  }
+  const rows = normalizeItems(items);
+  const existingSelected = profileSelectedKeys.size
+    ? new Set(profileSelectedKeys)
+    : new Set(normalizeItems(currentCreatorIntelligenceProject.selected_sample_ids).map(String));
+  const samples = rows.map((item) => {
+    const key = profileItemKey(item);
+    return creatorSampleFromLegacyProfileItem({
+      ...item,
+      selected: Boolean(key && existingSelected.has(String(key))),
+    });
+  });
+  const availableKeys = new Set(samples.map((sample) => sample.sample_id).filter(Boolean));
+  const selectedSampleIds = [...existingSelected].filter((key) => availableKeys.has(String(key)));
+  currentCreatorIntelligenceProject = {
+    ...currentCreatorIntelligenceProject,
+    samples,
+    selected_sample_ids: selectedSampleIds,
+    sample_count: samples.length,
+    selected_count: selectedSampleIds.length || samples.filter((sample) => sample.selected).length,
+    updated_at: new Date().toISOString(),
+  };
+  currentCreatorIntelligenceWorkflow = creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy);
+}
+
 function cloneSetFromCreatorIntelligenceProject(payload = {}) {
   const project = payload.project || {};
   if (!project.project_id) {
@@ -2965,10 +2993,11 @@ function queueItemPayload(item) {
 
 function mergeProfileQueueItems(items) {
   const queueItems = normalizeItems(items);
-  if (!queueItems.length || !profileItems.length) {
+  const baseItems = activeProfileItems();
+  if (!queueItems.length || !baseItems.length) {
     return;
   }
-  profileItems = profileItems.map((item) => {
+  profileItems = baseItems.map((item) => {
     const itemKeys = new Set([
       item.sample_id,
       item.aweme_id,
@@ -2999,6 +3028,7 @@ function mergeProfileQueueItems(items) {
       understanding_level: caseId ? "partial" : (item.understanding_level || "metadata_only"),
     };
   });
+  syncCreatorProjectSamplesFromProfileItems(profileItems);
   renderProfileTable();
 }
 
@@ -3126,6 +3156,7 @@ function refreshProfilePoolFromSet(set) {
   }
   profileScanPayload = {set};
   profileItems = normalizeItems(set.samples);
+  syncCreatorProjectSamplesFromProfileItems(profileItems);
   renderProfileSummary(cloneSummaryFromSet(set) || {});
   renderProfileDecisionBoard({set});
   renderProfileTable();

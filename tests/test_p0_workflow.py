@@ -537,6 +537,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function creatorSampleFromLegacyProfileItem" in script
     assert "function creatorProjectFromCloneSet" in script
     assert "function creatorWorkflowFromProject" in script
+    assert "function syncCreatorProjectSamplesFromProfileItems" in script
+    assert "syncCreatorProjectSamplesFromProfileItems(profileItems);" in script
     assert "creatorProjectFromCloneSet(payload?.set)" in script
     assert "creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy)" in script
     assert "const projectChanged = previousProjectId && nextProjectId && previousProjectId !== nextProjectId;" in script
