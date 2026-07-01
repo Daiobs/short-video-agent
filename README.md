@@ -285,8 +285,11 @@ LLM_API_BASE=https://api.openai.com/v1
 LLM_API_KEY=
 LLM_MODEL=
 LLM_TIMEOUT_SECONDS=90
+LLM_FINAL_REDUCE_TIMEOUT_SECONDS=600
 LLM_TEMPERATURE=0.2
 LLM_MAX_KEYFRAMES=6
+LLM_MAX_OUTPUT_TOKENS=1200
+LLM_FINAL_REDUCE_MAX_OUTPUT_TOKENS=4000
 ASR_PROVIDER=disabled
 ASR_MODEL_SIZE=base
 ASR_DEVICE=auto
@@ -302,6 +305,8 @@ OCR_SUBTITLE_CROP_RATIO=0.35
 单作品解析优先使用 native mobile feed/share，不需要 Cookie；网页 detail/page 兜底会在配置存在时附带 `DOUYIN_COOKIE`，但不会写入日志、数据库或素材包。如果所有路线都被限制，接口会返回明确错误。
 
 `CANDIDATE_PROBE_*` 只在同一档清晰度存在多个 CDN host 时生效。它会用 Range 请求读取少量字节并排序，不会为了测速降低清晰度。
+
+`LLM_TIMEOUT_SECONDS` 用于单条拆解和普通批次蒸馏；`LLM_FINAL_REDUCE_TIMEOUT_SECONDS` 专门用于 20 条以上分批蒸馏后的最终账号级汇总，默认 600 秒。大样本蒸馏优先等待最终 Reduce 完成，只有最终汇总仍超时或失败时，才会基于已成功的批次摘要生成本地兜底报告。
 
 AI 自动拆解默认关闭。默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型；主流程只会生成素材包。官方 OpenAI API 建议使用 Responses API：
 

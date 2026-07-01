@@ -329,17 +329,21 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
             raise AppError(ErrorCode.LLM_REQUEST_FAILED, str(error)[:500]) from error
 
 
-def get_llm_provider() -> BaseLLMProvider:
+def get_llm_provider(
+    *,
+    timeout_seconds: float | None = None,
+    max_output_tokens: int | None = None,
+) -> BaseLLMProvider:
     effective = effective_llm_settings()
     provider = effective["provider"]
     if provider in {"", "disabled", "none", "off"}:
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
     if provider in {"openai", "openai_compatible", "compatible"}:
-        return OpenAICompatibleProvider()
+        return OpenAICompatibleProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
     if provider in {"openai_responses", "responses"}:
-        return OpenAIResponsesProvider()
+        return OpenAIResponsesProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
     if provider in {"anthropic", "anthropic_compatible", "claude"}:
-        return AnthropicCompatibleProvider()
+        return AnthropicCompatibleProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
     raise AppError(ErrorCode.LLM_NOT_CONFIGURED, f"不支持的 LLM_PROVIDER：{provider}")
 
 

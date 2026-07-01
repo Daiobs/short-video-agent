@@ -1593,11 +1593,12 @@ def build_final_creator_clone_reduce_prompt(
                 "batch_id": batch.get("batch_id"),
                 "status": batch.get("status"),
                 "sample_count": batch.get("sample_count"),
-                "summary": _truncate_text((batch.get("result") or {}).get("summary") or batch.get("summary") or "", 180),
-                "creator_positioning": _short_dict((batch.get("result") or {}).get("creator_positioning") or {}, item_limit=80),
-                "expression_patterns": _short_dict((batch.get("result") or {}).get("expression_patterns") or {}, item_limit=80),
-                "transferable_formulas": _short_list((batch.get("result") or {}).get("transferable_formulas"), 3, 90),
-                "candidate_ideas": _short_list((batch.get("result") or {}).get("candidate_ideas"), 2, 80),
+                "sample_ids": _short_list(batch.get("sample_ids"), 8, 60),
+                "summary": _truncate_text((batch.get("result") or {}).get("summary") or batch.get("summary") or "", 260),
+                "creator_positioning": (batch.get("result") or {}).get("creator_positioning") or {},
+                "expression_patterns": (batch.get("result") or {}).get("expression_patterns") or {},
+                "transferable_formulas": _short_list((batch.get("result") or {}).get("transferable_formulas"), 5, 120),
+                "candidate_ideas": _short_list((batch.get("result") or {}).get("candidate_ideas"), 4, 100),
                 "evidence_gaps": _short_list((batch.get("result") or {}).get("evidence_gaps") or batch.get("evidence_gaps"), 4, 100),
                 "error_code": batch.get("error_code") or "",
             }
@@ -1605,7 +1606,7 @@ def build_final_creator_clone_reduce_prompt(
         for batch in batch_results
     ]
     segments = performance_segments(selected_samples)
-    compact_segments = {key: _short_list(value, 5, 80) for key, value in segments.items()}
+    evidence_matrix = selected_evidence_matrix(selected_samples)
     return f"""你是 Creator Clone Lab 的最终汇总 Reduce 助手。请基于多个批次蒸馏摘要，输出账号级创作者规律 JSON，不要 Markdown。
 
 工作方式：
@@ -1635,8 +1636,8 @@ def build_final_creator_clone_reduce_prompt(
 平台：{sample_set.source_platform}
 总样本数：{len(selected_samples)}
 账号可见资料：{json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False)}
-证据完整度统计：{json.dumps(understanding_counts(selected_samples), ensure_ascii=False)}
-全局表现分层：{json.dumps(compact_segments, ensure_ascii=False)}
+全局证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
+全局表现分层：{json.dumps(segments, ensure_ascii=False)}
 批次摘要：{json.dumps(compact_batches, ensure_ascii=False)}
 """
 
@@ -1820,10 +1821,14 @@ def batch_distill_creator_clone(
     }
     final_result = None
     if progress:
-        progress(82, "正在汇总所有批次")
+        progress(82, f"正在汇总所有批次，最长等待 {int(settings.llm_final_reduce_timeout_seconds)} 秒")
     if llm:
         try:
-            raw_final = llm.analyze(final_prompt, [])
+            final_llm = get_llm_provider(
+                timeout_seconds=settings.llm_final_reduce_timeout_seconds,
+                max_output_tokens=max(settings.llm_max_output_tokens, settings.llm_final_reduce_max_output_tokens),
+            )
+            raw_final = final_llm.analyze(final_prompt, [])
             final_result = normalize_creator_clone_result(raw_final, sample_set, selected_samples, warnings=warnings)
             final_result["batch_distill"] = {
                 "batch_count": len(batch_results),

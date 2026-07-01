@@ -2710,25 +2710,31 @@ def test_batch_distill_prompt_only_writes_manifest_when_llm_disabled(monkeypatch
 
 
 def test_batch_distill_writes_local_fallback_when_final_reduce_times_out(monkeypatch) -> None:
-    class FakeProvider:
-        def __init__(self):
-            self.calls = 0
+    provider_kwargs: list[dict] = []
 
+    class BatchProvider:
         def analyze(self, prompt, images):
-            self.calls += 1
-            if self.calls <= 2:
-                return {
-                    "summary": f"批次 {self.calls} 摘要",
-                    "creator_positioning": {"what_the_creator_sells": "低门槛摄影结果"},
-                    "topic_buckets": ["新手拍摄", "美女出片"],
-                    "expression_patterns": {"opening_hooks": ["低门槛反差"]},
-                    "transferable_formulas": ["新手器材 + 高颜值模特 + 成片展示"],
-                    "candidate_ideas": ["复刻一组低门槛室外写真"],
-                }
+            return {
+                "summary": "批次摘要",
+                "creator_positioning": {"what_the_creator_sells": "低门槛摄影结果"},
+                "topic_buckets": ["新手拍摄", "美女出片"],
+                "expression_patterns": {"opening_hooks": ["低门槛反差"]},
+                "transferable_formulas": ["新手器材 + 高颜值模特 + 成片展示"],
+                "candidate_ideas": ["复刻一组低门槛室外写真"],
+            }
+
+    class FinalProvider:
+        def analyze(self, prompt, images):
             raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 请求超时。")
 
+    def fake_get_llm_provider(**kwargs):
+        provider_kwargs.append(kwargs)
+        return FinalProvider() if kwargs.get("timeout_seconds") else BatchProvider()
+
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: FakeProvider())
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", fake_get_llm_provider)
+    monkeypatch.setattr("app.services.creator_clone.settings.llm_final_reduce_timeout_seconds", 600)
+    monkeypatch.setattr("app.services.creator_clone.settings.llm_final_reduce_max_output_tokens", 4000)
     sample_set = CloneSampleSet(
         set_id="clone_batch_final_timeout_test",
         title="最终汇总超时测试",
@@ -2750,6 +2756,8 @@ def test_batch_distill_writes_local_fallback_when_final_reduce_times_out(monkeyp
     assert Path(result["batch_distill"]["final"]["result_path"]).is_file()
     assert Path(result["batch_distill"]["final"]["markdown_path"]).is_file()
     assert "final_reduce_recovery" in result["result"]["batch_distill"]
+    assert provider_kwargs[-1]["timeout_seconds"] == 600
+    assert provider_kwargs[-1]["max_output_tokens"] == 4000
 
 
 def test_profile_build_cases_queue_continues_after_item_failure(monkeypatch, tmp_path: Path) -> None:
@@ -9897,7 +9905,7 @@ def test_creator_clone_distill_llm_request_failure_returns_prompt_recovery(monke
             raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 请求超时。")
 
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: FailingProvider())
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: FailingProvider())
     import_response = client.post(
         "/api/creator-clone/import",
         json={
@@ -9998,7 +10006,7 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
             }
 
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: FakeProvider())
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: FakeProvider())
     response = client.post(
         "/api/creator-clone/distill",
         json={
@@ -10036,7 +10044,7 @@ def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> N
 
     provider = FakeProvider()
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: provider)
     response = client.post(
         "/api/creator-clone/distill",
         json={
@@ -10080,7 +10088,7 @@ def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) ->
 
     provider = FakeProvider()
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: provider)
     response = client.post(
         "/api/creator-clone/distill",
         json={
@@ -10122,7 +10130,7 @@ def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch
             }
 
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: FakeProvider())
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: FakeProvider())
     response = client.post(
         "/api/jobs/creator-clone-distill",
         json={
