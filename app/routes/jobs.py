@@ -792,6 +792,13 @@ def _update_profile_queue_job(db, job_id: str, progress: int, message: str, queu
         db.commit()
 
 
+def _profile_queue_total_progress(index: int, total: int, item_fraction: float) -> int:
+    """Map a per-item stage to overall queue progress."""
+    safe_total = max(1, total)
+    fraction = max(0.0, min(1.0, item_fraction))
+    return max(1, min(95, int(((index + fraction) / safe_total) * 95)))
+
+
 def _run_profile_optional_case_steps(
     db,
     *,
@@ -799,7 +806,8 @@ def _run_profile_optional_case_steps(
     item: dict,
     artifact: CaseArtifact,
     queue_items: list[dict],
-    base_progress: int,
+    item_index: int,
+    total_items: int,
     auto_enrich: bool,
     auto_asr: bool,
     auto_ocr: bool,
@@ -813,7 +821,13 @@ def _run_profile_optional_case_steps(
         else:
             item["status"] = "enriching"
             item["message"] = "正在写入富化归档"
-            _update_profile_queue_job(db, job_id, base_progress + 65, item["message"], queue_items)
+            _update_profile_queue_job(
+                db,
+                job_id,
+                _profile_queue_total_progress(item_index, total_items, 0.72),
+                item["message"],
+                queue_items,
+            )
             try:
                 item["enrichment"] = build_enrichment_archive(
                     artifact,
@@ -832,7 +846,13 @@ def _run_profile_optional_case_steps(
         else:
             item["status"] = "asr_optional"
             item["message"] = "正在执行可选 ASR"
-            _update_profile_queue_job(db, job_id, base_progress + 70, item["message"], queue_items)
+            _update_profile_queue_job(
+                db,
+                job_id,
+                _profile_queue_total_progress(item_index, total_items, 0.80),
+                item["message"],
+                queue_items,
+            )
             try:
                 item["asr"] = run_case_asr(artifact)
                 item["asr_status"] = item["asr"].get("status") or "success"
@@ -850,7 +870,13 @@ def _run_profile_optional_case_steps(
         else:
             item["status"] = "ocr_optional"
             item["message"] = "正在执行可选 OCR"
-            _update_profile_queue_job(db, job_id, base_progress + 74, item["message"], queue_items)
+            _update_profile_queue_job(
+                db,
+                job_id,
+                _profile_queue_total_progress(item_index, total_items, 0.88),
+                item["message"],
+                queue_items,
+            )
             try:
                 item["ocr"] = run_case_ocr(artifact)
                 item["ocr_status"] = item["ocr"].get("status") or "success"
@@ -868,7 +894,13 @@ def _run_profile_optional_case_steps(
         else:
             item["status"] = "analyzing_optional"
             item["message"] = "正在执行可选 AI 拆解"
-            _update_profile_queue_job(db, job_id, base_progress + 78, item["message"], queue_items)
+            _update_profile_queue_job(
+                db,
+                job_id,
+                _profile_queue_total_progress(item_index, total_items, 0.94),
+                item["message"],
+                queue_items,
+            )
             try:
                 item["analysis"] = _analysis_result(analyze_case_artifact(artifact, mode="fast"))
                 item["analysis_status"] = "success"
@@ -954,7 +986,6 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
 
         total = max(1, len(queue_items))
         for index, item in enumerate(queue_items):
-            base_progress = int((index / total) * 95)
             if not _is_profile_queue_downloadable(item):
                 item["status"] = "skipped"
                 item["error_code"] = ErrorCode.UNSUPPORTED_PROFILE_ITEM
@@ -964,7 +995,7 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                     _set_job(
                         job,
                         "running",
-                        min(95, base_progress + 5),
+                        _profile_queue_total_progress(index, total, 1.0),
                         f"已保留参考样本 {index + 1}/{total}",
                         result=_profile_queue_result(queue_items),
                     )
@@ -990,14 +1021,21 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                     item["case_id"] = artifact.case_id
                     item["case"] = _artifact_result(artifact)
                     completed_artifacts.append(artifact)
-                    _update_profile_queue_job(db, job_id, base_progress + 20, item["message"], queue_items)
+                    _update_profile_queue_job(
+                        db,
+                        job_id,
+                        _profile_queue_total_progress(index, total, 0.25),
+                        item["message"],
+                        queue_items,
+                    )
                     _run_profile_optional_case_steps(
                         db,
                         job_id=job_id,
                         item=item,
                         artifact=artifact,
                         queue_items=queue_items,
-                        base_progress=base_progress,
+                        item_index=index,
+                        total_items=total,
                         auto_enrich=auto_enrich,
                         auto_asr=auto_asr,
                         auto_ocr=auto_ocr,
@@ -1022,7 +1060,13 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 item["message"] = "正在解析清晰度候选"
                 job = db.get(Job, job_id)
                 if job:
-                    _set_job(job, "running", min(95, base_progress + 5), item["message"], result=_profile_queue_result(queue_items))
+                    _set_job(
+                        job,
+                        "running",
+                        _profile_queue_total_progress(index, total, 0.12),
+                        item["message"],
+                        result=_profile_queue_result(queue_items),
+                    )
                     db.commit()
 
                 candidates = resolve_quality_candidates(db, item["aweme_id"])
@@ -1032,7 +1076,13 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 item["message"] = "正在下载视频"
                 job = db.get(Job, job_id)
                 if job:
-                    _set_job(job, "running", min(95, base_progress + 25), item["message"], result=_profile_queue_result(queue_items))
+                    _set_job(
+                        job,
+                        "running",
+                        _profile_queue_total_progress(index, total, 0.35),
+                        item["message"],
+                        result=_profile_queue_result(queue_items),
+                    )
                     db.commit()
 
                 download_result = download_candidate(db, item["aweme_id"], candidate["candidate_id"])
@@ -1042,7 +1092,13 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 item["message"] = "正在生成素材包"
                 job = db.get(Job, job_id)
                 if job:
-                    _set_job(job, "running", min(95, base_progress + 55), item["message"], result=_profile_queue_result(queue_items))
+                    _set_job(
+                        job,
+                        "running",
+                        _profile_queue_total_progress(index, total, 0.58),
+                        item["message"],
+                        result=_profile_queue_result(queue_items),
+                    )
                     db.commit()
 
                 artifact = build_case_from_local_video(db, item["local_video_id"])
@@ -1056,7 +1112,8 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                     item=item,
                     artifact=artifact,
                     queue_items=queue_items,
-                    base_progress=base_progress,
+                    item_index=index,
+                    total_items=total,
                     auto_enrich=auto_enrich,
                     auto_asr=auto_asr,
                     auto_ocr=auto_ocr,
@@ -1080,7 +1137,7 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 _set_job(
                     job,
                     "running",
-                    min(98, int(((index + 1) / total) * 95)),
+                    _profile_queue_total_progress(index, total, 1.0),
                     f"已处理 {index + 1}/{total}",
                     result=_profile_queue_result(queue_items),
                 )
@@ -1189,7 +1246,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         try:
             job = db.get(Job, job_id)
             if job:
-                _set_job(job, "running", 70, "调用大模型蒸馏创作者规则")
+                _set_job(job, "running", 45, "调用大模型蒸馏创作者规则")
                 db.commit()
             result = distill_creator_clone(
                 sample_set,
@@ -1204,7 +1261,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                     job,
                     "success",
                     100,
-                    "创作者克隆蒸馏完成",
+                    "创作者蒸馏完成",
                     result={
                         "ok": True,
                         **result,

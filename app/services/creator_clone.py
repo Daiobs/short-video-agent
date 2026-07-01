@@ -2066,7 +2066,7 @@ def prompt_only_result(sample_set: CloneSampleSet, selected_sample_ids: list[str
 def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, selected_samples: list[CloneSample], warnings: list[str] | None = None) -> dict:
     result = creator_clone_schema()
     _deep_merge(result, raw if isinstance(raw, dict) else {})
-    result["summary"] = str(result.get("summary") or "创作者克隆蒸馏完成。")
+    result["summary"] = str(result.get("summary") or "创作者蒸馏完成。")
     result["content_profile"] = content_profile_prompt_block(sample_set, selected_samples)
     result["sample_overview"] = {
         "set_id": sample_set.set_id,
@@ -2308,7 +2308,7 @@ def render_creator_clone_markdown(result: dict) -> str:
         "",
         _markdown_list(result.get("transferable_formulas")),
         "",
-        "## AI Creator Clone Spec",
+        "## Creator Distillation Rules",
         "",
         f"- Taste: {spec.get('taste') or ''}",
         f"- Caption voice: {spec.get('caption_voice') or ''}",

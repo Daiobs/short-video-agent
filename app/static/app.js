@@ -906,6 +906,19 @@ function renderPublicList(items, emptyText = "暂无明确结论。") {
   return `<ul class="public-report-list">${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
 }
 
+function publicValueHasContent(value) {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => publicValueHasContent(item));
+  }
+  if (typeof value === "object") {
+    return Object.values(value).some((item) => publicValueHasContent(item));
+  }
+  return String(value).trim() !== "";
+}
+
 function renderSegmentSampleList(items, metricKey, metricLabel, emptyText = "暂无样本。") {
   const values = normalizeItems(items)
     .map((item) => {
@@ -1492,7 +1505,7 @@ function creatorCloneStateMeta(state = getCreatorCloneWizardState()) {
     EXPORT_READY: {
       step: "当前步骤：可视化输出",
       button: "下一步：下载报告",
-      summary: "创作者克隆报告已生成，可下载报告或复制规则继续使用。",
+      summary: "创作者蒸馏报告已生成，可下载报告或复制规则继续使用。",
     },
   };
   return metas[state] || metas.IMPORT_EMPTY;
@@ -3631,11 +3644,126 @@ function renderCandidateIdeas(ideas) {
   }));
 }
 
+function compactReportList(...values) {
+  const rows = [];
+  values.forEach((value) => {
+    normalizeItems(value).forEach((item) => {
+      const text = formatReportValue(item).trim();
+      if (text && !rows.includes(text)) {
+        rows.push(text);
+      }
+    });
+  });
+  return rows;
+}
+
+function renderDistillationFormulaList(strategy, result) {
+  const templates = normalizeItems(strategy.templates);
+  const formulas = normalizeItems(result.transferable_formulas);
+  if (templates.length || formulas.length) {
+    return renderFormulaCards(templates.length ? templates : formulas);
+  }
+  const fallback = compactReportList(
+    strategy.content_strategy,
+    result.creator_clone_spec?.structure_rules,
+    result.creator_clone_spec?.visual_rules,
+    result.expression_patterns?.opening_hooks,
+  ).slice(0, 4);
+  return renderPublicList(fallback, "本次没有返回独立公式，建议先从内容策略中人工提炼 2-3 个可复用拍法。");
+}
+
+function renderDistillationIdeaList(strategy, result) {
+  const ideas = normalizeItems(strategy.idea_bank);
+  const candidates = normalizeItems(result.candidate_ideas);
+  if (ideas.length || candidates.length) {
+    return renderCandidateIdeas(ideas.length ? ideas : candidates);
+  }
+  const buckets = normalizeItems(result.topic_buckets).map((item) => {
+    if (!item || typeof item !== "object") {
+      return item;
+    }
+    return item.name || item.title || item.description || formatReportValue(item);
+  });
+  return renderPublicList(buckets.slice(0, 6), "本次没有返回独立选题库，可先基于爆款共性手动生成候选选题。");
+}
+
+function firstSegmentBrief(segments, key, metricLabel) {
+  const item = normalizeItems(segments?.[key])[0];
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  const title = item.title || item.desc || item.source_url || "代表样本";
+  const metricValue = item.metric_value ?? item.like_count ?? item.comment_count ?? item.share_count ?? item.collect_count;
+  return metricValue !== undefined && metricValue !== null && metricValue !== ""
+    ? `${metricLabel}代表：${title}（${formatNumber(metricValue)}）`
+    : `${metricLabel}代表：${title}`;
+}
+
+function renderCreatorDistillationEvidenceDetails(overview, result) {
+  return `
+    <details class="creator-report-evidence-details">
+      <summary>报告依据：样本、证据完整度和分层摘要</summary>
+      ${renderCreatorCloneEvidenceOverview(overview)}
+      ${renderCompactPerformanceSegments(result.performance_segments || {})}
+    </details>
+  `;
+}
+
+function renderCreatorDistillationReport(result, overview, templateLabel) {
+  const strategy = creatorStrategyFromResult(result) || {};
+  const positioning = result.creator_positioning || {};
+  const patterns = result.expression_patterns || {};
+  const spec = result.creator_clone_spec || {};
+  const segments = result.performance_segments || {};
+  const positioningText = strategy.positioning || positioning.what_the_creator_sells || result.summary || "待补充";
+  const trafficSignals = compactReportList(
+    positioning.hidden_genre,
+    positioning.audience_promise,
+    firstSegmentBrief(segments, "highest_like_samples", "高赞"),
+    firstSegmentBrief(segments, "highest_comment_samples", "高评"),
+    firstSegmentBrief(segments, "highest_share_samples", "高分享"),
+    firstSegmentBrief(segments, "highest_collect_samples", "高收藏"),
+  ).slice(0, 6);
+  const commonPatterns = compactReportList(
+    result.topic_buckets,
+    patterns.opening_hooks,
+    patterns.visual_style,
+    patterns.scene_order,
+    patterns.subtitle_voice,
+    spec.expression_rules,
+    spec.visual_rules,
+  ).slice(0, 8);
+  const nextActions = compactReportList(
+    result.next_actions,
+    strategy.content_strategy,
+  ).slice(0, 6);
+  return `
+    <section class="creator-distillation-report" aria-label="创作者蒸馏核心报告">
+      <div class="public-report-grid creator-distillation-grid">
+        ${renderPublicCard("账号一句话定位", `
+          ${renderPublicFields([
+            ["定位", positioningText],
+            ["观众承诺", positioning.audience_promise],
+            ["内容类型", positioning.hidden_genre],
+            ["分析模板", templateLabel],
+          ])}
+        `, "featured")}
+        ${renderPublicCard("流量来源判断", renderPublicList(trafficSignals, "暂无足够互动数据判断流量来源。"), "featured")}
+        ${renderPublicCard("爆款样本共性", renderPublicList(commonPatterns, "暂无足够样本共性。"))}
+        ${renderPublicCard("可复用公式", renderDistillationFormulaList(strategy, result), "featured")}
+        ${renderPublicCard("选题机会", renderDistillationIdeaList(strategy, result), "featured")}
+        ${renderPublicCard("下一步执行建议", renderPublicList(nextActions, "先从最高互动样本中选 3 条，人工复核开头、封面、动作和标题，再生成候选脚本。"))}
+      </div>
+      ${renderCreatorDistillationEvidenceDetails(overview, result)}
+    </section>
+  `;
+}
+
 function renderCreatorCloneEvidenceOverview(overview) {
   const counts = overview.understanding_counts || {};
   const warnings = normalizeItems(overview.warnings);
   return `
-    <section class="creator-clone-evidence-strip" aria-label="创作者克隆证据完整度">
+    <section class="creator-clone-evidence-strip" aria-label="创作者蒸馏证据完整度">
       <article>
         <span>选中样本</span>
         <strong>${formatNumber(overview.selected_count || 0)} / ${formatNumber(overview.sample_count || 0)}</strong>
@@ -3677,19 +3805,23 @@ function renderCreatorCloneActionSummary(result) {
   const positioning = result.creator_positioning || {};
   const formulas = normalizeItems(result.transferable_formulas);
   const ideas = normalizeItems(result.candidate_ideas);
-  const spec = result.creator_clone_spec || {};
-  const antiPatterns = normalizeItems(spec.anti_patterns);
-  const nextActions = normalizeItems(result.next_actions);
+  const templateValue = firstCloneValue(
+    normalizeItems(strategy.templates).map((item) => item?.name || item?.title || item?.template || item),
+    "",
+  );
+  const ideaValue = firstCloneValue(
+    normalizeItems(strategy.idea_bank).map((item) => item?.title || item?.idea || item),
+    firstCloneValue(ideas.map((item) => item?.title || item), ""),
+  );
   const summaryCards = [
     ["核心定位", strategy.positioning || positioning.what_the_creator_sells || result.summary || "待补充"],
     ["内容策略", firstCloneValue(strategy.content_strategy || formulas.map((item) => item?.name || item), "待补充")],
-    ["可复用模板", firstCloneValue(normalizeItems(strategy.templates).map((item) => item?.name || item?.title || item?.template || item), "待补充")],
-    ["优先选题", firstCloneValue(normalizeItems(strategy.idea_bank).map((item) => item?.title || item?.idea || item), firstCloneValue(ideas.map((item) => item?.title || item), "待补充"))],
-    ["不要照搬", firstCloneValue(strategy.anti_patterns || antiPatterns, "暂无明确禁忌")],
-    ["自检规则", firstCloneValue(strategy.validation_rules || nextActions, "基于公式生成 3-5 个候选选题并人工筛选")],
-  ];
+    ["开头钩子", firstCloneValue(strategy.hooks || result.expression_patterns?.opening_hooks, "")],
+    ["可复用模板", templateValue],
+    ["优先选题", ideaValue],
+  ].filter(([, value]) => publicValueHasContent(value));
   return `
-    <section class="creator-clone-action-summary" aria-label="创作者克隆可执行摘要">
+    <section class="creator-clone-action-summary" aria-label="创作者蒸馏可执行摘要">
       <div class="section-heading-row compact-row">
         <div>
           <div class="entry-label">Action Summary</div>
@@ -3727,17 +3859,29 @@ function renderCreatorStrategyOutput(strategy = {}) {
   if (!hasStrategy) {
     return "";
   }
+  const cards = [
+    publicValueHasContent(strategy.positioning)
+      ? renderPublicCard("策略定位", renderPublicFields([["Positioning", strategy.positioning]]), "featured")
+      : "",
+    publicValueHasContent(strategy.content_strategy)
+      ? renderPublicCard("内容策略", renderPublicList(strategy.content_strategy), "featured")
+      : "",
+    publicValueHasContent(strategy.hooks)
+      ? renderPublicCard("开头钩子", renderPublicList(strategy.hooks))
+      : "",
+    publicValueHasContent(strategy.templates)
+      ? renderPublicCard("可复用模板", renderFormulaCards(strategy.templates), "featured")
+      : "",
+    publicValueHasContent(strategy.idea_bank)
+      ? renderPublicCard("选题库", renderCandidateIdeas(strategy.idea_bank), "featured")
+      : "",
+  ].filter(Boolean).join("");
+  if (!cards) {
+    return "";
+  }
   return `
     <div class="public-report-grid creator-strategy-grid" aria-label="Creator Intelligence Strategy Output">
-      ${renderPublicCard("策略定位", renderPublicFields([["Positioning", strategy.positioning]]), "featured")}
-      ${renderPublicCard("内容策略", renderPublicList(strategy.content_strategy, "暂无内容策略。"), "featured")}
-      ${renderPublicCard("开头钩子", renderPublicList(strategy.hooks, "暂无开头钩子。"))}
-      ${renderPublicCard("可复用模板", renderFormulaCards(strategy.templates), "featured")}
-      ${renderPublicCard("选题库", renderCandidateIdeas(strategy.idea_bank), "featured")}
-      ${renderPublicCard("边界与自检", `
-        <h5>不要照搬</h5>${renderPublicList(strategy.anti_patterns, "暂无反模式。")}
-        <h5>校验规则</h5>${renderPublicList(strategy.validation_rules, "暂无自检规则。")}
-      `)}
+      ${cards}
     </div>
   `;
 }
@@ -3804,10 +3948,6 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
     renderCreatorCloneNextAction();
     return;
   }
-  const positioning = result.creator_positioning || {};
-  const patterns = result.expression_patterns || {};
-  const spec = result.creator_clone_spec || {};
-  const strategy = creatorStrategyFromResult(result) || {};
   const contentProfile = result.content_profile || overview.content_profile || {};
   const templateLabel = contentProfile.effective_label || contentProfile.requested_label || "自动判断";
   creatorCloneResult.innerHTML = `
@@ -3815,39 +3955,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
       <span>${escapeHtml(`样本 ${overview.selected_count || 0}/${overview.sample_count || 0} · ${overview.confidence || "unknown"} · ${templateLabel}`)}</span>
       <strong>${escapeHtml(result.summary || "创作者蒸馏完成。")}</strong>
     </section>
-    ${renderCreatorCloneActionSummary(result)}
-    ${renderCreatorCloneEvidenceOverview(overview)}
-    ${renderCreatorStrategyOutput(strategy)}
-    ${renderCompactPerformanceSegments(result.performance_segments || {})}
-    <div class="public-report-grid">
-      ${renderPublicCard("创作者定位", renderPublicFields([
-        ["真正售卖", positioning.what_the_creator_sells],
-        ["观众承诺", positioning.audience_promise],
-        ["隐藏类型", positioning.hidden_genre],
-        ["观众假设", positioning.audience_assumption],
-        ["分析模板", templateLabel],
-      ]), "featured")}
-      ${renderPublicCard("选题桶", renderTopicBuckets(result.topic_buckets), "featured")}
-      ${renderPublicCard("表达模式", `
-        <h5>开头方式</h5>${renderPublicList(patterns.opening_hooks)}
-        <h5>镜头 / 场景顺序</h5>${renderPublicList(patterns.scene_order)}
-        <h5>字幕 / 口播</h5>${renderPublicList(patterns.subtitle_voice)}
-        <h5>结尾方式</h5>${renderPublicList(patterns.ending_patterns)}
-      `)}
-      ${renderPublicCard("可复用公式", renderFormulaCards(result.transferable_formulas), "featured")}
-      ${renderPublicCard("AI Creator Clone", `
-        ${renderPublicFields([["Taste", spec.taste], ["Caption Voice", spec.caption_voice]])}
-        <h5>Topic Rules</h5>${renderPublicList(spec.topic_selection_rules)}
-        <h5>Structure Rules</h5>${renderPublicList(spec.structure_rules)}
-        <h5>Anti-patterns</h5>${renderPublicList(spec.anti_patterns)}
-        <h5>Self-check</h5>${renderPublicList(spec.self_check_rubric)}
-      `)}
-      ${renderPublicCard("候选选题", renderCandidateIdeas(result.candidate_ideas), "featured")}
-      ${renderPublicCard("证据缺口 / 下一步", `
-        <h5>证据缺口</h5>${renderPublicList(result.evidence_gaps)}
-        <h5>下一步</h5>${renderPublicList(result.next_actions)}
-      `)}
-    </div>
+    ${renderCreatorDistillationReport(result, overview, templateLabel)}
   `;
   renderCreatorCloneNextAction();
 }
@@ -3861,7 +3969,7 @@ function applyCreatorCloneDistillPayload(payload) {
       : `${payload.error_code || "LLM_FAILED"}：${payload.message || "大模型蒸馏失败"} 已保留素材池证据和蒸馏 Prompt，可稍后重试或手动分析。`)
     : batch.batch_count
       ? `分批蒸馏完成：${formatNumber(batch.batch_count)} 个批次，已生成总汇总。`
-      : "创作者克隆蒸馏完成。";
+      : "创作者蒸馏完成。";
   profileScanStatus.textContent = recoveryHint;
   currentCloneSetId = payload.set?.set_id || currentCloneSetId;
   renderCreatorCloneResult(payload.result || null, payload.set, payload.prompt || "", payload.exports || {});

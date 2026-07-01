@@ -875,18 +875,25 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderCompactPerformanceSegments" in script
     assert "creator-clone-segment-disclosure" in script
     assert '${renderPublicCard("样本分层"' not in script
-    assert "可执行摘要" in script
-    assert "核心定位" in script
+    assert "function renderCreatorDistillationReport" in script
+    assert "创作者蒸馏核心报告" in script
+    assert "账号一句话定位" in script
+    assert "流量来源判断" in script
+    assert "爆款样本共性" in script
+    assert "下一步执行建议" in script
     assert "可复用公式" in script
     assert "不要照搬" in script
     assert "creatorCloneOverviewFromSet" in script
-    assert "创作者克隆证据完整度" in script
+    assert "创作者蒸馏证据完整度" in script
+    assert "creator-report-evidence-details" in script
     assert "完整证据" in script
     assert "仅元数据" in script
     assert "LLM 未配置" in script
     assert "renderCreatorCloneEvidenceOverview(overview)" in script
     assert ".creator-clone-evidence-strip" in stylesheet
     assert ".creator-clone-segment-disclosure" in stylesheet
+    assert ".creator-distillation-report" in stylesheet
+    assert ".creator-report-evidence-details" in stylesheet
     assert ".profile-template-select" in stylesheet
     assert "column-count: 2" in stylesheet
     assert ".creator-clone-action-summary" in stylesheet

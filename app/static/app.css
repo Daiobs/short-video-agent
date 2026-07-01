@@ -2669,6 +2669,34 @@ pre {
     line-height: 1.65;
 }
 
+.creator-distillation-report {
+    display: grid;
+    gap: 14px;
+}
+
+.creator-distillation-grid .public-report-card h4 {
+    font-size: 18px;
+}
+
+.creator-report-evidence-details {
+    border: 1px solid rgba(148, 163, 184, .28);
+    border-radius: 10px;
+    background: #fff;
+}
+
+.creator-report-evidence-details > summary {
+    cursor: pointer;
+    padding: 12px 14px;
+    color: #475569;
+    font-size: 14px;
+    font-weight: 900;
+}
+
+.creator-report-evidence-details > .creator-clone-evidence-strip,
+.creator-report-evidence-details > .creator-clone-segment-disclosure {
+    margin: 0 14px 14px;
+}
+
 .result-subsection {
     padding-top: 16px;
     border-top: 1px solid var(--line);
