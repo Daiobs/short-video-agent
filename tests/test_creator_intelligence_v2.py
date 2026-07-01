@@ -231,6 +231,26 @@ def test_creator_clone_workflow_dispatch_rejects_unknown_sample_ids() -> None:
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 
+def test_creator_clone_legacy_workflow_endpoint_advances_distillation_state() -> None:
+    sample_set = sample_set_for_v2()
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    response = client.post(
+        f"/api/creator-clone/sets/{sample_set.set_id}/workflow",
+        json={"action": WorkflowAction.START_DISTILLATION.value},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["set"]["set_id"] == sample_set.set_id
+    assert payload["creator_intelligence"]["workflow"]["state"] == WorkflowState.DISTILLING
+    assert payload["creator_intelligence"]["workflow"]["has_behavior_model"] is True
+    assert payload["creator_intelligence"]["behavior_model"]["selected_count"] == 1
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
 def test_creator_intelligence_project_api_exposes_v2_contract() -> None:
     sample_set = sample_set_for_v2()
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)

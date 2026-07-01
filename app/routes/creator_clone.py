@@ -179,18 +179,30 @@ def get_creator_clone_set(set_id: str):
 def dispatch_creator_clone_workflow(set_id: str, payload: CreatorCloneWorkflowDispatchRequest):
     try:
         action = WorkflowAction(payload.action)
-        if action != WorkflowAction.SELECT_SAMPLES:
-            raise AppError(ErrorCode.PROFILE_SCAN_FAILED, f"当前仅支持 {WorkflowAction.SELECT_SAMPLES.value} workflow action。")
         sample_set = load_sample_set(set_id)
-        selected_sample_ids = normalize_sample_set_selected_ids(sample_set, payload.selected_sample_ids)
         project = project_from_clone_sample_set(sample_set)
         engine = WorkflowEngine.from_project(project)
-        engine.dispatch(action, {"selected_sample_ids": selected_sample_ids})
-        sample_set = update_sample_set_selection(set_id, selected_sample_ids)
+        intelligence = None
+        if action == WorkflowAction.SELECT_SAMPLES:
+            selected_sample_ids = normalize_sample_set_selected_ids(sample_set, payload.selected_sample_ids)
+            engine.dispatch(action, {"selected_sample_ids": selected_sample_ids})
+            sample_set = update_sample_set_selection(set_id, selected_sample_ids)
+            intelligence = creator_intelligence_payload_for_sample_set(sample_set)
+        elif action in {WorkflowAction.MARK_EVIDENCE_READY, WorkflowAction.START_DISTILLATION}:
+            workflow = engine.dispatch(action).to_dict()
+            intelligence = creator_intelligence_payload_for_sample_set(sample_set)
+            intelligence["workflow"] = workflow
+            if engine.behavior_model:
+                intelligence["behavior_model"] = engine.behavior_model.to_dict()
+        else:
+            raise AppError(
+                ErrorCode.PROFILE_SCAN_FAILED,
+                f"当前 workflow action 暂不支持持久化：{action.value}。",
+            )
         return {
             "ok": True,
             "set": sample_set.to_dict(),
-            "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
+            "creator_intelligence": intelligence,
             "exports": export_paths(set_id),
         }
     except ValueError as error:
