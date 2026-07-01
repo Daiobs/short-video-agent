@@ -9830,6 +9830,9 @@ def test_creator_clone_prompt_marks_metadata_only_samples() -> None:
     assert "媒体类型统计" in prompt
     assert "账号类型 / 分析模板" in prompt
     assert "美拍 / COS / 颜值" in prompt
+    assert "结构化认知模型" in prompt
+    assert "performance_segments" in prompt
+    assert "media_mix" in prompt
     assert "账号可见资料" in prompt
     assert "甜美 COS 账号" in prompt
     assert "follower_count" in prompt

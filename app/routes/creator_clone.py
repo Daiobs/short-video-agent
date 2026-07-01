@@ -25,6 +25,11 @@ from app.services.creator_clone import (
     sample_from_dict,
     save_sample_set,
 )
+from app.services.creator_intelligence import (
+    WorkflowEngine,
+    build_behavior_representation,
+    project_from_clone_sample_set,
+)
 from app.services.local_chrome import load_capture_audit, load_handoff_manifest, local_helper_security_contract
 
 
@@ -128,6 +133,15 @@ def creator_clone_handoff_token():
     }
 
 
+def creator_intelligence_payload(sample_set) -> dict:
+    project = project_from_clone_sample_set(sample_set)
+    engine = WorkflowEngine.from_project(project)
+    payload = {"workflow": engine.get_state().to_dict()}
+    if project.selected_samples:
+        payload["behavior_model"] = build_behavior_representation(project).to_dict()
+    return payload
+
+
 @router.post("/import-handoff")
 def import_creator_clone_handoff(payload: CreatorCloneHandoffImportRequest):
     try:
@@ -154,6 +168,7 @@ def get_creator_clone_set(set_id: str):
             "set": sample_set.to_dict(),
             "has_result": result_path.is_file(),
             "has_prompt": prompt_path.is_file(),
+            "creator_intelligence": creator_intelligence_payload(sample_set),
             "capture_audit": load_capture_audit(set_id),
             "handoff_manifest": load_handoff_manifest(set_id),
             "exports": export_paths(set_id),

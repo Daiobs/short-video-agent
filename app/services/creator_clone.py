@@ -24,6 +24,7 @@ from app.services.llm_settings import llm_is_configured
 from app.services.runtime_settings import effective_llm_settings
 from app.services.profile_scan import scan_profile
 from app.providers.profile_base import ProfileScanRequest
+from app.services.creator_intelligence import build_behavior_representation, project_from_clone_selection
 
 
 VALID_SOURCE_TYPES = {"douyin", "xhs", "bili", "local", "manual", "unknown"}
@@ -754,6 +755,7 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
     evidence_matrix = selected_evidence_matrix(selected_samples)
     evidence_constraints = selected_evidence_constraints(selected_samples)
     profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
+    behavior_model = behavior_representation_prompt_payload(sample_set, selected_samples)
     schema = creator_clone_schema()
     return f"""你是 Creator Clone Lab 的创作者规律蒸馏引擎。
 
@@ -779,6 +781,7 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
 本地预分层样本：{json.dumps(segments, ensure_ascii=False, indent=2)}
 证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False, indent=2)}
 证据约束：{json.dumps(evidence_constraints, ensure_ascii=False, indent=2)}
+结构化认知模型：{json.dumps(behavior_model, ensure_ascii=False, indent=2)}
 
 请严格返回这个 JSON 结构，字段缺失时用空字符串、空数组或空对象：
 {json.dumps(schema, ensure_ascii=False, indent=2)}
@@ -794,6 +797,7 @@ def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list
     evidence_matrix = selected_evidence_matrix(selected_samples)
     evidence_constraints = selected_evidence_constraints(selected_samples)
     profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
+    behavior_model = behavior_representation_prompt_payload(sample_set, selected_samples)
     return f"""你是短视频账号规律蒸馏助手。请基于样本列表输出简洁、合法 JSON，不要 Markdown。
 
 任务：提炼这个账号/创作者的定位、流量来源、内容公式、可复刻规则和下一步建议。
@@ -825,6 +829,7 @@ def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list
 证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
 证据约束：{json.dumps(evidence_constraints, ensure_ascii=False)}
 本地分层：{json.dumps(segments, ensure_ascii=False)}
+结构化认知模型：{json.dumps(behavior_model, ensure_ascii=False)}
 样本：{json.dumps(lite_samples, ensure_ascii=False)}
 """
 
@@ -1109,6 +1114,7 @@ def build_reduce_distill_prompt(
     evidence_constraints = selected_evidence_constraints(selected_samples)
     reduce_summaries = [_map_summary_for_reduce(summary) for summary in map_summaries]
     profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
+    behavior_model = behavior_representation_prompt_payload(sample_set, selected_samples, compact=True)
     return f"""你是 Creator Clone Lab 的 Reduce 蒸馏助手。请只基于下面的单条视频 Map 摘要做跨样本归纳，输出合法 JSON，不要 Markdown。
 
 工作方式：
@@ -1142,6 +1148,7 @@ def build_reduce_distill_prompt(
 证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
 证据约束：{json.dumps(evidence_constraints, ensure_ascii=False)}
 本地分层：{json.dumps(segments, ensure_ascii=False)}
+结构化认知模型：{json.dumps(behavior_model, ensure_ascii=False)}
 Map 摘要：{json.dumps(reduce_summaries, ensure_ascii=False)}
 """
 
@@ -1154,6 +1161,7 @@ def build_micro_reduce_distill_prompt(
 ) -> str:
     rows = [_micro_map_summary(summary) for summary in map_summaries]
     profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
+    behavior_model = behavior_representation_prompt_payload(sample_set, selected_samples, compact=True)
     return f"""你是短视频账号规律蒸馏助手。请基于一组单条视频摘要，输出极简合法 JSON，不要 Markdown。
 
 要求：
@@ -1176,6 +1184,7 @@ def build_micro_reduce_distill_prompt(
 素材池：{sample_set.title}
 模式：{distill_mode}
 {profile_prompt}
+结构化认知模型：{json.dumps(behavior_model, ensure_ascii=False)}
 样本摘要：{json.dumps(rows, ensure_ascii=False)}
 """
 
@@ -1303,6 +1312,44 @@ def selected_evidence_constraints(samples: list[CloneSample]) -> list[str]:
     if matrix["ocr_provider_missing"]:
         constraints.append("部分样本 OCR provider 未配置，缺少识别文本不等于无字幕或无画面文字。")
     return constraints
+
+
+def behavior_representation_prompt_payload(sample_set: CloneSampleSet, selected_samples: list[CloneSample], compact: bool = False) -> dict:
+    representation = build_behavior_representation(project_from_clone_selection(sample_set, selected_samples))
+    payload = representation.to_dict()
+    profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+    evidence_matrix = payload.get("evidence_matrix") or {}
+    if compact:
+        return {
+            "sample_count": payload.get("sample_count") or 0,
+            "selected_count": payload.get("selected_count") or 0,
+            "media_mix": payload.get("media_mix") or {},
+            "evidence": {
+                "metadata_only": evidence_matrix.get("metadata_only") or 0,
+                "partial": evidence_matrix.get("partial") or 0,
+                "full": evidence_matrix.get("full") or 0,
+                "with_keyframes": evidence_matrix.get("with_keyframes") or 0,
+                "with_asr_text": evidence_matrix.get("with_asr_text") or 0,
+                "with_ocr_text": evidence_matrix.get("with_ocr_text") or 0,
+                "with_comments": evidence_matrix.get("with_comments") or 0,
+            },
+            "constraints": list(payload.get("constraints") or [])[:3],
+        }
+    return {
+        "project_id": payload.get("project_id") or "",
+        "profile": {
+            "creator_id": profile.get("creator_id") or "",
+            "display_name": profile.get("display_name") or "",
+            "platform": profile.get("platform") or "",
+            "bio": _truncate_text(profile.get("bio") or "", 160),
+        },
+        "sample_count": payload.get("sample_count") or 0,
+        "selected_count": payload.get("selected_count") or 0,
+        "evidence_matrix": evidence_matrix,
+        "performance_segments": payload.get("performance_segments") or {},
+        "media_mix": payload.get("media_mix") or {},
+        "constraints": payload.get("constraints") or [],
+    }
 
 
 def sample_to_prompt_payload(sample: CloneSample, include_case_reports: bool = True) -> dict:
@@ -1646,6 +1693,7 @@ def build_final_creator_clone_reduce_prompt(
     segments = performance_segments(selected_samples)
     evidence_matrix = selected_evidence_matrix(selected_samples)
     profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
+    behavior_model = behavior_representation_prompt_payload(sample_set, selected_samples)
     return f"""你是 Creator Clone Lab 的最终汇总 Reduce 助手。请基于多个批次蒸馏摘要，输出账号级创作者规律 JSON，不要 Markdown。
 
 工作方式：
@@ -1678,6 +1726,7 @@ def build_final_creator_clone_reduce_prompt(
 账号可见资料：{json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False)}
 全局证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
 全局表现分层：{json.dumps(segments, ensure_ascii=False)}
+结构化认知模型：{json.dumps(behavior_model, ensure_ascii=False)}
 批次摘要：{json.dumps(compact_batches, ensure_ascii=False)}
 """
 
