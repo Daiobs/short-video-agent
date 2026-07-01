@@ -200,6 +200,11 @@ Bridge into the existing API:
 - Replace scattered button-driven state with `render(workflow_state)`.
 - Keep visual layout familiar, but remove duplicated state calculations.
 
+Initial integration:
+
+- Frontend wizard state now first reads `creator_intelligence.workflow` when present.
+- If the user has newer local selection state than the backend snapshot, the UI falls back to the existing frontend inference instead of being pulled backward.
+
 ### M4: Cognition Layer Contract
 
 - Build `BehaviorRepresentation` from samples, evidence, metrics, and segmentation.
@@ -215,6 +220,12 @@ Initial integration:
 - Lock the `CreatorClone` output schema.
 - Validate model output.
 - Render public reports from schema, not from arbitrary markdown-like fields.
+
+Initial integration:
+
+- `normalize_creator_clone_result()` now always emits `creator_clone_strategy`.
+- Legacy model outputs such as `creator_positioning`, `transferable_formulas`, `creator_clone_spec`, and `candidate_ideas` are mapped into the v2 strategy schema for backward compatibility.
+- `GET /api/creator-clone/sets/{set_id}` restores workflow state as `DONE` when a saved strategy output exists.
 
 ## Success Criteria
 

@@ -10243,6 +10243,8 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
     assert payload["result"]["creator_clone_strategy"]["positioning"] == "现场轻剧情；快速看到人物反应；景区互动短剧"
     assert payload["result"]["creator_clone_strategy"]["content_strategy"]
     assert payload["result"]["creator_clone_strategy"]["anti_patterns"] == ["硬广"]
+    assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
+    assert payload["creator_intelligence"]["strategy_output"] == payload["result"]["creator_clone_strategy"]
     assert Path(payload["exports"]["creator_clone_result_json"]).is_file()
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 
 import pytest
@@ -158,6 +159,28 @@ def test_creator_clone_set_endpoint_exposes_creator_intelligence_state() -> None
     assert intelligence["behavior_model"]["project_id"] == sample_set.set_id
     assert intelligence["behavior_model"]["evidence_matrix"]["with_keyframes"] == 1
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
+def test_creator_clone_set_endpoint_restores_done_state_from_strategy_output() -> None:
+    sample_set = sample_set_for_v2()
+    output_dir = settings.creator_clones_dir / sample_set.set_id
+    shutil.rmtree(output_dir, ignore_errors=True)
+    save_sample_set(sample_set)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    strategy = CreatorCloneStrategy(positioning="甜美 COS 视觉吸引", hooks=("第一眼给脸",)).to_dict()
+    (output_dir / "creator_clone_result.json").write_text(
+        json.dumps({"summary": "完成", "creator_clone_strategy": strategy}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    response = client.get(f"/api/creator-clone/sets/{sample_set.set_id}")
+
+    assert response.status_code == 200
+    intelligence = response.json()["creator_intelligence"]
+    assert intelligence["workflow"]["state"] == WorkflowState.DONE
+    assert intelligence["workflow"]["has_strategy_output"] is True
+    assert intelligence["strategy_output"] == strategy
+    shutil.rmtree(output_dir, ignore_errors=True)
 
 
 def test_creator_clone_result_exposes_structured_strategy_contract() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from pathlib import Path
@@ -27,6 +28,7 @@ from app.services.creator_clone import (
 )
 from app.services.creator_intelligence import (
     WorkflowEngine,
+    WorkflowState,
     build_behavior_representation,
     project_from_clone_sample_set,
 )
@@ -133,12 +135,31 @@ def creator_clone_handoff_token():
     }
 
 
-def creator_intelligence_payload(sample_set) -> dict:
+def load_creator_strategy_output(set_id: str) -> dict:
+    result_path = creator_clone_dir(set_id) / "creator_clone_result.json"
+    if not result_path.is_file():
+        return {}
+    try:
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    strategy = payload.get("creator_clone_strategy") if isinstance(payload, dict) else {}
+    return strategy if isinstance(strategy, dict) else {}
+
+
+def creator_intelligence_payload(sample_set, strategy_output: dict | None = None) -> dict:
     project = project_from_clone_sample_set(sample_set)
     engine = WorkflowEngine.from_project(project)
+    strategy = strategy_output if isinstance(strategy_output, dict) else load_creator_strategy_output(sample_set.set_id)
+    if strategy:
+        engine.strategy_output = strategy
+        engine.state = WorkflowState.DONE
+        engine.message = "Creator strategy output ready."
     payload = {"workflow": engine.get_state().to_dict()}
     if project.selected_samples:
         payload["behavior_model"] = build_behavior_representation(project).to_dict()
+    if strategy:
+        payload["strategy_output"] = strategy
     return payload
 
 
@@ -204,7 +225,11 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
                 include_case_reports=payload.include_case_reports,
                 max_samples=payload.max_samples,
             )
-            return {"ok": True, **result}
+            return {
+                "ok": True,
+                **result,
+                "creator_intelligence": creator_intelligence_payload(sample_set, (result.get("result") or {}).get("creator_clone_strategy")),
+            }
         except AppError as error:
             if error.code not in RECOVERABLE_DISTILL_ERROR_CODES:
                 raise
