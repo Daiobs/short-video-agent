@@ -33,6 +33,76 @@ def normalize_evidence_level(value: str) -> EvidenceLevel:
     return EvidenceLevel(candidate) if candidate in EvidenceLevel._value2member_map_ else EvidenceLevel.METADATA_ONLY
 
 
+def sample_from_mapping(payload: dict[str, Any]) -> CreatorSample:
+    sample_id = str(
+        payload.get("sample_id")
+        or payload.get("id")
+        or payload.get("aweme_id")
+        or payload.get("case_id")
+        or payload.get("source_url")
+        or "sample"
+    )
+    return CreatorSample(
+        sample_id=sample_id,
+        source=normalize_platform(str(payload.get("source_type") or payload.get("source") or "unknown")),
+        source_url=str(payload.get("source_url") or payload.get("webpage_url") or ""),
+        platform_item_id=str(payload.get("aweme_id") or payload.get("platform_item_id") or ""),
+        title=str(payload.get("title") or payload.get("desc") or ""),
+        description=str(payload.get("desc") or payload.get("description") or ""),
+        author=str(payload.get("author") or payload.get("nickname") or ""),
+        cover_url=str(payload.get("cover_url") or ""),
+        media_kind=normalize_media_kind(str(payload.get("media_type") or payload.get("media_kind") or "unknown")),
+        metrics=SampleMetrics(
+            like_count=int(payload.get("like_count") or 0),
+            comment_count=int(payload.get("comment_count") or 0),
+            share_count=int(payload.get("share_count") or 0),
+            collect_count=int(payload.get("collect_count") or 0),
+            view_count=int(payload.get("view_count") or 0),
+        ),
+        evidence=Evidence(
+            level=normalize_evidence_level(str(payload.get("understanding_level") or payload.get("evidence_level") or "metadata_only")),
+            has_video=bool(payload.get("has_video")),
+            has_frames=bool(payload.get("has_frames")),
+            has_asr=bool(payload.get("has_asr")),
+            has_ocr=bool(payload.get("has_ocr")),
+            has_comments=bool(payload.get("has_comments")),
+            enrichment_status=str(payload.get("enrichment_status") or "pending"),
+            asr_status=str(payload.get("asr_status") or "pending"),
+            ocr_status=str(payload.get("ocr_status") or "pending"),
+            analysis_status=str(payload.get("analysis_status") or "not_analyzed"),
+        ),
+        case_id=str(payload.get("case_id") or ""),
+        tags=tuple(str(item) for item in (payload.get("tags") or []) if str(item)),
+        created_at=str(payload.get("create_time") or payload.get("created_at") or ""),
+        selected=bool(payload.get("selected")),
+        raw=dict(payload),
+    )
+
+
+def samples_from_mappings(items: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> tuple[CreatorSample, ...]:
+    return tuple(sample_from_mapping(item) for item in items if isinstance(item, dict))
+
+
+def samples_from_manual_links(items: list[dict[str, Any]]) -> tuple[CreatorSample, ...]:
+    return samples_from_mappings(items)
+
+
+def samples_from_browser_dom(items: list[dict[str, Any]]) -> tuple[CreatorSample, ...]:
+    return samples_from_mappings(items)
+
+
+def samples_from_json_csv(items: list[dict[str, Any]]) -> tuple[CreatorSample, ...]:
+    return samples_from_mappings(items)
+
+
+def samples_from_case_import(items: list[dict[str, Any]]) -> tuple[CreatorSample, ...]:
+    return samples_from_mappings(items)
+
+
+def samples_from_cookie_api(items: list[dict[str, Any]]) -> tuple[CreatorSample, ...]:
+    return samples_from_mappings(items)
+
+
 def sample_from_clone_sample(sample: Any) -> CreatorSample:
     return CreatorSample(
         sample_id=str(getattr(sample, "sample_id", "") or getattr(sample, "aweme_id", "") or getattr(sample, "case_id", "") or "sample"),

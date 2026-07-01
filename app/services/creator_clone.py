@@ -2152,7 +2152,7 @@ def normalize_creator_clone_strategy(result: dict) -> dict:
         limit=10,
         item_limit=120,
     )
-    return CreatorCloneStrategy(
+    return validate_creator_clone_schema(CreatorCloneStrategy(
         positioning=positioning,
         content_strategy=tuple(content_strategy),
         hooks=tuple(hooks),
@@ -2160,7 +2160,33 @@ def normalize_creator_clone_strategy(result: dict) -> dict:
         anti_patterns=tuple(anti_patterns),
         idea_bank=tuple(idea_bank),
         validation_rules=tuple(validation_rules),
-    ).to_dict()
+    ).to_dict())
+
+
+def validate_creator_clone_schema(value: dict[str, Any]) -> dict[str, Any]:
+    """Return the deterministic CreatorCloneSchema subset expected by v2."""
+    payload = value if isinstance(value, dict) else {}
+    schema = CreatorCloneStrategy.empty_schema()
+    result: dict[str, Any] = {"positioning": str(payload.get("positioning") or "")}
+    for key in ("content_strategy", "hooks", "anti_patterns", "validation_rules"):
+        rows = payload.get(key)
+        if not isinstance(rows, list):
+            rows = [rows] if rows else []
+        result[key] = [str(item).strip() for item in rows if str(item or "").strip()]
+    for key in ("templates", "idea_bank"):
+        rows = payload.get(key)
+        if not isinstance(rows, list):
+            rows = [rows] if rows else []
+        normalized_rows: list[dict[str, Any]] = []
+        for item in rows:
+            if isinstance(item, dict):
+                normalized_rows.append(_drop_empty_prompt_values(item))
+            elif str(item or "").strip():
+                normalized_rows.append({"text": str(item).strip()})
+        result[key] = [item for item in normalized_rows if item]
+    for key, fallback in schema.items():
+        result.setdefault(key, fallback)
+    return result
 
 
 def _normalize_strategy_dicts(value, limit: int = 8, fallback_key: str = "item") -> list[dict]:

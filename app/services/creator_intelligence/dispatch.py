@@ -40,6 +40,7 @@ def dispatch_creator_workflow(
     action: WorkflowAction | str,
     *,
     selected_sample_ids: list[str] | None = None,
+    strategy_output: dict[str, Any] | None = None,
 ) -> CreatorWorkflowDispatchResult:
     workflow_action = WorkflowAction(action)
     sample_set = load_sample_set(set_id)
@@ -54,9 +55,31 @@ def dispatch_creator_workflow(
             creator_intelligence=creator_intelligence_payload_for_sample_set(sample_set),
         )
 
-    if workflow_action in {WorkflowAction.MARK_EVIDENCE_READY, WorkflowAction.START_DISTILLATION}:
+    if workflow_action == WorkflowAction.MARK_EVIDENCE_READY:
         workflow = engine.dispatch(workflow_action).to_dict()
         intelligence = creator_intelligence_payload_for_sample_set(sample_set)
+        intelligence["workflow"] = workflow
+        if engine.behavior_model:
+            intelligence["behavior_model"] = engine.behavior_model.to_dict()
+        return CreatorWorkflowDispatchResult(sample_set=sample_set, creator_intelligence=intelligence)
+
+    if workflow_action == WorkflowAction.START_DISTILLATION:
+        if engine.state.value == "SAMPLE_SELECTED":
+            engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY)
+        workflow = engine.dispatch(workflow_action).to_dict()
+        intelligence = creator_intelligence_payload_for_sample_set(sample_set)
+        intelligence["workflow"] = workflow
+        if engine.behavior_model:
+            intelligence["behavior_model"] = engine.behavior_model.to_dict()
+        return CreatorWorkflowDispatchResult(sample_set=sample_set, creator_intelligence=intelligence)
+
+    if workflow_action == WorkflowAction.COMPLETE_DISTILLATION:
+        if engine.state.value == "SAMPLE_SELECTED":
+            engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY)
+        if engine.state.value != "DISTILLING":
+            engine.dispatch(WorkflowAction.START_DISTILLATION)
+        workflow = engine.dispatch(workflow_action, {"strategy_output": strategy_output or {}}).to_dict()
+        intelligence = creator_intelligence_payload_for_sample_set(sample_set, strategy_output or {})
         intelligence["workflow"] = workflow
         if engine.behavior_model:
             intelligence["behavior_model"] = engine.behavior_model.to_dict()

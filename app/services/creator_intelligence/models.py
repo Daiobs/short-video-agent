@@ -78,11 +78,13 @@ class Evidence:
     def to_dict(self) -> dict[str, Any]:
         return {
             "level": self.level.value,
+            "evidence_level": self.level.value,
             "has_video": self.has_video,
             "has_frames": self.has_frames,
             "has_asr": self.has_asr,
             "has_ocr": self.has_ocr,
             "has_comments": self.has_comments,
+            "metadata_enriched": self.enrichment_status == "success",
             "enrichment_status": self.enrichment_status,
             "asr_status": self.asr_status,
             "ocr_status": self.ocr_status,
@@ -105,6 +107,10 @@ class CreatorProfile:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.creator_id,
+            "name": self.display_name,
+            "source": self.platform.value,
+            "metadata": dict(self.raw_profile),
             "creator_id": self.creator_id,
             "display_name": self.display_name,
             "platform": self.platform.value,
@@ -138,6 +144,11 @@ class CreatorSample:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.sample_id,
+            "source_type": self.source.value,
+            "aweme_id": self.platform_item_id,
+            "media_type": self.media_kind.value,
+            "evidence_level": self.evidence.level.value,
             "sample_id": self.sample_id,
             "source": self.source.value,
             "source_url": self.source_url,
@@ -165,6 +176,7 @@ class CreatorProject:
     samples: tuple[CreatorSample, ...] = ()
     selected_sample_ids: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    recommendation_meta: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -185,11 +197,13 @@ class CreatorProject:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.project_id,
             "project_id": self.project_id,
             "title": self.title,
             "profile": self.profile.to_dict(),
             "samples": [sample.to_dict() for sample in self.samples],
             "selected_sample_ids": list(self.selected_sample_ids),
+            "recommendation_meta": dict(self.recommendation_meta),
             "warnings": list(self.warnings),
             "sample_count": self.sample_count,
             "selected_count": self.selected_count,
@@ -207,6 +221,10 @@ class BehaviorRepresentation:
     evidence_matrix: dict[str, Any]
     performance_segments: dict[str, list[dict[str, Any]]]
     media_mix: dict[str, int]
+    behavior_patterns: dict[str, Any] = field(default_factory=dict)
+    content_structures: dict[str, Any] = field(default_factory=dict)
+    hook_patterns: dict[str, Any] = field(default_factory=dict)
+    risk_patterns: dict[str, Any] = field(default_factory=dict)
     constraints: tuple[str, ...] = ()
     generated_at: str = field(default_factory=utc_now_iso)
 
@@ -219,6 +237,10 @@ class BehaviorRepresentation:
             "evidence_matrix": dict(self.evidence_matrix),
             "performance_segments": self.performance_segments,
             "media_mix": dict(self.media_mix),
+            "behavior_patterns": dict(self.behavior_patterns),
+            "content_structures": dict(self.content_structures),
+            "hook_patterns": dict(self.hook_patterns),
+            "risk_patterns": dict(self.risk_patterns),
             "constraints": list(self.constraints),
             "generated_at": self.generated_at,
         }
@@ -256,3 +278,9 @@ class CreatorCloneStrategy:
             "idea_bank": [dict(item) for item in self.idea_bank],
             "validation_rules": list(self.validation_rules),
         }
+
+
+Sample = CreatorSample
+SampleSet = CreatorProject
+EvidenceBundle = Evidence
+CreatorClone = CreatorCloneStrategy

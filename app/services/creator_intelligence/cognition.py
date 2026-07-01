@@ -16,6 +16,10 @@ def build_behavior_representation(project: CreatorProject) -> BehaviorRepresenta
         evidence_matrix=evidence_matrix(selected),
         performance_segments=performance_segments(selected),
         media_mix=media_mix(selected),
+        behavior_patterns=behavior_patterns(selected),
+        content_structures=content_structures(selected),
+        hook_patterns=hook_patterns(selected),
+        risk_patterns=risk_patterns(selected),
         constraints=tuple(evidence_constraints(selected)),
     )
 
@@ -80,6 +84,45 @@ def evidence_constraints(samples: tuple[CreatorSample, ...]) -> list[str]:
     return constraints
 
 
+def behavior_patterns(samples: tuple[CreatorSample, ...]) -> dict[str, Any]:
+    return {
+        "dominant_media": _dominant_media(samples),
+        "metric_bias": _metric_bias(samples),
+        "selection_basis": "selected_samples" if samples else "empty",
+        "evidence_depth": _evidence_depth(samples),
+    }
+
+
+def content_structures(samples: tuple[CreatorSample, ...]) -> dict[str, Any]:
+    title_tokens = _title_tokens(samples)
+    return {
+        "title_keywords": title_tokens[:20],
+        "media_mix": media_mix(samples),
+        "has_video_ratio": _ratio(sum(1 for sample in samples if sample.evidence.has_video), len(samples)),
+        "has_case_ratio": _ratio(sum(1 for sample in samples if sample.case_id), len(samples)),
+    }
+
+
+def hook_patterns(samples: tuple[CreatorSample, ...]) -> dict[str, Any]:
+    top_like = _top(list(samples), "like_count", 3)
+    top_comment = _top(list(samples), "comment_count", 3)
+    return {
+        "high_like_titles": [sample.title for sample in top_like if sample.title],
+        "high_comment_titles": [sample.title for sample in top_comment if sample.title],
+        "hook_evidence": "frames_or_text" if any(sample.evidence.has_frames or sample.evidence.has_ocr for sample in samples) else "metadata_only",
+    }
+
+
+def risk_patterns(samples: tuple[CreatorSample, ...]) -> dict[str, Any]:
+    metadata_only = sum(1 for sample in samples if sample.evidence.level.value == "metadata_only")
+    unsupported = sum(1 for sample in samples if sample.media_kind.value in {"image", "text", "unknown"})
+    return {
+        "metadata_only_count": metadata_only,
+        "unsupported_or_static_count": unsupported,
+        "low_confidence": metadata_only >= max(1, len(samples) // 2) if samples else True,
+    }
+
+
 def _top(samples: list[CreatorSample], key: str, limit: int) -> list[CreatorSample]:
     return sorted(samples, key=lambda sample: _metric(sample, key), reverse=True)[:limit]
 
@@ -88,6 +131,50 @@ def _metric(sample: CreatorSample, key: str) -> int:
     if key == "engagement_score":
         return sample.metrics.engagement_score
     return int(getattr(sample.metrics, key, 0) or 0)
+
+
+def _dominant_media(samples: tuple[CreatorSample, ...]) -> str:
+    counts = media_mix(samples)
+    if not counts:
+        return "unknown"
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+
+def _metric_bias(samples: tuple[CreatorSample, ...]) -> str:
+    totals = {
+        "like": sum(sample.metrics.like_count for sample in samples),
+        "comment": sum(sample.metrics.comment_count for sample in samples),
+        "share": sum(sample.metrics.share_count for sample in samples),
+        "collect": sum(sample.metrics.collect_count for sample in samples),
+    }
+    if not any(totals.values()):
+        return "unknown"
+    return max(totals.items(), key=lambda item: item[1])[0]
+
+
+def _evidence_depth(samples: tuple[CreatorSample, ...]) -> str:
+    if not samples:
+        return "empty"
+    full_or_partial = sum(1 for sample in samples if sample.evidence.level.value in {"full", "partial"})
+    if full_or_partial == len(samples):
+        return "rich"
+    if full_or_partial:
+        return "mixed"
+    return "metadata_only"
+
+
+def _title_tokens(samples: tuple[CreatorSample, ...]) -> list[str]:
+    tokens: list[str] = []
+    for sample in samples:
+        for token in sample.title.replace("#", " ").replace("/", " ").split():
+            token = token.strip("，。！？,.!?:：;；[]（）()")
+            if len(token) >= 2 and token not in tokens:
+                tokens.append(token)
+    return tokens
+
+
+def _ratio(value: int, total: int) -> float:
+    return round(value / total, 3) if total else 0.0
 
 
 def _segment_payload(sample: CreatorSample, metric: str) -> dict[str, Any]:

@@ -38,9 +38,46 @@ from app.services.creator_clone import (
     update_sample_set_selection,
     update_sample_set_with_case_artifacts,
 )
+from app.services.creator_intelligence import WorkflowAction
+from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
 
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+
+class CreatorIntelligenceJobRunner:
+    """Small bridge that keeps creator jobs registered with the v2 engine."""
+
+    def __init__(self, sample_set: CloneSampleSet):
+        self.sample_set = sample_set
+
+    def select_samples(self, selected_sample_ids: list[str]) -> dict:
+        if not selected_sample_ids:
+            return creator_intelligence_payload_for_sample_set(self.sample_set)
+        result = dispatch_creator_workflow(
+            self.sample_set.set_id,
+            WorkflowAction.SELECT_SAMPLES,
+            selected_sample_ids=selected_sample_ids,
+        )
+        self.sample_set = result.sample_set
+        return result.creator_intelligence
+
+    def start_distillation(self) -> dict:
+        try:
+            dispatch_creator_workflow(self.sample_set.set_id, WorkflowAction.MARK_EVIDENCE_READY)
+        except AppError:
+            pass
+        result = dispatch_creator_workflow(self.sample_set.set_id, WorkflowAction.START_DISTILLATION)
+        return result.creator_intelligence
+
+    def complete_distillation(self, strategy_output: dict) -> dict:
+        result = dispatch_creator_workflow(
+            self.sample_set.set_id,
+            WorkflowAction.COMPLETE_DISTILLATION,
+            strategy_output=strategy_output,
+        )
+        self.sample_set = result.sample_set
+        return result.creator_intelligence
 
 
 class BuildCaseJobRequest(BaseModel):
@@ -1231,6 +1268,10 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         distill_mode = str(payload.get("distill_mode") or "quick")
         include_case_reports = bool(payload.get("include_case_reports", True))
         max_samples = int(payload.get("max_samples") or MAX_DISTILL_SAMPLES)
+        runner = CreatorIntelligenceJobRunner(sample_set)
+        selected_for_engine = selected_sample_ids or sample_set.selected_sample_ids or [sample.sample_id for sample in sample_set.samples]
+        runner.select_samples(selected_for_engine)
+        sample_set = runner.sample_set
 
         job = db.get(Job, job_id)
         if job:
@@ -1246,7 +1287,14 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         try:
             job = db.get(Job, job_id)
             if job:
-                _set_job(job, "running", 45, "调用大模型蒸馏创作者规则")
+                intelligence = runner.start_distillation()
+                _set_job(
+                    job,
+                    "running",
+                    45,
+                    "调用大模型蒸馏创作者规则",
+                    result={"set": sample_set.to_dict(), "creator_intelligence": intelligence},
+                )
                 db.commit()
             result = distill_creator_clone(
                 sample_set,
@@ -1257,6 +1305,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
             )
             job = db.get(Job, job_id)
             if job:
+                intelligence = runner.complete_distillation((result.get("result") or {}).get("creator_clone_strategy") or {})
                 _set_job(
                     job,
                     "success",
@@ -1265,10 +1314,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                     result={
                         "ok": True,
                         **result,
-                        "creator_intelligence": creator_intelligence_payload_for_sample_set(
-                            sample_set,
-                            (result.get("result") or {}).get("creator_clone_strategy"),
-                        ),
+                        "creator_intelligence": intelligence,
                     },
                 )
                 db.commit()
@@ -1325,6 +1371,10 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         distill_mode = str(payload.get("distill_mode") or "quick")
         batch_size = int(payload.get("batch_size") or MAX_DISTILL_SAMPLES)
         max_samples = int(payload.get("max_samples") or BATCH_DISTILL_MAX_SAMPLES)
+        runner = CreatorIntelligenceJobRunner(sample_set)
+        selected_for_engine = selected_sample_ids or sample_set.selected_sample_ids or [sample.sample_id for sample in sample_set.samples]
+        runner.select_samples(selected_for_engine)
+        sample_set = runner.sample_set
 
         def progress(value: int, message: str) -> None:
             current = db.get(Job, job_id)
@@ -1339,6 +1389,7 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
                 db.commit()
 
         progress(8, f"已载入素材池，准备分批蒸馏 {len(selected_sample_ids) or len(sample_set.samples)} 条样本")
+        runner.start_distillation()
         result = batch_distill_creator_clone(
             sample_set,
             selected_sample_ids,
@@ -1350,6 +1401,7 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         job = db.get(Job, job_id)
         if job:
             message = "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型"
+            intelligence = runner.complete_distillation((result.get("result") or {}).get("creator_clone_strategy") or {}) if result.get("result") else creator_intelligence_payload_for_sample_set(sample_set)
             _set_job(
                 job,
                 "success",
@@ -1358,10 +1410,7 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
                 result={
                     "ok": bool(result.get("result")),
                     **result,
-                    "creator_intelligence": creator_intelligence_payload_for_sample_set(
-                        sample_set,
-                        (result.get("result") or {}).get("creator_clone_strategy"),
-                    ),
+                    "creator_intelligence": intelligence,
                 },
             )
             db.commit()

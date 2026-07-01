@@ -10,15 +10,21 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app
 from app.services.creator_clone import CloneSample, CloneSampleSet
-from app.services.creator_clone import normalize_creator_clone_result, save_sample_set
+from app.services.creator_clone import normalize_creator_clone_result, save_sample_set, validate_creator_clone_schema
 from app.services.creator_intelligence import (
     CreatorCloneStrategy,
+    CreatorSample,
     WorkflowAction,
     WorkflowEngine,
     WorkflowState,
     build_behavior_representation,
     project_from_clone_sample_set,
     project_from_clone_selection,
+    samples_from_browser_dom,
+    samples_from_case_import,
+    samples_from_cookie_api,
+    samples_from_json_csv,
+    samples_from_manual_links,
 )
 from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
 
@@ -74,12 +80,21 @@ def test_clone_sample_set_adapts_to_creator_project() -> None:
     project = project_from_clone_sample_set(sample_set_for_v2())
 
     assert project.project_id == "clone_v2_test"
+    assert project.to_dict()["id"] == "clone_v2_test"
     assert project.profile.creator_id == "MS4wLjABAAAA_v2"
+    assert project.profile.to_dict()["id"] == "MS4wLjABAAAA_v2"
+    assert project.profile.to_dict()["name"] == "测试创作者"
+    assert project.profile.to_dict()["source"] == "douyin"
+    assert "metadata" in project.profile.to_dict()
     assert project.profile.display_name == "测试创作者"
     assert project.profile.platform.value == "douyin"
     assert project.sample_count == 2
     assert project.selected_count == 1
     assert project.samples[0].metrics.engagement_score == 1340
+    assert project.samples[0].to_dict()["source_type"] == "douyin"
+    assert project.samples[0].to_dict()["aweme_id"] == "7650000000000000001"
+    assert project.samples[0].to_dict()["media_type"] == "video"
+    assert project.samples[0].to_dict()["evidence_level"] == "partial"
     assert project.samples[0].evidence.ready_for_distillation is True
     assert project.samples[1].evidence.level.value == "metadata_only"
 
@@ -96,7 +111,40 @@ def test_behavior_representation_is_cognitive_middle_layer() -> None:
     assert behavior.evidence_matrix["with_ocr_text"] == 1
     assert behavior.performance_segments["highest_like_samples"][0]["title"] == "高赞 COS 视频"
     assert behavior.media_mix == {"video": 1}
+    assert behavior.behavior_patterns["dominant_media"] == "video"
+    assert behavior.content_structures["media_mix"] == {"video": 1}
+    assert behavior.hook_patterns["hook_evidence"] == "frames_or_text"
+    assert behavior.risk_patterns["low_confidence"] is False
     assert any("No ASR evidence" in item for item in behavior.constraints)
+
+
+def test_adapter_sources_output_unified_samples() -> None:
+    rows = [
+        {
+            "sample_id": "sample_one",
+            "source_type": "douyin",
+            "aweme_id": "765",
+            "media_type": "video",
+            "title": "统一入口",
+            "like_count": 10,
+            "has_frames": True,
+            "understanding_level": "partial",
+        }
+    ]
+
+    for adapter in (
+        samples_from_manual_links,
+        samples_from_browser_dom,
+        samples_from_json_csv,
+        samples_from_case_import,
+        samples_from_cookie_api,
+    ):
+        samples = adapter(rows)
+        assert isinstance(samples[0], CreatorSample)
+        assert samples[0].sample_id == "sample_one"
+        assert samples[0].source.value == "douyin"
+        assert samples[0].media_kind.value == "video"
+        assert samples[0].evidence.level.value == "partial"
 
 
 def test_selection_adapter_keeps_behavior_model_scoped_to_selected_samples() -> None:
@@ -115,14 +163,20 @@ def test_workflow_engine_controls_creator_distillation_state() -> None:
     engine = WorkflowEngine(project=project)
 
     assert engine.get_state().state == WorkflowState.IMPORT
+    assert engine.get_state().to_dict()["ui"]["stage"] == "import"
+    assert engine.get_state().to_dict()["next_action"]["state"] == "IMPORT_READY"
     assert engine.dispatch(WorkflowAction.INGEST).state == WorkflowState.INGESTED
     assert engine.dispatch(WorkflowAction.BUILD_SAMPLE_POOL).state == WorkflowState.SAMPLE_READY
     selected = engine.dispatch(WorkflowAction.SELECT_SAMPLES, {"selected_sample_ids": ["sample_ready"]})
     assert selected.state == WorkflowState.SAMPLE_SELECTED
     assert selected.selected_count == 1
+    assert selected.to_dict()["ui"]["stage"] == "enrich"
+    assert selected.to_dict()["next_action"]["state"] == "DISTILL_READY"
     evidence = engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY)
     assert evidence.state == WorkflowState.EVIDENCE_READY
     assert evidence.has_behavior_model is True
+    assert evidence.to_dict()["ui"]["stage"] == "distill"
+    assert evidence.to_dict()["next_action"]["state"] == "DISTILL_READY"
     assert engine.behavior_model is not None
     assert engine.dispatch(WorkflowAction.START_DISTILLATION).state == WorkflowState.DISTILLING
     done = engine.dispatch(
@@ -131,6 +185,7 @@ def test_workflow_engine_controls_creator_distillation_state() -> None:
     )
     assert done.state == WorkflowState.DONE
     assert done.has_strategy_output is True
+    assert done.to_dict()["ui"]["stage"] == "export"
 
 
 def test_workflow_engine_rejects_ui_driven_state_skips() -> None:
@@ -377,6 +432,27 @@ def test_creator_clone_result_exposes_structured_strategy_contract() -> None:
         "idea_bank": [{"title": "粉色妆造回头杀", "formula_used": "近景眼神钩子"}],
         "validation_rules": ["第一眼是否有人物亮点"],
     }
+
+
+def test_creator_clone_schema_validation_is_deterministic() -> None:
+    validated = validate_creator_clone_schema(
+        {
+            "positioning": "稳定审美",
+            "content_strategy": "近景视觉",
+            "hooks": ["第一眼给脸"],
+            "templates": ["三拍公式"],
+            "anti_patterns": None,
+            "idea_bank": [{"title": "粉色回头杀"}, "日常眼神杀"],
+            "validation_rules": ["是否有第一眼吸引"],
+            "extra": "ignored",
+        }
+    )
+
+    assert set(validated) == set(CreatorCloneStrategy.empty_schema())
+    assert validated["content_strategy"] == ["近景视觉"]
+    assert validated["templates"] == [{"text": "三拍公式"}]
+    assert validated["anti_patterns"] == []
+    assert validated["idea_bank"] == [{"title": "粉色回头杀"}, {"text": "日常眼神杀"}]
 
 
 def test_creator_intelligence_v2_doc_tracks_completion_evidence() -> None:

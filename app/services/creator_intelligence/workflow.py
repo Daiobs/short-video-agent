@@ -8,6 +8,8 @@ from typing import Any
 from app.services.creator_intelligence.cognition import build_behavior_representation
 from app.services.creator_intelligence.models import BehaviorRepresentation, CreatorProject
 
+DIRECT_DISTILL_LIMIT = 20
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -43,6 +45,7 @@ class WorkflowSnapshot:
     has_behavior_model: bool = False
     has_strategy_output: bool = False
     message: str = ""
+    ui: dict[str, Any] = field(default_factory=dict)
     updated_at: str = field(default_factory=_now)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +58,8 @@ class WorkflowSnapshot:
             "has_behavior_model": self.has_behavior_model,
             "has_strategy_output": self.has_strategy_output,
             "message": self.message,
+            "ui": dict(self.ui),
+            "next_action": dict(self.ui.get("next_action") or {}),
             "updated_at": self.updated_at,
         }
 
@@ -76,16 +81,73 @@ class WorkflowEngine:
     def get_state(self) -> WorkflowSnapshot:
         selected = self.project.selected_samples
         evidence_ready_count = sum(1 for sample in selected if sample.evidence.ready_for_distillation)
+        sample_count = len(self.project.samples)
+        selected_count = len(selected)
         return WorkflowSnapshot(
             project_id=self.project.project_id,
             state=self.state,
-            sample_count=len(self.project.samples),
-            selected_count=len(selected),
+            sample_count=sample_count,
+            selected_count=selected_count,
             evidence_ready_count=evidence_ready_count,
             has_behavior_model=self.behavior_model is not None,
             has_strategy_output=bool(self.strategy_output),
             message=self.message,
+            ui=self.ui_state(sample_count=sample_count, selected_count=selected_count, evidence_ready_count=evidence_ready_count),
         )
+
+    def ui_state(self, *, sample_count: int, selected_count: int, evidence_ready_count: int) -> dict[str, Any]:
+        step = {
+            WorkflowState.IMPORT: ("import", 0, "当前步骤：导入素材"),
+            WorkflowState.INGESTED: ("pool", 1, "当前步骤：构建素材池"),
+            WorkflowState.SAMPLE_READY: ("select", 2, "当前步骤：选择 N 条样本"),
+            WorkflowState.SAMPLE_SELECTED: ("enrich", 3, "当前步骤：富化证据"),
+            WorkflowState.EVIDENCE_READY: ("distill", 4, "当前步骤：大模型蒸馏"),
+            WorkflowState.DISTILLING: ("distill", 4, "当前步骤：大模型蒸馏"),
+            WorkflowState.DONE: ("export", 5, "当前步骤：可视化输出"),
+        }[self.state]
+        action_state, label, summary, disabled = self._next_action_for_state(
+            sample_count=sample_count,
+            selected_count=selected_count,
+            evidence_ready_count=evidence_ready_count,
+        )
+        return {
+            "stage": step[0],
+            "step_index": step[1],
+            "step_label": step[2],
+            "progress_percent": int((step[1] / 5) * 100),
+            "next_action": {
+                "state": action_state,
+                "label": label,
+                "summary": summary,
+                "disabled": disabled,
+            },
+        }
+
+    def _next_action_for_state(self, *, sample_count: int, selected_count: int, evidence_ready_count: int) -> tuple[str, str, str, bool]:
+        if self.state == WorkflowState.IMPORT:
+            return ("IMPORT_READY", "下一步：开始导入素材", "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。", False)
+        if self.state == WorkflowState.INGESTED:
+            return ("POOL_READY", "下一步：构建素材池", f"已接收输入，准备构建素材池。", False)
+        if self.state == WorkflowState.SAMPLE_READY:
+            return ("RECOMMENDED_READY", "下一步：使用推荐样本继续", f"已导入 {sample_count} 条素材，请选择代表样本继续。", False)
+        if self.state == WorkflowState.SAMPLE_SELECTED:
+            if not selected_count:
+                return ("SELECT_EMPTY", "请先选择样本", "在素材列表中勾选代表样本，或使用快捷入口。", True)
+            pending = max(0, selected_count - evidence_ready_count)
+            if pending:
+                return ("ENRICH_READY", "下一步：开始富化证据", f"已选择 {selected_count} 条样本，其中 {pending} 条仍需补齐证据。", False)
+            return ("DISTILL_READY", "下一步：进入大模型蒸馏", f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。", False)
+        if self.state == WorkflowState.EVIDENCE_READY:
+            if not selected_count:
+                return ("DISTILL_BLOCKED", "返回选择样本", "还没有可蒸馏样本。请先选择代表样本。", False)
+            if selected_count > DIRECT_DISTILL_LIMIT:
+                return ("BATCH_DISTILL_READY", "下一步：开始分批蒸馏", f"已选择 {selected_count} 条样本，超过单次蒸馏上限，将按批次蒸馏后汇总。", False)
+            return ("DISTILL_READY", "下一步：开始大模型蒸馏", f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。", False)
+        if self.state == WorkflowState.DISTILLING:
+            return ("DISTILLING", "正在大模型蒸馏", "当前任务由 Workflow Engine 接管，完成后会展示创作者蒸馏报告。", True)
+        if self.state == WorkflowState.DONE:
+            return ("EXPORT_READY", "下一步：下载报告", "创作者蒸馏报告已生成，可下载报告或复制规则继续使用。", False)
+        return ("IMPORT_READY", "下一步：开始导入素材", "等待输入。", False)
 
     def dispatch(self, action: WorkflowAction | str, payload: dict[str, Any] | None = None) -> WorkflowSnapshot:
         action = WorkflowAction(action)

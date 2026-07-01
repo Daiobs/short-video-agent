@@ -707,56 +707,6 @@ function creatorProjectProfileItems() {
   return normalizeItems(currentCreatorIntelligenceProject?.samples).map(legacyProfileItemFromCreatorSample);
 }
 
-function creatorWorkflowFromProject(project = null, strategy = null) {
-  if (!project?.project_id) {
-    return null;
-  }
-  const samples = normalizeItems(project.samples);
-  const selectedIds = new Set(normalizeItems(project.selected_sample_ids).map(String));
-  const selectedSamples = selectedIds.size
-    ? samples.filter((sample) => selectedIds.has(String(sample.sample_id || "")))
-    : samples.filter((sample) => sample.selected);
-  const evidenceReadyCount = selectedSamples.filter((sample) => {
-    const evidence = sample.evidence || {};
-    return evidence.ready_for_distillation
-      || evidence.level === "full"
-      || evidence.level === "partial"
-      || evidence.has_frames
-      || evidence.has_asr
-      || evidence.has_ocr
-      || evidence.has_comments;
-  }).length;
-  const hasStrategyOutput = Boolean(strategy && typeof strategy === "object" && Object.keys(strategy).length);
-  const state = hasStrategyOutput
-    ? "DONE"
-    : selectedSamples.length && evidenceReadyCount >= selectedSamples.length
-      ? "EVIDENCE_READY"
-      : selectedSamples.length
-        ? "SAMPLE_SELECTED"
-        : samples.length
-          ? "SAMPLE_READY"
-          : "IMPORT";
-  return {
-    project_id: project.project_id,
-    state,
-    sample_count: samples.length,
-    selected_count: selectedSamples.length,
-    evidence_ready_count: evidenceReadyCount,
-    has_behavior_model: selectedSamples.length > 0,
-    has_strategy_output: hasStrategyOutput,
-    message: hasStrategyOutput
-      ? "Creator strategy output ready."
-      : state === "EVIDENCE_READY"
-        ? "Evidence model ready."
-        : state === "SAMPLE_SELECTED"
-          ? "Samples selected."
-          : state === "SAMPLE_READY"
-            ? "Sample pool ready."
-            : "Input required.",
-    updated_at: project.updated_at || new Date().toISOString(),
-  };
-}
-
 function activeProfileItems() {
   const projectItems = creatorProjectProfileItems();
   const localItems = normalizeItems(profileItems);
@@ -810,7 +760,6 @@ function syncCreatorProjectSamplesFromProfileItems(items = profileItems) {
     selected_count: selectedSampleIds.length || samples.filter((sample) => sample.selected).length,
     updated_at: new Date().toISOString(),
   };
-  currentCreatorIntelligenceWorkflow = creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy);
 }
 
 function cloneSetFromCreatorIntelligenceProject(payload = {}) {
@@ -1233,7 +1182,7 @@ function applyCreatorIntelligencePayload(payload = {}) {
   currentCreatorIntelligenceProject = nextProject;
   const incomingStrategy = intelligence?.strategy_output || payload?.strategy_output || null;
   currentCreatorIntelligenceStrategy = incomingStrategy || (projectChanged ? null : currentCreatorIntelligenceStrategy);
-  currentCreatorIntelligenceWorkflow = intelligence?.workflow || payload?.workflow || creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy);
+  currentCreatorIntelligenceWorkflow = intelligence?.workflow || payload?.workflow || null;
   currentCreatorIntelligenceBehavior = intelligence?.behavior_model || payload?.behavior_model || null;
 }
 
@@ -1246,43 +1195,17 @@ function numberFromWorkflow(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function workflowUiState() {
+  return currentCreatorIntelligenceWorkflow?.ui || {};
+}
+
+function workflowNextAction() {
+  return workflowUiState().next_action || currentCreatorIntelligenceWorkflow?.next_action || null;
+}
+
 function wizardStateFromWorkflowState(workflowState) {
-  if (!workflowState) {
-    return "";
-  }
-  const sampleCount = numberFromWorkflow(currentCreatorIntelligenceWorkflow?.sample_count);
-  const selectedCount = numberFromWorkflow(currentCreatorIntelligenceWorkflow?.selected_count);
-  const evidenceReadyCount = numberFromWorkflow(currentCreatorIntelligenceWorkflow?.evidence_ready_count);
-  const selected = selectedProfileItems();
-  const selectedHasFrontendDelta = selected.length > 0 && selected.length !== selectedCount;
-  if (selectedHasFrontendDelta) {
-    return "";
-  }
-  if (workflowState === "IMPORT") {
-    return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
-  }
-  if (workflowState === "INGESTED") {
-    return sampleCount ? "POOL_READY" : "IMPORT_READY";
-  }
-  if (workflowState === "SAMPLE_READY") {
-    return recommendedProfileSampleMix().length ? "RECOMMENDED_READY" : "POOL_READY";
-  }
-  if (workflowState === "SAMPLE_SELECTED") {
-    if (!selectedCount) return "SELECT_EMPTY";
-    return hasPendingEnrichment(selected) ? "SELECT_TO_ENRICH" : "SELECT_TO_DISTILL";
-  }
-  if (workflowState === "EVIDENCE_READY") {
-    if (!selectedCount) return "SELECT_EMPTY";
-    if (evidenceReadyCount < selectedCount && hasPendingEnrichment(selected)) return "SELECT_TO_ENRICH";
-    return selectedCount > CREATOR_CLONE_MAX_DISTILL_SAMPLES ? "BATCH_DISTILL_READY" : "DISTILL_READY";
-  }
-  if (workflowState === "DISTILLING") {
-    return "DISTILLING";
-  }
-  if (workflowState === "DONE") {
-    return currentCreatorCloneResult || currentCreatorIntelligenceWorkflow?.has_strategy_output ? "EXPORT_READY" : "EXPORT_EMPTY";
-  }
-  return "";
+  void workflowState;
+  return workflowNextAction()?.state || "";
 }
 
 function getCreatorCloneWizardStateFromWorkflow() {
@@ -1290,30 +1213,11 @@ function getCreatorCloneWizardStateFromWorkflow() {
 }
 
 function getCreatorCloneWizardState() {
-  if (currentCreatorCloneResult) {
-    return "EXPORT_READY";
-  }
-  if (creatorCloneDistillRunning) {
-    return "DISTILLING";
-  }
-  if (creatorCloneEnrichmentRunning) {
-    return "ENRICHING";
-  }
   const workflowState = getCreatorCloneWizardStateFromWorkflow();
   if (workflowState) {
     return workflowState;
   }
-  if (!activeProfileItems().length) {
-    return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
-  }
-  const selected = selectedProfileItems();
-  if (!selected.length) {
-    return recommendedProfileSampleMix().length ? "RECOMMENDED_READY" : "POOL_READY";
-  }
-  if (hasPendingEnrichment(selected)) {
-    return "ENRICH_READY";
-  }
-  return "DISTILL_READY";
+  return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
 }
 
 function getWizardStep() {
@@ -1321,6 +1225,10 @@ function getWizardStep() {
 }
 
 function creatorCloneStateStepIndex(state = getCreatorCloneWizardState()) {
+  const uiStep = workflowUiState().step_index;
+  if (uiStep !== undefined && uiStep !== null && state === getCreatorCloneWizardStateFromWorkflow()) {
+    return Number(uiStep) || 0;
+  }
   return {
     IMPORT_EMPTY: 0,
     IMPORT_READY: 0,
@@ -1345,6 +1253,10 @@ function creatorCloneStateStepIndex(state = getCreatorCloneWizardState()) {
 }
 
 function getCreatorCloneStage() {
+  const engineStage = workflowUiState().stage;
+  if (engineStage) {
+    return normalizeProfileStage(engineStage);
+  }
   return {
     0: "import",
     1: "pool",
@@ -1380,7 +1292,7 @@ function setProfileStageView(stage, {scroll = false} = {}) {
 }
 
 function renderProfileStageView() {
-  const activeStage = normalizeProfileStage(profileStageView || getCreatorCloneStage());
+  const activeStage = normalizeProfileStage(workflowUiState().stage || profileStageView || getCreatorCloneStage());
   profileStageSections.forEach((section) => {
     const stages = String(section.dataset.profileStageSection || "").split(/\s+/).filter(Boolean);
     const isActive = stages.includes(activeStage);
@@ -1406,143 +1318,28 @@ function syncProfileStageToWizard({scroll = false} = {}) {
 }
 
 function creatorCloneStateMeta(state = getCreatorCloneWizardState()) {
-  const selected = selectedProfileItems();
-  const recommended = recommendedProfileSampleMix();
-  const buildable = selected.filter(isProfileItemBuildable);
-  const metas = {
-    IMPORT_EMPTY: {
-      step: "当前步骤：导入素材",
-      button: "下一步：开始导入素材",
-      summary: "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。",
-    },
-    IMPORT_READY: {
-      step: "当前步骤：导入素材",
-      button: "下一步：开始导入素材",
-      summary: "已检测到导入内容，系统会自动选择主页扫描、作品链接、JSON/CSV 或 Case 导入。",
-    },
-    POOL_EMPTY: {
-      step: "当前步骤：构建素材池",
-      button: "返回导入素材",
-      summary: "还没有素材池。请先导入主页、作品链接、JSON/CSV 或已有 Case。",
-      disabled: false,
-    },
-    POOL_READY: {
-      step: "当前步骤：构建素材池",
-      button: "下一步：使用推荐样本继续",
-      summary: `已导入 ${formatNumber(activeProfileItems().length)} 条素材，可使用推荐组合继续，或展开手动调整样本。`,
-    },
-    RECOMMENDED_READY: {
-      step: "当前步骤：选择 N 条样本",
-      button: "下一步：使用推荐样本继续",
-      summary: `已导入 ${formatNumber(activeProfileItems().length)} 条素材，推荐组合包含 ${formatNumber(recommended.length)} 条样本。`,
-    },
-    SELECT_EMPTY: {
-      step: "当前步骤：选择 N 条样本",
-      button: "请先选择样本",
-      summary: "在素材列表中勾选代表样本，或使用“推荐组合 / 高赞 5 条”等快捷入口。",
-      disabled: true,
-    },
-    SELECT_TO_ENRICH: {
-      step: "当前步骤：选择 N 条样本",
-      button: "下一步：开始富化证据",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
-    },
-    SELECT_TO_DISTILL: {
-      step: "当前步骤：选择 N 条样本",
-      button: selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES ? "下一步：进入分批蒸馏" : "下一步：进入大模型蒸馏",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，当前证据可进入蒸馏。`,
-    },
-    SAMPLE_SELECTED: {
-      step: "当前步骤：富化证据",
-      button: "下一步：开始富化证据",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
-    },
-    ENRICH_EMPTY: {
-      step: "当前步骤：富化证据",
-      button: "返回选择样本",
-      summary: "还没有选中样本。请先回到素材列表选择代表样本。",
-    },
-    ENRICH_READY: {
-      step: "当前步骤：富化证据",
-      button: "下一步：开始富化证据",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条待富化视频。`,
-    },
-    ENRICH_DONE: {
-      step: "当前步骤：富化证据",
-      button: selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES ? "下一步：进入分批蒸馏" : "下一步：进入大模型蒸馏",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，当前没有待富化视频，可进入蒸馏。`,
-    },
-    ENRICHING: {
-      step: "当前步骤：富化证据",
-      button: "正在富化证据",
-      summary: "当前任务：Creator Clone 富化队列。完成后会进入大模型蒸馏。",
-    },
-    DISTILL_BLOCKED: {
-      step: "当前步骤：大模型蒸馏",
-      button: "返回选择样本",
-      summary: "还没有可蒸馏样本。请先选择代表样本，必要时先完成证据富化。",
-    },
-    DISTILL_READY: {
-      step: "当前步骤：大模型蒸馏",
-      button: "下一步：开始大模型蒸馏",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，当前证据可进入蒸馏。`,
-    },
-    BATCH_DISTILL_READY: {
-      step: "当前步骤：大模型蒸馏",
-      button: "下一步：开始分批蒸馏",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，超过单次蒸馏上限，将按批次蒸馏后汇总。`,
-    },
-    DISTILLING: {
-      step: "当前步骤：大模型蒸馏",
-      button: "正在大模型蒸馏",
-      summary: "当前任务：Creator Clone 大模型蒸馏。完成后会展示可视化报告。",
-    },
-    EXPORT_EMPTY: {
-      step: "当前步骤：可视化输出",
-      button: "返回大模型蒸馏",
-      summary: "还没有生成创作者蒸馏报告。请先完成大模型蒸馏，或查看已生成的 Prompt。",
-    },
-    EXPORT_READY: {
-      step: "当前步骤：可视化输出",
-      button: "下一步：下载报告",
-      summary: "创作者蒸馏报告已生成，可下载报告或复制规则继续使用。",
-    },
+  const nextAction = workflowNextAction();
+  const ui = workflowUiState();
+  if (nextAction) {
+    return {
+      step: ui.step_label || "当前步骤",
+      button: nextAction.label || "下一步",
+      summary: nextAction.summary || currentCreatorIntelligenceWorkflow?.message || "",
+      disabled: Boolean(nextAction.disabled),
+    };
+  }
+  return {
+    step: "当前步骤：导入素材",
+    button: "下一步：开始导入素材",
+    summary: state === "IMPORT_READY"
+      ? "已检测到导入内容，系统会自动选择主页扫描、作品链接、JSON/CSV 或 Case 导入。"
+      : "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。",
+    disabled: false,
   };
-  return metas[state] || metas.IMPORT_EMPTY;
 }
 
 function creatorCloneActionStateForCurrentView(state = getCreatorCloneWizardState()) {
-  if (["ENRICHING", "DISTILLING"].includes(state)) {
-    return state;
-  }
-  const activeStage = normalizeProfileStage(profileStageView);
-  const selected = selectedProfileItems();
-  const items = activeProfileItems();
-  if (activeStage === "import") {
-    return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
-  }
-  if (activeStage === "pool") {
-    if (!items.length) return "POOL_EMPTY";
-    return recommendedProfileSampleMix().length ? "RECOMMENDED_READY" : "POOL_READY";
-  }
-  if (activeStage === "select") {
-    if (!items.length) return "POOL_EMPTY";
-    if (!selected.length) return "SELECT_EMPTY";
-    return hasPendingEnrichment(selected) ? "SELECT_TO_ENRICH" : "SELECT_TO_DISTILL";
-  }
-  if (activeStage === "enrich") {
-    if (!selected.length) return "ENRICH_EMPTY";
-    return hasPendingEnrichment(selected) ? "ENRICH_READY" : "ENRICH_DONE";
-  }
-  if (activeStage === "distill") {
-    if (!selected.length) return "DISTILL_BLOCKED";
-    if (hasPendingEnrichment(selected)) return "ENRICH_READY";
-    return selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES ? "BATCH_DISTILL_READY" : "DISTILL_READY";
-  }
-  if (activeStage === "export") {
-    return currentCreatorCloneResult ? "EXPORT_READY" : "EXPORT_EMPTY";
-  }
-  return state;
+  return workflowNextAction()?.state || state;
 }
 
 function renderCreatorCloneRecommendation() {
@@ -1567,7 +1364,7 @@ function renderCreatorCloneNextAction() {
   const state = creatorCloneActionStateForCurrentView(wizardState);
   const meta = creatorCloneStateMeta(state);
   const progressIndex = creatorCloneStateStepIndex(wizardState);
-  const activeStage = normalizeProfileStage(profileStageView || getCreatorCloneStage());
+  const activeStage = normalizeProfileStage(getCreatorCloneStage());
   const activeStageIndex = stageIndexFromName(activeStage);
   creatorCloneFlowSteps.forEach((step) => {
     const stage = normalizeProfileStage(step.dataset.profileStageNav || "");

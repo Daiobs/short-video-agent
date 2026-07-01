@@ -536,11 +536,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function activeProfileItems" in script
     assert "function creatorSampleFromLegacyProfileItem" in script
     assert "function creatorProjectFromCloneSet" in script
-    assert "function creatorWorkflowFromProject" in script
+    assert "function creatorWorkflowFromProject" not in script
     assert "function syncCreatorProjectSamplesFromProfileItems" in script
     assert "syncCreatorProjectSamplesFromProfileItems(profileItems);" in script
     assert "creatorProjectFromCloneSet(payload?.set)" in script
-    assert "creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy)" in script
+    assert "creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy)" not in script
     assert "const projectChanged = previousProjectId && nextProjectId && previousProjectId !== nextProjectId;" in script
     assert "filterProfileItemsByMedia(activeProfileItems()" in script
     assert "return activeProfileItems().filter((item) => profileSelectedKeys.has(profileItemKey(item)))" in script
@@ -567,12 +567,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES"' in script
     assert "creator_intelligence" in script
     assert "creatorCloneExportActions.open = true" in script
-    assert "下一步：使用推荐样本继续" in script
-    assert "下一步：开始富化证据" in script
-    assert "下一步：进入大模型蒸馏" in script
-    assert "下一步：开始分批蒸馏" in script
-    assert "下一步：开始大模型蒸馏" in script
-    assert "下一步：下载报告" in script
+    assert "nextAction.label" in script
+    assert "ui.step_label" in script
+    assert "workflowNextAction()" in script
     assert "POOL_READY" in script
     assert "POOL_EMPTY" in script
     assert "SELECT_EMPTY" in script
@@ -9098,7 +9095,9 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "function getCreatorCloneWizardStateFromWorkflow" in script
     assert "function syncCreatorCloneWorkflowSelection" in script
     assert "wizardStateFromWorkflowState(workflowStateFromCreatorIntelligence())" in script
-    assert "selectedHasFrontendDelta" in script
+    assert "selectedHasFrontendDelta" not in script
+    assert "workflowNextAction()?.state" in script
+    assert "workflowUiState().stage" in script
     assert "creator_intelligence" in script
     assert "function renderWizardPrimaryAction" in script
     assert "function handleWizardPrimaryAction" in script
@@ -9118,12 +9117,9 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "EXPORT_EMPTY" in script
     assert "EXPORT_READY" in script
     assert "下一步：开始导入素材" in script
-    assert "下一步：使用推荐样本继续" in script
-    assert "下一步：开始富化证据" in script
-    assert "下一步：进入大模型蒸馏" in script
-    assert "下一步：开始分批蒸馏" in script
-    assert "下一步：开始大模型蒸馏" in script
-    assert "下一步：下载报告" in script
+    assert "nextAction.label" in script
+    assert "ui.step_label" in script
+    assert "workflowNextAction()" in script
 
 
 def test_creator_clone_import_manual_links_generates_sample_set() -> None:
