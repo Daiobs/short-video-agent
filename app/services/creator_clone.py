@@ -1593,12 +1593,11 @@ def build_final_creator_clone_reduce_prompt(
                 "batch_id": batch.get("batch_id"),
                 "status": batch.get("status"),
                 "sample_count": batch.get("sample_count"),
-                "sample_ids": _short_list(batch.get("sample_ids"), 8, 60),
-                "summary": _truncate_text((batch.get("result") or {}).get("summary") or batch.get("summary") or "", 260),
-                "creator_positioning": (batch.get("result") or {}).get("creator_positioning") or {},
-                "expression_patterns": (batch.get("result") or {}).get("expression_patterns") or {},
-                "transferable_formulas": _short_list((batch.get("result") or {}).get("transferable_formulas"), 5, 120),
-                "candidate_ideas": _short_list((batch.get("result") or {}).get("candidate_ideas"), 4, 100),
+                "summary": _truncate_text((batch.get("result") or {}).get("summary") or batch.get("summary") or "", 180),
+                "creator_positioning": _short_dict((batch.get("result") or {}).get("creator_positioning") or {}, item_limit=80),
+                "expression_patterns": _short_dict((batch.get("result") or {}).get("expression_patterns") or {}, item_limit=80),
+                "transferable_formulas": _short_list((batch.get("result") or {}).get("transferable_formulas"), 3, 90),
+                "candidate_ideas": _short_list((batch.get("result") or {}).get("candidate_ideas"), 2, 80),
                 "evidence_gaps": _short_list((batch.get("result") or {}).get("evidence_gaps") or batch.get("evidence_gaps"), 4, 100),
                 "error_code": batch.get("error_code") or "",
             }
@@ -1606,7 +1605,7 @@ def build_final_creator_clone_reduce_prompt(
         for batch in batch_results
     ]
     segments = performance_segments(selected_samples)
-    evidence_matrix = selected_evidence_matrix(selected_samples)
+    compact_segments = {key: _short_list(value, 5, 80) for key, value in segments.items()}
     return f"""你是 Creator Clone Lab 的最终汇总 Reduce 助手。请基于多个批次蒸馏摘要，输出账号级创作者规律 JSON，不要 Markdown。
 
 工作方式：
@@ -1636,10 +1635,106 @@ def build_final_creator_clone_reduce_prompt(
 平台：{sample_set.source_platform}
 总样本数：{len(selected_samples)}
 账号可见资料：{json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False)}
-全局证据矩阵：{json.dumps(evidence_matrix, ensure_ascii=False)}
-全局表现分层：{json.dumps(segments, ensure_ascii=False)}
+证据完整度统计：{json.dumps(understanding_counts(selected_samples), ensure_ascii=False)}
+全局表现分层：{json.dumps(compact_segments, ensure_ascii=False)}
 批次摘要：{json.dumps(compact_batches, ensure_ascii=False)}
 """
+
+
+def _unique_text_values(values, limit: int = 8, item_limit: int = 100) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    rows = values if isinstance(values, list) else [values]
+    for item in rows:
+        if isinstance(item, dict):
+            text = item.get("name") or item.get("title") or item.get("formula") or item.get("summary") or item.get("point") or json.dumps(item, ensure_ascii=False)
+        else:
+            text = str(item or "")
+        text = _truncate_text(text, item_limit)
+        if text and text not in seen:
+            result.append(text)
+            seen.add(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _collect_batch_values(batch_results: list[dict], path: tuple[str, ...], limit: int = 10, item_limit: int = 100) -> list[str]:
+    values: list = []
+    for batch in batch_results:
+        current = batch.get("result") or {}
+        for key in path:
+            current = current.get(key) if isinstance(current, dict) else None
+        if isinstance(current, list):
+            values.extend(current)
+        elif current:
+            values.append(current)
+    return _unique_text_values(values, limit=limit, item_limit=item_limit)
+
+
+def build_local_batch_distill_result(
+    sample_set: CloneSampleSet,
+    selected_samples: list[CloneSample],
+    batch_results: list[dict],
+    warnings: list[str] | None = None,
+) -> dict:
+    successful_results = [batch.get("result") or {} for batch in batch_results if batch.get("result")]
+    summaries = _unique_text_values([result.get("summary") for result in successful_results], limit=4, item_limit=160)
+    first_positioning = next((result.get("creator_positioning") for result in successful_results if result.get("creator_positioning")), {}) or {}
+    first_spec = next((result.get("creator_clone_spec") for result in successful_results if result.get("creator_clone_spec")), {}) or {}
+    raw = {
+        "summary": "；".join(summaries) or f"已完成 {len(batch_results)} 个批次的本地汇总，最终大模型 Reduce 可稍后重试。",
+        "creator_positioning": {
+            "what_the_creator_sells": first_positioning.get("what_the_creator_sells") or "基于批次摘要汇总的账号核心卖点。",
+            "audience_promise": first_positioning.get("audience_promise") or "从多个样本中提炼稳定的内容承诺和可复刻结构。",
+            "hidden_genre": first_positioning.get("hidden_genre") or "",
+            "audience_assumption": first_positioning.get("audience_assumption") or "",
+        },
+        "topic_buckets": _collect_batch_values(batch_results, ("topic_buckets",), limit=12, item_limit=100),
+        "thinking_patterns": {
+            "assumptions": _collect_batch_values(batch_results, ("thinking_patterns", "assumptions"), limit=8, item_limit=100),
+            "tension_sources": _collect_batch_values(batch_results, ("thinking_patterns", "tension_sources"), limit=8, item_limit=100),
+            "detail_selection_rules": _collect_batch_values(batch_results, ("thinking_patterns", "detail_selection_rules"), limit=8, item_limit=100),
+            "novelty_vs_familiarity": next(
+                (
+                    (result.get("thinking_patterns") or {}).get("novelty_vs_familiarity")
+                    for result in successful_results
+                    if (result.get("thinking_patterns") or {}).get("novelty_vs_familiarity")
+                ),
+                "",
+            ),
+        },
+        "expression_patterns": {
+            "opening_hooks": _collect_batch_values(batch_results, ("expression_patterns", "opening_hooks"), limit=10, item_limit=100),
+            "scene_order": _collect_batch_values(batch_results, ("expression_patterns", "scene_order"), limit=10, item_limit=100),
+            "shot_types": _collect_batch_values(batch_results, ("expression_patterns", "shot_types"), limit=10, item_limit=100),
+            "subtitle_voice": _collect_batch_values(batch_results, ("expression_patterns", "subtitle_voice"), limit=8, item_limit=100),
+            "visual_style": _collect_batch_values(batch_results, ("expression_patterns", "visual_style"), limit=10, item_limit=100),
+            "ending_patterns": _collect_batch_values(batch_results, ("expression_patterns", "ending_patterns"), limit=8, item_limit=100),
+        },
+        "transferable_formulas": _collect_batch_values(batch_results, ("transferable_formulas",), limit=12, item_limit=130),
+        "creator_clone_spec": {
+            "taste": first_spec.get("taste") or "",
+            "topic_selection_rules": _collect_batch_values(batch_results, ("creator_clone_spec", "topic_selection_rules"), limit=10, item_limit=110),
+            "structure_rules": _collect_batch_values(batch_results, ("creator_clone_spec", "structure_rules"), limit=10, item_limit=110),
+            "expression_rules": _collect_batch_values(batch_results, ("creator_clone_spec", "expression_rules"), limit=10, item_limit=110),
+            "visual_rules": _collect_batch_values(batch_results, ("creator_clone_spec", "visual_rules"), limit=10, item_limit=110),
+            "caption_voice": first_spec.get("caption_voice") or "",
+            "ending_rules": _collect_batch_values(batch_results, ("creator_clone_spec", "ending_rules"), limit=8, item_limit=110),
+            "anti_patterns": _collect_batch_values(batch_results, ("creator_clone_spec", "anti_patterns"), limit=8, item_limit=110),
+            "self_check_rubric": _collect_batch_values(batch_results, ("creator_clone_spec", "self_check_rubric"), limit=8, item_limit=110),
+        },
+        "candidate_ideas": _collect_batch_values(batch_results, ("candidate_ideas",), limit=12, item_limit=120),
+        "evidence_gaps": _collect_batch_values(batch_results, ("evidence_gaps",), limit=8, item_limit=120),
+        "next_actions": [
+            "基于本地批次汇总先查看账号级规律。",
+            "如需更精炼结论，可稍后重试最终 Reduce 或减少样本数量。",
+            "优先检查高赞、高评、高分享分层是否与账号目标一致。",
+        ],
+    }
+    merged_warnings = list(warnings or [])
+    merged_warnings.append("最终大模型 Reduce 未完成，当前报告由已成功的批次摘要本地汇总生成。")
+    return normalize_creator_clone_result(raw, sample_set, selected_samples, warnings=merged_warnings)
 
 
 def batch_distill_creator_clone(
@@ -1741,7 +1836,19 @@ def batch_distill_creator_clone(
             (output_dir / "creator_clone.md").write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
             final_payload.update({"status": "success", "result": final_result, "error_code": ""})
         except AppError as error:
-            final_payload.update({"status": "failed", "error_code": error.code, "message": error.message})
+            final_result = build_local_batch_distill_result(sample_set, selected_samples, batch_results, warnings=warnings)
+            final_result["batch_distill"] = {
+                "batch_count": len(batch_results),
+                "selected_count": len(selected_samples),
+                "batch_size": max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES)),
+                "final_reduce_recovery": "local_fallback",
+                "final_reduce_error_code": error.code,
+            }
+            _write_json(final_result_path, final_result)
+            final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
+            _write_json(output_dir / "creator_clone_result.json", final_result)
+            (output_dir / "creator_clone.md").write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
+            final_payload.update({"status": "fallback", "result": final_result, "error_code": error.code, "message": error.message})
             warnings.append(f"最终汇总失败：{error.code}：{error.message}")
 
     manifest = {
