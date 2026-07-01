@@ -66,7 +66,9 @@ def llm_status_payload() -> dict:
         "llm_max_keyframes": effective["max_keyframes"],
         "temperature": effective["temperature"],
         "timeout_seconds": effective["timeout_seconds"],
+        "final_reduce_timeout_seconds": effective["final_reduce_timeout_seconds"],
         "max_output_tokens": effective["max_output_tokens"],
+        "final_reduce_max_output_tokens": effective["final_reduce_max_output_tokens"],
         "status_message": status_message,
     }
 
@@ -78,9 +80,11 @@ def update_llm_settings_payload(payload: dict) -> dict:
         "api_base": payload.get("api_base", current["api_base"]),
         "model": payload.get("model", current["model"]),
         "timeout_seconds": payload.get("timeout_seconds", current["timeout_seconds"]),
+        "final_reduce_timeout_seconds": payload.get("final_reduce_timeout_seconds", current["final_reduce_timeout_seconds"]),
         "temperature": payload.get("temperature", current["temperature"]),
         "max_keyframes": payload.get("llm_max_keyframes", payload.get("max_keyframes", current["max_keyframes"])),
         "max_output_tokens": payload.get("max_output_tokens", current["max_output_tokens"]),
+        "final_reduce_max_output_tokens": payload.get("final_reduce_max_output_tokens", current["final_reduce_max_output_tokens"]),
     }
     if payload.get("clear_api_key"):
         values["api_key"] = ""

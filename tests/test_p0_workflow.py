@@ -1471,6 +1471,7 @@ def test_openai_compatible_provider_requests_json_object(monkeypatch) -> None:
         api_base="https://www.wintoken.dev/v1",
         api_key="sk-test",
         model="gpt-5.4-high",
+        max_output_tokens=1200,
     ).analyze("ping", [])
 
     assert result == {"ok": True, "message": "pong"}
@@ -1578,6 +1579,7 @@ def test_openai_responses_provider_parses_output_text(monkeypatch) -> None:
         api_base="https://api.openai.com/v1",
         api_key="sk-test",
         model="gpt-5.5",
+        max_output_tokens=1200,
     ).analyze("ping", [])
 
     assert result == {"ok": True, "message": "pong"}
@@ -1660,6 +1662,7 @@ def test_anthropic_compatible_provider_uses_messages_api(monkeypatch) -> None:
         api_base="https://www.wintoken.dev/v1",
         api_key="sk-test",
         model="claude-fable-5",
+        max_output_tokens=1200,
     ).analyze("ping", [])
 
     assert result == {"ok": True, "message": "pong"}

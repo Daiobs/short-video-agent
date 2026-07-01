@@ -21,6 +21,7 @@ from app.providers.profile_base import ProfileScanResult, ProfileVideoItem, prof
 from app.services.douyin_url_parser import extract_aweme_id, extract_first_url
 from app.services.llm_provider import get_llm_provider
 from app.services.llm_settings import llm_is_configured
+from app.services.runtime_settings import effective_llm_settings
 from app.services.profile_scan import scan_profile
 from app.providers.profile_base import ProfileScanRequest
 
@@ -1820,13 +1821,16 @@ def batch_distill_creator_clone(
         "error_code": "LLM_NOT_CONFIGURED" if not llm else "",
     }
     final_result = None
+    effective_llm = effective_llm_settings()
+    final_timeout = float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds)
+    final_max_output_tokens = int(effective_llm.get("final_reduce_max_output_tokens") or settings.llm_final_reduce_max_output_tokens)
     if progress:
-        progress(82, f"正在汇总所有批次，最长等待 {int(settings.llm_final_reduce_timeout_seconds)} 秒")
+        progress(82, f"正在汇总所有批次，最长等待 {int(final_timeout)} 秒")
     if llm:
         try:
             final_llm = get_llm_provider(
-                timeout_seconds=settings.llm_final_reduce_timeout_seconds,
-                max_output_tokens=max(settings.llm_max_output_tokens, settings.llm_final_reduce_max_output_tokens),
+                timeout_seconds=final_timeout,
+                max_output_tokens=max(int(effective_llm.get("max_output_tokens") or settings.llm_max_output_tokens), final_max_output_tokens),
             )
             raw_final = final_llm.analyze(final_prompt, [])
             final_result = normalize_creator_clone_result(raw_final, sample_set, selected_samples, warnings=warnings)
