@@ -165,20 +165,27 @@ def test_workflow_engine_controls_creator_distillation_state() -> None:
     assert engine.get_state().state == WorkflowState.IMPORT
     assert engine.get_state().to_dict()["ui"]["stage"] == "import"
     assert engine.get_state().to_dict()["next_action"]["state"] == "IMPORT_READY"
+    assert engine.get_state().to_dict()["next_action"]["command"] == "import_input"
     assert engine.dispatch(WorkflowAction.INGEST).state == WorkflowState.INGESTED
-    assert engine.dispatch(WorkflowAction.BUILD_SAMPLE_POOL).state == WorkflowState.SAMPLE_READY
+    ready = engine.dispatch(WorkflowAction.BUILD_SAMPLE_POOL)
+    assert ready.state == WorkflowState.SAMPLE_READY
+    assert ready.to_dict()["next_action"]["command"] == "select_recommended_samples"
     selected = engine.dispatch(WorkflowAction.SELECT_SAMPLES, {"selected_sample_ids": ["sample_ready"]})
     assert selected.state == WorkflowState.SAMPLE_SELECTED
     assert selected.selected_count == 1
     assert selected.to_dict()["ui"]["stage"] == "enrich"
     assert selected.to_dict()["next_action"]["state"] == "DISTILL_READY"
+    assert selected.to_dict()["next_action"]["command"] == "start_distillation"
     evidence = engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY)
     assert evidence.state == WorkflowState.EVIDENCE_READY
     assert evidence.has_behavior_model is True
     assert evidence.to_dict()["ui"]["stage"] == "distill"
     assert evidence.to_dict()["next_action"]["state"] == "DISTILL_READY"
+    assert evidence.to_dict()["next_action"]["command"] == "start_distillation"
     assert engine.behavior_model is not None
-    assert engine.dispatch(WorkflowAction.START_DISTILLATION).state == WorkflowState.DISTILLING
+    distilling = engine.dispatch(WorkflowAction.START_DISTILLATION)
+    assert distilling.state == WorkflowState.DISTILLING
+    assert distilling.to_dict()["next_action"]["command"] == "wait"
     done = engine.dispatch(
         WorkflowAction.COMPLETE_DISTILLATION,
         {"strategy_output": CreatorCloneStrategy(positioning="甜美 COS 视觉吸引").to_dict()},
@@ -186,6 +193,19 @@ def test_workflow_engine_controls_creator_distillation_state() -> None:
     assert done.state == WorkflowState.DONE
     assert done.has_strategy_output is True
     assert done.to_dict()["ui"]["stage"] == "export"
+    assert done.to_dict()["next_action"]["command"] == "export_report"
+
+
+def test_workflow_engine_restores_done_state_from_strategy_output() -> None:
+    project = project_from_clone_sample_set(sample_set_for_v2())
+    strategy = CreatorCloneStrategy(positioning="甜美 COS 视觉吸引").to_dict()
+
+    engine = WorkflowEngine.from_project(project, strategy_output=strategy)
+
+    snapshot = engine.get_state().to_dict()
+    assert snapshot["state"] == WorkflowState.DONE
+    assert snapshot["has_strategy_output"] is True
+    assert snapshot["next_action"]["command"] == "export_report"
 
 
 def test_workflow_engine_rejects_ui_driven_state_skips() -> None:

@@ -35,7 +35,6 @@ from app.services.creator_clone import (
     prompt_only_result,
     sample_from_dict,
     save_sample_set,
-    update_sample_set_selection,
     update_sample_set_with_case_artifacts,
 )
 from app.services.creator_intelligence import WorkflowAction
@@ -1182,19 +1181,27 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
 
         final_result = _profile_queue_result(queue_items)
         updated_sample_set = None
+        creator_intelligence = None
         if sample_set_id and selected_sample_ids:
             try:
-                updated_sample_set = update_sample_set_selection(sample_set_id, selected_sample_ids)
+                runner = CreatorIntelligenceJobRunner(load_sample_set(sample_set_id))
+                creator_intelligence = runner.select_samples(selected_sample_ids)
+                updated_sample_set = runner.sample_set
             except AppError as error:
                 final_result["set_selection_error"] = error.as_dict()
         if sample_set_id and completed_artifacts:
             try:
                 updated_sample_set = update_sample_set_with_case_artifacts(sample_set_id, completed_artifacts)
+                if updated_sample_set.selected_sample_ids:
+                    runner = CreatorIntelligenceJobRunner(updated_sample_set)
+                    creator_intelligence = runner.select_samples(updated_sample_set.selected_sample_ids)
+                else:
+                    creator_intelligence = None
             except AppError as error:
                 final_result["set_update_error"] = error.as_dict()
         if updated_sample_set:
             final_result["set"] = updated_sample_set.to_dict()
-            final_result["creator_intelligence"] = creator_intelligence_payload_for_sample_set(updated_sample_set)
+            final_result["creator_intelligence"] = creator_intelligence or creator_intelligence_payload_for_sample_set(updated_sample_set)
         counts = _profile_queue_counts(queue_items)
         job = db.get(Job, job_id)
         if job:

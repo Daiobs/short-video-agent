@@ -73,9 +73,11 @@ class WorkflowEngine:
     message: str = ""
 
     @classmethod
-    def from_project(cls, project: CreatorProject) -> "WorkflowEngine":
-        engine = cls(project=project)
+    def from_project(cls, project: CreatorProject, strategy_output: dict[str, Any] | None = None) -> "WorkflowEngine":
+        engine = cls(project=project, strategy_output=strategy_output or None)
         engine.state = engine.infer_state()
+        if engine.strategy_output:
+            engine.message = "Creator strategy output ready."
         return engine
 
     def get_state(self) -> WorkflowSnapshot:
@@ -105,7 +107,7 @@ class WorkflowEngine:
             WorkflowState.DISTILLING: ("distill", 4, "当前步骤：大模型蒸馏"),
             WorkflowState.DONE: ("export", 5, "当前步骤：可视化输出"),
         }[self.state]
-        action_state, label, summary, disabled = self._next_action_for_state(
+        action_state, label, summary, disabled, command = self._next_action_for_state(
             sample_count=sample_count,
             selected_count=selected_count,
             evidence_ready_count=evidence_ready_count,
@@ -117,37 +119,38 @@ class WorkflowEngine:
             "progress_percent": int((step[1] / 5) * 100),
             "next_action": {
                 "state": action_state,
+                "command": command,
                 "label": label,
                 "summary": summary,
                 "disabled": disabled,
             },
         }
 
-    def _next_action_for_state(self, *, sample_count: int, selected_count: int, evidence_ready_count: int) -> tuple[str, str, str, bool]:
+    def _next_action_for_state(self, *, sample_count: int, selected_count: int, evidence_ready_count: int) -> tuple[str, str, str, bool, str]:
         if self.state == WorkflowState.IMPORT:
-            return ("IMPORT_READY", "下一步：开始导入素材", "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。", False)
+            return ("IMPORT_READY", "下一步：开始导入素材", "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。", False, "import_input")
         if self.state == WorkflowState.INGESTED:
-            return ("POOL_READY", "下一步：构建素材池", f"已接收输入，准备构建素材池。", False)
+            return ("POOL_READY", "下一步：构建素材池", f"已接收输入，准备构建素材池。", False, "select_recommended_samples")
         if self.state == WorkflowState.SAMPLE_READY:
-            return ("RECOMMENDED_READY", "下一步：使用推荐样本继续", f"已导入 {sample_count} 条素材，请选择代表样本继续。", False)
+            return ("RECOMMENDED_READY", "下一步：使用推荐样本继续", f"已导入 {sample_count} 条素材，请选择代表样本继续。", False, "select_recommended_samples")
         if self.state == WorkflowState.SAMPLE_SELECTED:
             if not selected_count:
-                return ("SELECT_EMPTY", "请先选择样本", "在素材列表中勾选代表样本，或使用快捷入口。", True)
+                return ("SELECT_EMPTY", "请先选择样本", "在素材列表中勾选代表样本，或使用快捷入口。", True, "select_samples")
             pending = max(0, selected_count - evidence_ready_count)
             if pending:
-                return ("ENRICH_READY", "下一步：开始富化证据", f"已选择 {selected_count} 条样本，其中 {pending} 条仍需补齐证据。", False)
-            return ("DISTILL_READY", "下一步：进入大模型蒸馏", f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。", False)
+                return ("ENRICH_READY", "下一步：开始富化证据", f"已选择 {selected_count} 条样本，其中 {pending} 条仍需补齐证据。", False, "build_evidence")
+            return ("DISTILL_READY", "下一步：进入大模型蒸馏", f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。", False, "start_distillation")
         if self.state == WorkflowState.EVIDENCE_READY:
             if not selected_count:
-                return ("DISTILL_BLOCKED", "返回选择样本", "还没有可蒸馏样本。请先选择代表样本。", False)
+                return ("DISTILL_BLOCKED", "返回选择样本", "还没有可蒸馏样本。请先选择代表样本。", False, "select_samples")
             if selected_count > DIRECT_DISTILL_LIMIT:
-                return ("BATCH_DISTILL_READY", "下一步：开始分批蒸馏", f"已选择 {selected_count} 条样本，超过单次蒸馏上限，将按批次蒸馏后汇总。", False)
-            return ("DISTILL_READY", "下一步：开始大模型蒸馏", f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。", False)
+                return ("BATCH_DISTILL_READY", "下一步：开始分批蒸馏", f"已选择 {selected_count} 条样本，超过单次蒸馏上限，将按批次蒸馏后汇总。", False, "start_batch_distillation")
+            return ("DISTILL_READY", "下一步：开始大模型蒸馏", f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。", False, "start_distillation")
         if self.state == WorkflowState.DISTILLING:
-            return ("DISTILLING", "正在大模型蒸馏", "当前任务由 Workflow Engine 接管，完成后会展示创作者蒸馏报告。", True)
+            return ("DISTILLING", "正在大模型蒸馏", "当前任务由 Workflow Engine 接管，完成后会展示创作者蒸馏报告。", True, "wait")
         if self.state == WorkflowState.DONE:
-            return ("EXPORT_READY", "下一步：下载报告", "创作者蒸馏报告已生成，可下载报告或复制规则继续使用。", False)
-        return ("IMPORT_READY", "下一步：开始导入素材", "等待输入。", False)
+            return ("EXPORT_READY", "下一步：下载报告", "创作者蒸馏报告已生成，可下载报告或复制规则继续使用。", False, "export_report")
+        return ("IMPORT_READY", "下一步：开始导入素材", "等待输入。", False, "import_input")
 
     def dispatch(self, action: WorkflowAction | str, payload: dict[str, Any] | None = None) -> WorkflowSnapshot:
         action = WorkflowAction(action)

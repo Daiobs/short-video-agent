@@ -27,7 +27,6 @@ from app.providers.profile_base import ProfileScanRequest
 from app.services.creator_intelligence import (
     CreatorCloneStrategy,
     WorkflowEngine,
-    WorkflowState,
     build_behavior_representation,
     project_from_clone_sample_set,
     project_from_clone_selection,
@@ -629,12 +628,8 @@ def load_creator_strategy_output(set_id: str) -> dict:
 
 def creator_intelligence_payload_for_sample_set(sample_set: CloneSampleSet, strategy_output: dict | None = None) -> dict:
     project = project_from_clone_sample_set(sample_set)
-    engine = WorkflowEngine.from_project(project)
     strategy = strategy_output if isinstance(strategy_output, dict) else load_creator_strategy_output(sample_set.set_id)
-    if strategy:
-        engine.strategy_output = strategy
-        engine.state = WorkflowState.DONE
-        engine.message = "Creator strategy output ready."
+    engine = WorkflowEngine.from_project(project, strategy_output=strategy or None)
     payload = {
         "project": project.to_dict(),
         "workflow": engine.get_state().to_dict(),

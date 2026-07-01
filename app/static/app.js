@@ -1203,6 +1203,10 @@ function workflowNextAction() {
   return workflowUiState().next_action || currentCreatorIntelligenceWorkflow?.next_action || null;
 }
 
+function workflowNextCommand() {
+  return workflowNextAction()?.command || "";
+}
+
 function wizardStateFromWorkflowState(workflowState) {
   void workflowState;
   return workflowNextAction()?.state || "";
@@ -1305,9 +1309,7 @@ function creatorCloneStateMeta(state = getCreatorCloneWizardState()) {
   return {
     step: "当前步骤：导入素材",
     button: "下一步：开始导入素材",
-    summary: state === "IMPORT_READY"
-      ? "已检测到导入内容，系统会自动选择主页扫描、作品链接、JSON/CSV 或 Case 导入。"
-      : "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。",
+    summary: "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。",
     disabled: false,
   };
 }
@@ -1326,10 +1328,11 @@ function renderCreatorCloneRecommendation() {
 
 function renderWizardPrimaryAction(state = creatorCloneActionStateForCurrentView()) {
   const meta = creatorCloneStateMeta(state);
+  const command = workflowNextCommand() || (hasCreatorCloneImportInput() ? "import_input" : "");
   if (creatorCloneNextButton) {
     creatorCloneNextButton.textContent = creatorCloneNextActionRunning ? "处理中..." : meta.button;
-    creatorCloneNextButton.dataset.creatorCloneAction = state;
-    creatorCloneNextButton.disabled = creatorCloneNextActionRunning || ["ENRICHING", "DISTILLING"].includes(state) || Boolean(meta.disabled);
+    creatorCloneNextButton.dataset.creatorCloneAction = command;
+    creatorCloneNextButton.disabled = creatorCloneNextActionRunning || command === "wait" || Boolean(meta.disabled);
   }
 }
 
@@ -2686,43 +2689,45 @@ async function useRecommendedProfileSamples() {
 }
 
 async function handleWizardPrimaryAction() {
-  const state = creatorCloneActionStateForCurrentView();
-  if (["IMPORT_EMPTY", "IMPORT_READY"].includes(state)) {
+  const command = workflowNextCommand() || (hasCreatorCloneImportInput() ? "import_input" : "");
+  if (command === "import_input") {
     await runCreatorCloneImportStep();
     syncProfileStageToWizard({scroll: true});
     return;
   }
-  if (["POOL_READY", "RECOMMENDED_READY"].includes(state)) {
+  if (command === "select_recommended_samples") {
     await useRecommendedProfileSamples();
     return;
   }
-  if (state === "SELECT_EMPTY" || state === "DISTILL_BLOCKED") {
+  if (command === "select_samples") {
     setProfileStageView("select", {scroll: true});
     renderCreatorCloneNextAction();
     return;
   }
-  if (state === "ENRICH_READY") {
+  if (command === "build_evidence") {
     setProfileStageView("enrich", {scroll: true});
     await buildSelectedProfileQueue();
     return;
   }
-  if (state === "DISTILL_READY") {
+  if (command === "start_distillation") {
     setProfileStageView("distill", {scroll: true});
     await distillSelectedCreatorClone();
     return;
   }
-  if (state === "BATCH_DISTILL_READY") {
+  if (command === "start_batch_distillation") {
     setProfileStageView("distill", {scroll: true});
     await batchDistillSelectedCreatorClone({confirm: true});
     return;
   }
-  if (state === "EXPORT_READY") {
+  if (command === "export_report") {
     if (downloadCreatorCloneMd?.href && downloadCreatorCloneMd.href !== "#") {
       window.open(downloadCreatorCloneMd.href, "_blank", "noopener,noreferrer");
       return;
     }
     creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
+    return;
   }
+  renderCreatorCloneNextAction();
 }
 
 async function runCreatorCloneNextAction() {

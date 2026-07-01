@@ -209,6 +209,10 @@ Initial integration:
 - Frontend wizard state now reads `creator_intelligence.workflow.ui.next_action`
   and `creator_intelligence.workflow.ui.stage`; local UI state is only a display
   fallback before a project exists.
+- The primary button executes the engine-provided `next_action.command`
+  (`import_input`, `select_recommended_samples`, `build_evidence`,
+  `start_distillation`, `start_batch_distillation`, `export_report`) instead of
+  branching on frontend-derived workflow states.
 - Recommended selection, enrichment, and distillation entry points now sync selected samples through the workflow dispatch API before advancing.
 - Recent project restore now reads `/api/creator-intelligence/projects/{project_id}` first, then adapts the v2 project payload into the existing table view while legacy UI is being retired.
 
@@ -352,6 +356,9 @@ Implemented:
   `creator_intelligence.workflow.ui.stage`, `ui.step_label`, and
   `ui.next_action`; legacy helper names remain as read-only compatibility
   aliases.
+- `renderCreatorCloneNextAction()` and `handleWizardPrimaryAction()` now read
+  `next_action.command` as the action contract, so JS no longer decides whether
+  evidence, direct distillation, batch distillation, or export should be next.
 - Old frontend-only action states such as `POOL_EMPTY`, `SELECT_TO_ENRICH`,
   `SELECT_TO_DISTILL`, `ENRICH_EMPTY`, `ENRICH_DONE`, and `EXPORT_EMPTY` are
   no longer present in the main script.

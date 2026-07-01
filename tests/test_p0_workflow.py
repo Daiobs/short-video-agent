@@ -570,11 +570,18 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "nextAction.label" in script
     assert "ui.step_label" in script
     assert "workflowNextAction()" in script
-    assert "POOL_READY" in script
-    assert "SELECT_EMPTY" in script
-    assert "ENRICH_READY" in script
-    assert "DISTILL_BLOCKED" in script
-    assert "BATCH_DISTILL_READY" in script
+    assert "function workflowNextCommand" in script
+    assert 'command === "select_recommended_samples"' in script
+    assert 'command === "build_evidence"' in script
+    assert 'command === "start_distillation"' in script
+    assert 'command === "start_batch_distillation"' in script
+    assert 'command === "export_report"' in script
+    assert "if (state ===" not in script
+    assert "POOL_READY" not in script
+    assert "SELECT_EMPTY" not in script
+    assert "ENRICH_READY" not in script
+    assert "DISTILL_BLOCKED" not in script
+    assert "BATCH_DISTILL_READY" not in script
     assert "POOL_EMPTY" not in script
     assert "SELECT_TO_ENRICH" not in script
     assert "SELECT_TO_DISTILL" not in script
@@ -9103,13 +9110,22 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "function handleWizardPrimaryAction" in script
     assert "function creatorCloneActionStateForCurrentView" in script
     assert "IMPORT_EMPTY" in script
-    assert "POOL_READY" in script
-    assert "SELECT_EMPTY" in script
-    assert "ENRICH_READY" in script
-    assert "DISTILL_BLOCKED" in script
-    assert "DISTILL_READY" in script
-    assert "BATCH_DISTILL_READY" in script
-    assert "EXPORT_READY" in script
+    assert "function workflowNextCommand" in script
+    assert 'command === "import_input"' in script
+    assert 'command === "select_recommended_samples"' in script
+    assert 'command === "select_samples"' in script
+    assert 'command === "build_evidence"' in script
+    assert 'command === "start_distillation"' in script
+    assert 'command === "start_batch_distillation"' in script
+    assert 'command === "export_report"' in script
+    assert "if (state ===" not in script
+    assert "POOL_READY" not in script
+    assert "SELECT_EMPTY" not in script
+    assert "ENRICH_READY" not in script
+    assert "DISTILL_BLOCKED" not in script
+    assert "DISTILL_READY" not in script
+    assert "BATCH_DISTILL_READY" not in script
+    assert "EXPORT_READY" not in script
     assert "POOL_EMPTY" not in script
     assert "SELECT_TO_ENRICH" not in script
     assert "SELECT_TO_DISTILL" not in script
