@@ -46,6 +46,7 @@ class CreatorCloneImportRequest(BaseModel):
     structured_items: str = ""
     case_ids: str = ""
     count: int = 20
+    max_pages: int = 1
     sort_by: str = "engagement_score"
 
 
@@ -101,6 +102,7 @@ def import_creator_clone_samples(payload: CreatorCloneImportRequest, db: Session
             structured_items=payload.structured_items,
             case_ids=payload.case_ids,
             count=payload.count,
+            max_pages=payload.max_pages,
             sort_by=payload.sort_by,
         )
         return {"ok": True, "set": sample_set.to_dict(), "exports": export_paths(sample_set.set_id)}

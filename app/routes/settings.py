@@ -34,6 +34,12 @@ class DouyinSettingsUpdate(BaseModel):
     clear_cookie: bool = False
 
 
+class DouyinSettingsTest(BaseModel):
+    profile_url: str | None = None
+    sec_user_id: str | None = None
+    count: int | None = 5
+
+
 def _payload_dict(payload: BaseModel) -> dict:
     if hasattr(payload, "model_dump"):
         return payload.model_dump(exclude_none=True)
@@ -73,4 +79,12 @@ def update_douyin_data_source_settings(payload: DouyinSettingsUpdate):
     return {
         "ok": True,
         "data_sources": data_source_settings.update_douyin_settings_payload(_payload_dict(payload)),
+    }
+
+
+@router.post("/data-sources/douyin/test")
+def test_douyin_data_source_settings(payload: DouyinSettingsTest):
+    return {
+        "ok": True,
+        "test": data_source_settings.test_douyin_settings_payload(_payload_dict(payload)),
     }

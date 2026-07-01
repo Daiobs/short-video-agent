@@ -18,7 +18,7 @@ from app.main import app
 from app.models import CaseArtifact, DouyinVideoItem, VideoQualityCandidate
 from app.providers.base import VideoQualityCandidateDTO
 from app.providers.douyin_web import DouyinWebProvider, normalize_douyin_detail_payload, normalize_douyin_html_payload
-from app.providers.profile_base import ProfileScanRequest, ProfileVideoItem, profile_engagement_score, sorted_profile_items
+from app.providers.profile_base import ProfileScanRequest, ProfileScanResult, ProfileVideoItem, profile_engagement_score, sorted_profile_items
 from app.routes import cases as case_routes
 from app.services.analysis_taxonomy import explain_content_category
 from app.services.analysis_worksheet import normalize_worksheet, worksheet_quality_review
@@ -30,13 +30,14 @@ from app.services.profile_scan import (
     DouyinCookieProfileProvider,
     DouyinPublicProfileProvider,
     ManualLinksProfileProvider,
+    inspect_douyin_cookie,
     extract_sec_user_id,
     extract_profile_items_from_html,
     normalize_profile_url,
     scan_profile,
 )
 from app.services.quality_resolver import resolve_quality_candidates
-from app.services.ffmpeg_service import plan_keyframe_timestamps
+from app.services.ffmpeg_service import extract_keyframes, plan_keyframe_timestamps
 from app.services.llm_provider import AnthropicCompatibleProvider, OpenAICompatibleProvider, OpenAIResponsesProvider, parse_json_text
 from app.services.ocr import run_case_ocr
 from app.services.video_importer import engagement_score
@@ -45,6 +46,8 @@ from app.services.creator_clone import (
     CloneSample,
     CloneSampleSet,
     MAX_DISTILL_SAMPLES,
+    batch_distill_creator_clone,
+    build_sample_set,
     build_distill_prompt,
     dedupe_samples,
     load_sample_set,
@@ -272,7 +275,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert response.status_code == 200
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
-    assert 'data-profile-build-max-items="10"' in response.text
+    assert 'data-profile-build-max-items="150"' in response.text
     assert 'data-creator-clone-max-distill-samples="20"' in response.text
     assert "单作品解析" in response.text
     assert "创作者克隆实验室" in response.text
@@ -419,11 +422,14 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "<th>处理状态</th>" in response.text
     assert "<th>操作</th>" in response.text
     assert "高级：仅富化当前样本" in response.text
+    assert 'id="creator-clone-batch-distill-button"' in response.text
+    assert "分批蒸馏已选样本" in response.text
     assert 'id="profile-selection-basket"' in response.text
     assert "本轮样本篮" in Path("app/static/app.js").read_text(encoding="utf-8")
     assert 'id="profile-auto-distill"' in response.text
     assert "富化完成后自动大模型蒸馏" in response.text
     assert 'id="profile-auto-analyze"' not in response.text
+    assert 'name="count" type="hidden" value="150"' in response.text
     assert 'id="profile-evidence-status"' in response.text
     assert 'id="profile-distill-readiness"' in response.text
     assert "富化后会回填视频、关键帧、OCR、ASR" in response.text
@@ -433,6 +439,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "本地工作流预检" in response.text
     assert "Creator Clone 数据源" in response.text
     assert 'id="data-source-status-list"' in response.text
+    assert 'id="test-douyin-cookie-button"' in response.text
+    assert 'id="douyin-cookie-test-result"' in response.text
+    assert "自检 Cookie API" in response.text
     assert 'id="refresh-preflight-button"' in response.text
     assert 'id="preflight-summary"' in response.text
     assert 'id="preflight-list"' in response.text
@@ -444,6 +453,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderCreatorCloneNextAction" in script
     assert "function runCreatorCloneNextAction" in script
     assert "function runCreatorCloneImportStep" in script
+    assert "function profileScanMaxPagesForCount" in script
+    assert "max_pages: profilePayload.max_pages" in script
     assert "function useRecommendedProfileSamples" in script
     assert "creatorCloneExportActions.open = true" in script
     assert "下一步：使用推荐样本继续" in script
@@ -466,6 +477,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".profile-material-details" in stylesheet
     assert response.text.count("primary-cta") == 1
     assert "// Settings" in script
+    assert "/api/settings/data-sources/douyin/test" in script
+    assert "function renderDouyinCookieTestResult" in script
     assert "// Single Work" in script
     assert "// Creator Clone: import" in script
     assert "// Creator Clone: sample pool" in script
@@ -519,6 +532,12 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderProfileEnrichmentPlan" in script
     assert "function pollCreatorCloneDistillJob" in script
     assert "/api/jobs/creator-clone-distill" in script
+    assert "/api/jobs/creator-clone-batch-distill" in script
+    assert "function batchDistillSelectedCreatorClone" in script
+    assert "按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批" in script
+    assert "const canBatchDistill = hasSelected && selected.length <= PROFILE_BUILD_MAX_ITEMS" in script
+    assert "await batchDistillSelectedCreatorClone({confirm: false, triggeredByQueue: true})" in script
+    assert "分批蒸馏最多 ${PROFILE_BUILD_MAX_ITEMS} 条" in script
     assert 'fetch("/api/creator-clone/distill"' not in script
     assert "function profileEvidenceCounts" in script
     assert "富化计划" in script
@@ -704,7 +723,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".creator-clone-action-grid" in stylesheet
     assert "当前自用版最多一次富化" in script
     assert "可下载视频超过当前富化上限" in script
-    assert "选中样本超过当前蒸馏上限" in script
+    assert "本轮可先富化全部样本" in script
     assert ".profile-source-card" in stylesheet
     assert ".profile-selection-stage" in stylesheet
     assert "#fbf9ff" in stylesheet
@@ -786,13 +805,13 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "真正读取当前 Chrome 页面 DOM 中可见作品列表，必须走一次性 token + 页面确认后的“本机 Chrome 辅助入口”" in readme
     assert "扫描主页和清理辅助 profile 除了 token 之外还需要页面确认" in readme
     assert "多作品粘贴是当前账号级分析的稳定入口" in readme
-    assert "作品池队列默认一次最多处理 10 条" in readme
+    assert "作品池富化队列默认一次最多处理 150 条可下载视频" in readme
     assert "yt-dlp 用于后续公开视频解析 / 下载能力" in readme
     requirements = Path("requirements.txt").read_text(encoding="utf-8")
     assert "websocket-client" in requirements
     assert "yt-dlp" in requirements
     assert "PROFILE_BUILD_MAX_ITEMS" in readme
-    assert "PROFILE_BUILD_MAX_ITEMS=10" in env_example
+    assert "PROFILE_BUILD_MAX_ITEMS=150" in env_example
     assert "默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型" in readme
     assert "单作品主流程已收敛为一个“解析”按钮：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。" in readme
     assert "如果浏览器能访问 API 但页面“测试连接”失败，请检查本机代理" in readme
@@ -996,6 +1015,39 @@ def test_keyframe_plan_caps_long_video_at_30_frames() -> None:
     assert timestamps[-1] < 120
 
 
+def test_keyframe_plan_avoids_video_end_boundary() -> None:
+    timestamps = plan_keyframe_timestamps(12.165011)
+
+    assert timestamps[0] == 0
+    assert timestamps[-1] < 12
+    assert 12.0 not in timestamps
+
+
+def test_extract_keyframes_skips_failed_terminal_frame(monkeypatch, tmp_path: Path) -> None:
+    class FakeCompleted:
+        def __init__(self, returncode: int, stderr: str = ""):
+            self.returncode = returncode
+            self.stderr = stderr
+            self.stdout = ""
+
+    def fake_run(command, capture_output=True, text=True, timeout=30, check=False):
+        frame_path = Path(command[-1])
+        if "12.00s" in frame_path.name:
+            return FakeCompleted(234, "Nothing was written into output file")
+        frame_path.write_bytes(b"jpeg")
+        return FakeCompleted(0)
+
+    monkeypatch.setattr("app.services.ffmpeg_service.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("app.services.ffmpeg_service.plan_keyframe_timestamps", lambda duration: [0.0, 1.0, 12.0])
+    monkeypatch.setattr("app.services.ffmpeg_service.subprocess.run", fake_run)
+
+    frames = extract_keyframes(tmp_path / "video.mp4", tmp_path / "frames", 12.165011)
+
+    assert [frame["timestamp"] for frame in frames] == [0.0, 1.0]
+    assert [frame["index"] for frame in frames] == [0, 1]
+    assert len(list((tmp_path / "frames").glob("*.jpg"))) == 2
+
+
 def test_invalid_local_upload_returns_error_code(tmp_path: Path) -> None:
     invalid = tmp_path / "not-video.txt"
     invalid.write_text("not a video", encoding="utf-8")
@@ -1112,6 +1164,9 @@ def test_data_source_settings_masks_cookie(monkeypatch) -> None:
     assert status["masked_cookie"].startswith("sess")
     assert secret not in json.dumps(payload, ensure_ascii=False)
     assert {source["id"] for source in status["sources"]} >= {"manual_links", "browser_dom", "cookie_api", "external_api"}
+    assert status["cookie_diagnostics"]["has_cookie"] is True
+    assert status["cookie_diagnostics"]["pair_count"] == 1
+    assert "very-secret-cookie-value" not in json.dumps(status["cookie_diagnostics"], ensure_ascii=False)
 
 
 def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypatch, tmp_path) -> None:
@@ -1142,12 +1197,12 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
 def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypatch, tmp_path) -> None:
     runtime_path = tmp_path / ".local_settings.json"
     monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
-    secret = "sessionid=local-douyin-cookie-secret"
+    secret = "sessionid=local-douyin-cookie-secret; sid_guard=guard; uid_tt=uid; sid_tt=sid"
 
     response = client.put(
         "/api/settings/data-sources/douyin",
         json={
-            "douyin_cookie": secret,
+            "douyin_cookie": f"Cookie: {secret}",
             "user_agent": "Browser UA",
             "referer": "https://www.douyin.com/",
         },
@@ -1161,6 +1216,40 @@ def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypat
     assert secret not in json.dumps(payload, ensure_ascii=False)
     stored = json.loads(runtime_path.read_text(encoding="utf-8"))
     assert stored["douyin"]["cookie"] == secret
+    assert not stored["douyin"]["cookie"].lower().startswith("cookie:")
+
+
+def test_douyin_cookie_api_test_reports_safe_config_diagnostics(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / ".local_settings.json"
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
+    secret = "sessionid=local-secret; sid_guard=guard; uid_tt=uid; uid_tt_ss=uidss; sid_tt=sid; ttwid=tt; odin_tt=odin"
+    client.put(
+        "/api/settings/data-sources/douyin",
+        json={"douyin_cookie": secret, "user_agent": "UA", "referer": "https://www.douyin.com/"},
+    )
+
+    response = client.post("/api/settings/data-sources/douyin/test", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    test = payload["test"]
+    assert test["configured"] is True
+    assert test["api_checked"] is False
+    assert test["status"] == "config_only"
+    assert test["cookie_diagnostics"]["pair_count"] == 7
+    assert test["cookie_diagnostics"]["login_key_count"] == 5
+    assert "local-secret" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_inspect_douyin_cookie_never_returns_values() -> None:
+    diagnostics = inspect_douyin_cookie("Cookie: sessionid=secret-value; sid_guard=guard; uid_tt=uid; sid_tt=sid")
+
+    assert diagnostics["has_cookie"] is True
+    assert diagnostics["has_cookie_prefix"] is True
+    assert diagnostics["pair_count"] == 4
+    assert "sessionid" in diagnostics["present_important_keys"]
+    assert "secret-value" not in json.dumps(diagnostics, ensure_ascii=False)
 
 
 def test_llm_settings_accepts_openai_responses_provider(monkeypatch) -> None:
@@ -1382,6 +1471,7 @@ def test_openai_compatible_provider_requests_json_object(monkeypatch) -> None:
         api_base="https://www.wintoken.dev/v1",
         api_key="sk-test",
         model="gpt-5.4-high",
+        max_output_tokens=1200,
     ).analyze("ping", [])
 
     assert result == {"ok": True, "message": "pong"}
@@ -1489,6 +1579,7 @@ def test_openai_responses_provider_parses_output_text(monkeypatch) -> None:
         api_base="https://api.openai.com/v1",
         api_key="sk-test",
         model="gpt-5.5",
+        max_output_tokens=1200,
     ).analyze("ping", [])
 
     assert result == {"ok": True, "message": "pong"}
@@ -1571,6 +1662,7 @@ def test_anthropic_compatible_provider_uses_messages_api(monkeypatch) -> None:
         api_base="https://www.wintoken.dev/v1",
         api_key="sk-test",
         model="claude-fable-5",
+        max_output_tokens=1200,
     ).analyze("ping", [])
 
     assert result == {"ok": True, "message": "pong"}
@@ -2506,7 +2598,8 @@ def test_download_build_analyze_case_job_keeps_case_when_ai_fails(monkeypatch, t
     assert Path(job["result_json"]["case"]["analysis_input_path"]).is_file()
 
 
-def test_profile_build_cases_queue_rejects_more_than_configured_limit() -> None:
+def test_profile_build_cases_queue_rejects_more_than_configured_limit(monkeypatch) -> None:
+    monkeypatch.setattr("app.routes.jobs.settings.profile_build_max_items", 10)
     response = client.post(
         "/api/jobs/profile-build-cases",
         json={
@@ -2519,10 +2612,10 @@ def test_profile_build_cases_queue_rejects_more_than_configured_limit() -> None:
 
     assert response.status_code == 400
     assert response.json()["error_code"] == "PROFILE_BUILD_QUEUE_LIMIT"
-    assert "10 条作品" in response.json()["message"]
+    assert "10 条可下载视频" in response.json()["message"]
 
 
-def test_profile_build_cases_queue_rejects_too_many_selected_reference_samples() -> None:
+def test_profile_build_cases_queue_allows_more_reference_samples_than_distill_limit() -> None:
     response = client.post(
         "/api/jobs/profile-build-cases",
         json={
@@ -2534,9 +2627,140 @@ def test_profile_build_cases_queue_rejects_too_many_selected_reference_samples()
         },
     )
 
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["selected_count"] == MAX_DISTILL_SAMPLES + 1
+
+
+def test_creator_clone_distill_job_rejects_too_many_samples() -> None:
+    response = client.post(
+        "/api/jobs/creator-clone-distill",
+        json={
+            "samples": [{"sample_id": f"sample_{index}", "title": f"样本 {index}"} for index in range(MAX_DISTILL_SAMPLES + 1)],
+            "selected_sample_ids": [f"sample_{index}" for index in range(MAX_DISTILL_SAMPLES + 1)],
+        },
+    )
+
     assert response.status_code == 400
     assert response.json()["error_code"] == "PROFILE_BUILD_QUEUE_LIMIT"
     assert f"{MAX_DISTILL_SAMPLES} 条样本" in response.json()["message"]
+
+
+def test_creator_clone_batch_distill_job_accepts_more_than_single_limit(monkeypatch) -> None:
+    def fake_batch_distill_creator_clone(sample_set, selected_sample_ids, **kwargs):
+        return {
+            "set": sample_set.to_dict(),
+            "result": {"summary": "批量汇总完成"},
+            "prompt": "final prompt",
+            "exports": {},
+            "batch_distill": {"batch_count": 2, "selected_count": len(selected_sample_ids)},
+            "warnings": [],
+        }
+
+    monkeypatch.setattr("app.routes.jobs.batch_distill_creator_clone", fake_batch_distill_creator_clone)
+    samples = [{"sample_id": f"sample_{index}", "title": f"样本 {index}"} for index in range(MAX_DISTILL_SAMPLES + 1)]
+    response = client.post(
+        "/api/jobs/creator-clone-batch-distill",
+        json={
+            "samples": samples,
+            "selected_sample_ids": [sample["sample_id"] for sample in samples],
+            "batch_size": MAX_DISTILL_SAMPLES,
+            "max_samples": 150,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["selected_count"] == MAX_DISTILL_SAMPLES + 1
+    assert payload["batch_count"] == 2
+
+    deadline = time.time() + 10
+    job = None
+    while time.time() < deadline:
+        job_response = client.get(f"/api/jobs/{payload['job_id']}")
+        assert job_response.status_code == 200
+        job = job_response.json()["job"]
+        if job["status"] in {"success", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert job is not None
+    assert job["status"] == "success"
+    assert job["result_json"]["batch_distill"]["batch_count"] == 2
+
+
+def test_batch_distill_prompt_only_writes_manifest_when_llm_disabled(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: False)
+    sample_set = CloneSampleSet(
+        set_id="clone_batch_prompt_only_test",
+        title="批量 Prompt 测试",
+        samples=[CloneSample(sample_id=f"sample_prompt_{index}", title=f"样本 {index}") for index in range(MAX_DISTILL_SAMPLES + 1)],
+    )
+
+    result = batch_distill_creator_clone(
+        sample_set,
+        [sample.sample_id for sample in sample_set.samples],
+        batch_size=MAX_DISTILL_SAMPLES,
+        max_samples=150,
+    )
+
+    assert result["recovery"] == "prompt_only"
+    assert result["batch_distill"]["batch_count"] == 2
+    assert result["batch_distill"]["final"]["status"] == "prompt_only"
+    assert Path(result["batch_distill"]["final"]["prompt_path"]).is_file()
+
+
+def test_batch_distill_writes_local_fallback_when_final_reduce_times_out(monkeypatch) -> None:
+    provider_kwargs: list[dict] = []
+
+    class BatchProvider:
+        def analyze(self, prompt, images):
+            return {
+                "summary": "批次摘要",
+                "creator_positioning": {"what_the_creator_sells": "低门槛摄影结果"},
+                "topic_buckets": ["新手拍摄", "美女出片"],
+                "expression_patterns": {"opening_hooks": ["低门槛反差"]},
+                "transferable_formulas": ["新手器材 + 高颜值模特 + 成片展示"],
+                "candidate_ideas": ["复刻一组低门槛室外写真"],
+            }
+
+    class FinalProvider:
+        def analyze(self, prompt, images):
+            raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 请求超时。")
+
+    def fake_get_llm_provider(**kwargs):
+        provider_kwargs.append(kwargs)
+        return FinalProvider() if kwargs.get("timeout_seconds") else BatchProvider()
+
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", fake_get_llm_provider)
+    monkeypatch.setattr("app.services.creator_clone.settings.llm_final_reduce_timeout_seconds", 600)
+    monkeypatch.setattr("app.services.creator_clone.settings.llm_final_reduce_max_output_tokens", 4000)
+    sample_set = CloneSampleSet(
+        set_id="clone_batch_final_timeout_test",
+        title="最终汇总超时测试",
+        samples=[CloneSample(sample_id=f"sample_timeout_{index}", title=f"样本 {index}") for index in range(MAX_DISTILL_SAMPLES + 1)],
+    )
+
+    result = batch_distill_creator_clone(
+        sample_set,
+        [sample.sample_id for sample in sample_set.samples],
+        batch_size=MAX_DISTILL_SAMPLES,
+        max_samples=150,
+    )
+
+    assert result["recovery"] == ""
+    assert result["result"]["summary"]
+    assert result["batch_distill"]["batch_count"] == 2
+    assert result["batch_distill"]["final"]["status"] == "fallback"
+    assert result["batch_distill"]["final"]["error_code"] == ErrorCode.LLM_REQUEST_FAILED
+    assert Path(result["batch_distill"]["final"]["result_path"]).is_file()
+    assert Path(result["batch_distill"]["final"]["markdown_path"]).is_file()
+    assert "final_reduce_recovery" in result["result"]["batch_distill"]
+    assert provider_kwargs[-1]["timeout_seconds"] == 600
+    assert provider_kwargs[-1]["max_output_tokens"] == 4000
 
 
 def test_profile_build_cases_queue_continues_after_item_failure(monkeypatch, tmp_path: Path) -> None:
@@ -2799,6 +3023,122 @@ def test_profile_build_cases_queue_backfills_asr_ocr_evidence_into_sample_set(mo
     assert "with_ocr_text" in prompt
     assert "前三秒用眼神和动作制造停留" in prompt
     assert "甜美反差感" in prompt
+
+
+def test_profile_build_cases_queue_reuses_existing_case_without_redownload(monkeypatch) -> None:
+    set_id = "clone_profile_queue_reuse_existing_case"
+    aweme_id = "7650000000000000901"
+    case_id = "case_profile_queue_reuse_existing_case"
+    case_dir = settings.cases_dir / case_id
+    shutil.rmtree(settings.creator_clones_dir / set_id, ignore_errors=True)
+    shutil.rmtree(case_dir, ignore_errors=True)
+    case_dir.mkdir(parents=True)
+    (case_dir / "keyframes").mkdir()
+    (case_dir / "enrichment" / "asr").mkdir(parents=True)
+    (case_dir / "enrichment" / "ocr").mkdir(parents=True)
+    (case_dir / "video.mp4").write_bytes(b"video")
+    (case_dir / "contact_sheet.jpg").write_bytes(b"image")
+    (case_dir / "metadata.json").write_text(json.dumps({"title": "已存在素材包"}, ensure_ascii=False), encoding="utf-8")
+    (case_dir / "analysis_input.json").write_text(json.dumps({"case_id": case_id}, ensure_ascii=False), encoding="utf-8")
+    (case_dir / "prompt.md").write_text("prompt", encoding="utf-8")
+    (case_dir / "qualities.json").write_text("[]", encoding="utf-8")
+    (case_dir / "ffprobe.json").write_text("{}", encoding="utf-8")
+    (case_dir / "enrichment" / "manifest.json").write_text(json.dumps({"status": "success"}, ensure_ascii=False), encoding="utf-8")
+    (case_dir / "enrichment" / "asr" / "transcript.json").write_text(json.dumps({"status": "success"}, ensure_ascii=False), encoding="utf-8")
+    (case_dir / "enrichment" / "ocr" / "frame_ocr.json").write_text(json.dumps({"status": "success"}, ensure_ascii=False), encoding="utf-8")
+
+    db = SessionLocal()
+    try:
+        existing = db.get(CaseArtifact, case_id)
+        if existing:
+            db.delete(existing)
+            db.commit()
+        db.add(
+            CaseArtifact(
+                case_id=case_id,
+                aweme_id=aweme_id,
+                local_video_id=f"local_{aweme_id}",
+                video_path=str(case_dir / "video.mp4"),
+                metadata_path=str(case_dir / "metadata.json"),
+                qualities_path=str(case_dir / "qualities.json"),
+                ffprobe_path=str(case_dir / "ffprobe.json"),
+                analysis_input_path=str(case_dir / "analysis_input.json"),
+                prompt_path=str(case_dir / "prompt.md"),
+                contact_sheet_path=str(case_dir / "contact_sheet.jpg"),
+                keyframes_dir=str(case_dir / "keyframes"),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    save_sample_set(
+        CloneSampleSet(
+            set_id=set_id,
+            title="队列复用已有素材包测试",
+            source_platform="douyin",
+            samples=[
+                CloneSample(
+                    sample_id=f"sample_{aweme_id}",
+                    aweme_id=aweme_id,
+                    title="已存在素材包",
+                    media_type="video",
+                    like_count=100,
+                )
+            ],
+        )
+    )
+
+    def should_not_call(*args, **kwargs):
+        raise AssertionError("复用已有素材包时不应重新解析、下载或建包")
+
+    monkeypatch.setattr("app.routes.jobs.resolve_quality_candidates", should_not_call)
+    monkeypatch.setattr("app.routes.jobs.download_candidate", should_not_call)
+    monkeypatch.setattr("app.routes.jobs.build_case_from_local_video", should_not_call)
+
+    create_response = client.post(
+        "/api/jobs/profile-build-cases",
+        json={
+            "items": [{"aweme_id": aweme_id, "sample_id": f"sample_{aweme_id}", "title": "已存在素材包", "media_type": "video"}],
+            "sample_set_id": set_id,
+            "selected_sample_ids": [f"sample_{aweme_id}"],
+            "auto_enrich": True,
+            "auto_asr": True,
+            "auto_ocr": True,
+            "auto_analyze": False,
+        },
+    )
+    assert create_response.status_code == 200
+    job_id = create_response.json()["job_id"]
+
+    deadline = time.time() + 10
+    job = None
+    while time.time() < deadline:
+        response = client.get(f"/api/jobs/{job_id}")
+        assert response.status_code == 200
+        job = response.json()["job"]
+        if job["status"] in {"success", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert job is not None
+    assert job["status"] == "success"
+    result = job["result_json"]
+    item = result["items"][0]
+    assert item["status"] == "completed"
+    assert item["case_reused"] is True
+    assert item["message"] == "已复用已有素材包"
+    assert item["case_id"] == case_id
+    assert item["enrichment_reused"] is True
+    assert item["asr_reused"] is True
+    assert item["ocr_reused"] is True
+    assert result["pipeline_summary"]["reused_case_count"] == 1
+    assert any("本地复用" in note for note in result["pipeline_summary"]["notes"])
+    updated_sample = load_sample_set(set_id).samples[0]
+    assert updated_sample.case_id == case_id
+    assert updated_sample.has_frames is True
+    assert updated_sample.has_asr is True
+    assert updated_sample.has_ocr is True
 
 
 def test_profile_build_cases_queue_skips_text_items_without_download() -> None:
@@ -8072,9 +8412,133 @@ def test_douyin_cookie_profile_provider_parses_web_api_payload(monkeypatch) -> N
     assert result.items[0].aweme_id == "7622653084993647603"
     assert result.items[0].like_count == 120
     assert result.items[0].source_provider == "cookie_api"
-    assert captured["url"].endswith("/aweme/v1/web/user/post/")
+    assert captured["url"].endswith("/aweme/v1/web/aweme/post/")
     assert captured["params"]["sec_user_id"] == sec_uid
     assert captured["headers"]["Cookie"] == "sessionid=test-secret-cookie"
+
+
+def test_douyin_cookie_profile_provider_tries_next_endpoint_after_404(monkeypatch) -> None:
+    sec_uid = "MS4wLjABAAAAabc12345"
+    called_urls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, status_code=200, payload=None):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.headers = {"content-type": "application/json" if status_code == 200 else "text/plain"}
+            self.text = json.dumps(self._payload) if status_code == 200 else "404 page not found"
+            self.content = self.text.encode("utf-8")
+
+        def json(self):
+            if self.status_code != 200:
+                raise ValueError("not json")
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, params=None, headers=None):
+            called_urls.append(url)
+            if url.endswith("/aweme/v1/web/aweme/post/"):
+                return FakeResponse(status_code=404)
+            return FakeResponse(
+                payload={
+                    "aweme_list": [
+                        {
+                            "aweme_id": "7622653084993647603",
+                            "desc": "旧候选接口成功",
+                            "statistics": {"digg_count": 9},
+                            "video": {"duration": 1000},
+                        }
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(
+        "app.services.profile_scan.settings.douyin_cookie",
+        "sessionid=secret; sid_guard=guard; uid_tt=uid; uid_tt_ss=uidss; sid_tt=sid; ttwid=tt; odin_tt=odin; s_v_web_id=webid",
+    )
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_referer", "https://www.douyin.com/")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    result = DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url=f"https://www.douyin.com/user/{sec_uid}", count=20))
+
+    assert [url.rsplit("/aweme/v1/web/", 1)[-1] for url in called_urls] == ["aweme/post/", "user/post/"]
+    assert result.items[0].aweme_id == "7622653084993647603"
+    assert result.items[0].like_count == 9
+
+
+def test_douyin_cookie_profile_provider_paginates_until_count(monkeypatch) -> None:
+    sec_uid = "MS4wLjABAAAAabc12345"
+    cursors: list[str] = []
+    page_counts: list[int] = []
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def __init__(self, cursor: str):
+            page = int(cursor or "0")
+            self._payload = {
+                "aweme_list": [
+                    {
+                        "aweme_id": str(7622653084993647600 + page * 10 + index),
+                        "desc": f"分页作品 {page}-{index}",
+                        "statistics": {"digg_count": page * 10 + index},
+                        "video": {"duration": 1000},
+                    }
+                    for index in range(10)
+                ],
+                "has_more": page < 6,
+                "max_cursor": str(page + 1),
+            }
+            self.text = json.dumps(self._payload)
+            self.content = self.text.encode("utf-8")
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, params=None, headers=None):
+            cursor = str((params or {}).get("max_cursor") or "0")
+            cursors.append(cursor)
+            page_counts.append(int((params or {}).get("count") or 0))
+            return FakeResponse(cursor)
+
+    monkeypatch.setattr(
+        "app.services.profile_scan.settings.douyin_cookie",
+        "sessionid=secret; sid_guard=guard; uid_tt=uid; uid_tt_ss=uidss; sid_tt=sid; ttwid=tt; odin_tt=odin; s_v_web_id=webid",
+    )
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_referer", "https://www.douyin.com/")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    result = DouyinCookieProfileProvider().scan(
+        ProfileScanRequest(profile_url=f"https://www.douyin.com/user/{sec_uid}", count=65, max_pages=7)
+    )
+
+    assert cursors == ["0", "1", "2", "3", "4", "5", "6"]
+    assert page_counts == [50, 50, 50, 50, 50, 50, 50]
+    assert len(result.items) == 65
+    assert result.has_more is True
+    assert result.next_cursor == "7"
 
 
 def test_cookie_profile_provider_requires_cookie(monkeypatch) -> None:
@@ -8084,6 +8548,46 @@ def test_cookie_profile_provider_requires_cookie(monkeypatch) -> None:
         DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
 
     assert raised.value.code == "COOKIE_REQUIRED"
+
+
+def test_cookie_profile_provider_empty_payload_explains_browser_context(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        text = '{"aweme_list":[]}'
+        content = b'{"aweme_list":[]}'
+
+        def json(self):
+            return {"aweme_list": [], "has_more": False}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "app.services.profile_scan.settings.douyin_cookie",
+        "sessionid=secret; sid_guard=guard; uid_tt=uid; uid_tt_ss=uidss; sid_tt=sid; ttwid=tt; odin_tt=odin; s_v_web_id=webid",
+    )
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_user_agent", "UA")
+    monkeypatch.setattr("app.services.profile_scan.settings.douyin_referer", "https://www.douyin.com/")
+    monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
+
+    with pytest.raises(AppError) as raised:
+        DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
+
+    assert raised.value.code == "EMPTY_AWEME_LIST"
+    assert "Cookie 结构看起来完整" in raised.value.message
+    assert "浏览器签名/风控上下文" in raised.value.message
+    assert "secret" not in raised.value.message
 
 
 def test_data_source_manager_falls_back_after_cookie_failure(monkeypatch) -> None:
@@ -8416,7 +8920,6 @@ def test_creator_clone_import_profile_url_prioritizes_public_scan(monkeypatch) -
             }
         ]
     }
-
     class FakeResponse:
         status_code = 200
         text = f'<script id="RENDER_DATA" type="application/json">{json.dumps(html_payload)}</script>'
@@ -8437,7 +8940,7 @@ def test_creator_clone_import_profile_url_prioritizes_public_scan(monkeypatch) -
     monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
     response = client.post(
         "/api/creator-clone/import",
-        json={"profile_url": "https://www.douyin.com/user/MS4wLjABAAAAabc12345", "count": 20},
+        json={"profile_url": "https://www.douyin.com/user/MS4wLjABAAAAabc12345", "count": 150, "max_pages": 15},
     )
 
     assert response.status_code == 200
@@ -8450,6 +8953,38 @@ def test_creator_clone_import_profile_url_prioritizes_public_scan(monkeypatch) -
     assert payload["set"]["performance_segments"]["highest_like_samples"][0]["title"] == "主页公开扫描样本"
     assert payload["set"]["performance_segments"]["highest_comment_samples"][0]["metric_value"] == 12
     assert any("公开主页扫描优先执行" in warning for warning in payload["set"]["warnings"])
+
+
+def test_creator_clone_build_sample_set_passes_profile_max_pages(monkeypatch) -> None:
+    captured = {}
+
+    def fake_scan_profile(request: ProfileScanRequest):
+        captured["request"] = request
+        return ProfileScanResult(
+            provider="cookie_api",
+            profile_url=request.profile_url or "",
+            sec_user_id="MS4wLjABAAAAabc12345",
+            items=[
+                ProfileVideoItem(
+                    aweme_id="7622653084993647603",
+                    title="分页样本",
+                    like_count=1,
+                    source_provider="cookie_api",
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.services.creator_clone.scan_profile", fake_scan_profile)
+
+    sample_set = build_sample_set(
+        profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345",
+        count=150,
+        max_pages=15,
+    )
+
+    assert captured["request"].count == 150
+    assert captured["request"].max_pages == 15
+    assert len(sample_set.samples) == 1
 
 
 def test_creator_clone_import_structured_aweme_list_and_nested_statistics() -> None:
@@ -9373,7 +9908,7 @@ def test_creator_clone_distill_llm_request_failure_returns_prompt_recovery(monke
             raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 请求超时。")
 
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: FailingProvider())
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: FailingProvider())
     import_response = client.post(
         "/api/creator-clone/import",
         json={
@@ -9474,7 +10009,7 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
             }
 
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: FakeProvider())
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: FakeProvider())
     response = client.post(
         "/api/creator-clone/distill",
         json={
@@ -9512,7 +10047,7 @@ def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> N
 
     provider = FakeProvider()
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: provider)
     response = client.post(
         "/api/creator-clone/distill",
         json={
@@ -9556,7 +10091,7 @@ def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) ->
 
     provider = FakeProvider()
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: provider)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: provider)
     response = client.post(
         "/api/creator-clone/distill",
         json={
@@ -9598,7 +10133,7 @@ def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch
             }
 
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
-    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda: FakeProvider())
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: FakeProvider())
     response = client.post(
         "/api/jobs/creator-clone-distill",
         json={

@@ -93,7 +93,7 @@ DOUYIN_REFERER=https://www.douyin.com/
 - `DOUYIN_RISK_CONTROL` 代表平台没有返回公开作品列表，不是主页 URL 格式错误，也不是图文/照片作品导致。
 - 当前项目边界是不绕验证码、不绕风控、不做签名破解；Cookie API 只是可选增强，遇到风控、结构不可解析或 Cookie 失效时，推荐改用“多作品链接粘贴”“浏览器辅助采集”“JSON / CSV 导入”或“已有 Case 导入”继续整理素材池。
 - 多作品粘贴是当前账号级分析的稳定入口；支持一行一个作品链接、整段分享文案、纯 aweme_id 和混合输入，并会显示识别、去重、忽略无效内容的统计。
-- 作品池队列默认一次最多处理 10 条，可通过 `PROFILE_BUILD_MAX_ITEMS` 调整，避免误批量下载。每条作品会逐条复用单作品解析、下载、素材包生成、enrichment 归档、可选 ASR/OCR 和可选 AI 拆解流程；某条失败不影响后续条目。
+- 作品池富化队列默认一次最多处理 150 条可下载视频，可通过 `PROFILE_BUILD_MAX_ITEMS` 调整。每条作品会逐条复用单作品解析、下载、素材包生成、enrichment 归档、可选 ASR/OCR 和可选 AI 拆解流程；某条失败不影响后续条目。大模型蒸馏仍默认最多选择 20 条代表样本，避免上下文过长。
 - 后续如果确认要继续增强账号级扫描，应优先完善授权数据源和浏览器可见信息交接，不做 A_Bogus / X_Bogus、验证码绕过或隐式登录态依赖。
 - 后续再继续做更多平台适配器、浏览器辅助的本地版采集、评论导入联动和更完整的案例库策略层。
 
@@ -107,7 +107,8 @@ DOUYIN_REFERER=https://www.douyin.com/
 - 同清晰度 CDN 候选会做轻量 Range 测速，默认选择响应更快的 host。
 - 单作品主流程已收敛为一个“解析”按钮：解析候选 → 下载视频 → 自动生成素材包；配置大模型后可自动拆解。
 - 创作者克隆实验室可整理素材池，支持点赞、评论、分享、综合分和发布时间排序，并显示基础素材概览。
-- 素材池可全选、取消选择、推荐组合、高赞 Top 3、高评 Top 3、高分享 Top 3、最新 Top 3 和低表现样本；“富化选中样本”默认最多 10 条，蒸馏最多选择 20 条。
+- 素材池可全选、取消选择、推荐组合、高赞 Top 3、高评 Top 3、高分享 Top 3、最新 Top 3 和低表现样本；“富化选中样本”默认最多 150 条可下载视频，蒸馏最多选择 20 条代表样本。
+- 需要汇总 20 条以上样本时，使用“分批蒸馏已选样本”：系统会按每批最多 20 条逐批蒸馏，再把所有批次摘要做最终 Reduce，输出账号级总报告。批次产物保存在 `outputs/creator_clones/{set_id}/batch_distill/`。
 - 解析结果区会先展示本地拆解底稿：规则判断内容类型、命中原因、优先观察点、关键问题和内容占比，再继续展示 AI 摘要。
 - 右上角设置弹窗可查看 AI 是否配置，并可测试连接。
 - Case 页面默认展示创作者可读报告；素材包、`prompt.md`、`analysis_input.json`、人工验收、富化数据和质量校准功能收纳在“高级 / 后台材料”中。
@@ -284,8 +285,11 @@ LLM_API_BASE=https://api.openai.com/v1
 LLM_API_KEY=
 LLM_MODEL=
 LLM_TIMEOUT_SECONDS=90
+LLM_FINAL_REDUCE_TIMEOUT_SECONDS=600
 LLM_TEMPERATURE=0.2
 LLM_MAX_KEYFRAMES=6
+LLM_MAX_OUTPUT_TOKENS=1200
+LLM_FINAL_REDUCE_MAX_OUTPUT_TOKENS=4000
 ASR_PROVIDER=disabled
 ASR_MODEL_SIZE=base
 ASR_DEVICE=auto
@@ -301,6 +305,8 @@ OCR_SUBTITLE_CROP_RATIO=0.35
 单作品解析优先使用 native mobile feed/share，不需要 Cookie；网页 detail/page 兜底会在配置存在时附带 `DOUYIN_COOKIE`，但不会写入日志、数据库或素材包。如果所有路线都被限制，接口会返回明确错误。
 
 `CANDIDATE_PROBE_*` 只在同一档清晰度存在多个 CDN host 时生效。它会用 Range 请求读取少量字节并排序，不会为了测速降低清晰度。
+
+`LLM_TIMEOUT_SECONDS` 用于单条拆解和普通批次蒸馏；`LLM_FINAL_REDUCE_TIMEOUT_SECONDS` 专门用于 20 条以上分批蒸馏后的最终账号级汇总，默认 600 秒。大样本蒸馏优先等待最终 Reduce 完成，只有最终汇总仍超时或失败时，才会基于已成功的批次摘要生成本地兜底报告。
 
 AI 自动拆解默认关闭。默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型；主流程只会生成素材包。官方 OpenAI API 建议使用 Responses API：
 

@@ -130,8 +130,10 @@ LLM_MODEL=支持图片输入的模型</pre>
                     </label>
                     <div class="settings-actions">
                         <button type="submit" id="save-douyin-settings-button">保存数据源设置</button>
+                        <button type="button" id="test-douyin-cookie-button">自检 Cookie API</button>
                         <span id="douyin-save-result" class="muted"></span>
                     </div>
+                    <div id="douyin-cookie-test-result" class="settings-test-result muted"></div>
                 </form>
             </div>
         </div>
@@ -284,7 +286,7 @@ LLM_MODEL=支持图片输入的模型</pre>
                                 <input name="profile_url" placeholder="https://www.douyin.com/user/... 或 sec_user_id">
                             </label>
                         </div>
-                        <input name="count" type="hidden" value="100">
+                        <input name="count" type="hidden" value="150">
                         <div id="profile-helper-tools" class="profile-inline-helper">
                             <div id="profile-chrome-status" class="local-helper-status muted">
                                 本机 Chrome 辅助状态：尚未检测。
@@ -476,7 +478,10 @@ https://v.douyin.com/xxxxxx/
                         <span class="entry-label">D. Distillation</span>
                         <h3>大模型蒸馏</h3>
                     </div>
-                    <button type="button" id="creator-clone-distill-button" class="secondary-button subdued-module-action">高级：仅执行蒸馏</button>
+                    <div class="profile-panel-actions">
+                        <button type="button" id="creator-clone-distill-button" class="secondary-button subdued-module-action">高级：仅执行蒸馏</button>
+                        <button type="button" id="creator-clone-batch-distill-button" class="secondary-button subdued-module-action">分批蒸馏已选样本</button>
+                    </div>
                 </div>
                 <div id="profile-distill-readiness" class="profile-distill-readiness">
                     先选择代表样本。系统会根据样本数量、关键帧和证据完整度提示是否适合蒸馏。

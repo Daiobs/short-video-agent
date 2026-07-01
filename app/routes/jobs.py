@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
@@ -22,8 +23,10 @@ from app.services.ocr import run_case_ocr
 from app.services.quality_resolver import resolve_quality_candidates
 from app.services.profile_scan import scan_profile
 from app.services.creator_clone import (
+    BATCH_DISTILL_MAX_SAMPLES,
     CloneSampleSet,
     MAX_DISTILL_SAMPLES,
+    batch_distill_creator_clone,
     dedupe_samples,
     distill_creator_clone,
     load_sample_set,
@@ -89,6 +92,18 @@ class CreatorCloneDistillJobRequest(BaseModel):
     distill_mode: str = "quick"
     include_case_reports: bool = True
     max_samples: int = MAX_DISTILL_SAMPLES
+    title: str = ""
+    creator_name: str = ""
+    source_platform: str = "unknown"
+
+
+class CreatorCloneBatchDistillJobRequest(BaseModel):
+    sample_set_id: str = ""
+    samples: list[dict] = []
+    selected_sample_ids: list[str] = []
+    distill_mode: str = "quick"
+    batch_size: int = MAX_DISTILL_SAMPLES
+    max_samples: int = BATCH_DISTILL_MAX_SAMPLES
     title: str = ""
     creator_name: str = ""
     source_platform: str = "unknown"
@@ -642,6 +657,7 @@ def _profile_pipeline_summary(items: list[dict]) -> dict:
     }
     downloaded_count = sum(1 for item in items if item.get("local_video_id"))
     case_count = sum(1 for item in items if item.get("case_id"))
+    reused_case_count = sum(1 for item in items if item.get("case_reused"))
     enriched_count = sum(1 for item in items if item.get("enrichment_status") == "success")
     asr_success_count = sum(1 for item in items if item.get("asr_status") in {"success", "no_speech"})
     ocr_success_count = sum(1 for item in items if item.get("ocr_status") in {"success", "no_text"})
@@ -661,6 +677,8 @@ def _profile_pipeline_summary(items: list[dict]) -> dict:
     next_actions: list[str] = []
     if case_count:
         notes.append(f"已生成 {case_count} 个素材包，可作为创作者蒸馏证据。")
+    if reused_case_count:
+        notes.append(f"其中 {reused_case_count} 个素材包来自本地复用，已跳过重复下载和建包。")
     if counts["reference_only_count"]:
         notes.append(f"{counts['reference_only_count']} 条图文/元数据样本已保留为参考证据。")
     if selected_count:
@@ -682,6 +700,7 @@ def _profile_pipeline_summary(items: list[dict]) -> dict:
         "downloadable_count": downloadable_count,
         "downloaded_count": downloaded_count,
         "case_count": case_count,
+        "reused_case_count": reused_case_count,
         "enriched_count": enriched_count,
         "asr_success_count": asr_success_count,
         "ocr_success_count": ocr_success_count,
@@ -700,6 +719,163 @@ def _optional_error_payload(error: Exception, fallback_code: str) -> dict:
     if isinstance(error, AppError):
         return error.as_dict()
     return {"error_code": fallback_code, "message": str(error)[:500]}
+
+
+def _case_dir_from_artifact(artifact: CaseArtifact) -> Path:
+    if artifact.video_path:
+        return Path(artifact.video_path).parent
+    return settings.cases_dir / artifact.case_id
+
+
+def _case_artifact_reusable(artifact: CaseArtifact | None) -> bool:
+    if not artifact:
+        return False
+    case_dir = _case_dir_from_artifact(artifact)
+    required_paths = [
+        Path(artifact.video_path),
+        Path(artifact.metadata_path),
+        Path(artifact.analysis_input_path),
+        Path(artifact.contact_sheet_path),
+    ]
+    return all(path.is_file() for path in required_paths) and Path(artifact.keyframes_dir or case_dir / "keyframes").is_dir()
+
+
+def _find_reusable_profile_case(db, item: dict) -> CaseArtifact | None:
+    case_id = str(item.get("case_id") or "").strip()
+    if case_id:
+        artifact = db.get(CaseArtifact, case_id)
+        if _case_artifact_reusable(artifact):
+            return artifact
+    aweme_id = str(item.get("aweme_id") or "").strip()
+    if not aweme_id:
+        return None
+    artifacts = (
+        db.query(CaseArtifact)
+        .filter(CaseArtifact.aweme_id == aweme_id)
+        .order_by(CaseArtifact.created_at.desc())
+        .all()
+    )
+    return next((artifact for artifact in artifacts if _case_artifact_reusable(artifact)), None)
+
+
+def _case_enrichment_dir(artifact: CaseArtifact) -> Path:
+    return _case_dir_from_artifact(artifact) / "enrichment"
+
+
+def _case_has_enrichment_archive(artifact: CaseArtifact) -> bool:
+    return (_case_enrichment_dir(artifact) / "manifest.json").is_file()
+
+
+def _case_has_asr(artifact: CaseArtifact) -> bool:
+    asr_dir = _case_enrichment_dir(artifact) / "asr"
+    return (asr_dir / "transcript.json").is_file() or (asr_dir / "transcript.txt").is_file()
+
+
+def _case_has_ocr(artifact: CaseArtifact) -> bool:
+    ocr_dir = _case_enrichment_dir(artifact) / "ocr"
+    return (ocr_dir / "frame_ocr.json").is_file() or (ocr_dir / "subtitle_ocr.json").is_file()
+
+
+def _case_has_ai_analysis(artifact: CaseArtifact) -> bool:
+    case_dir = _case_dir_from_artifact(artifact)
+    return (case_dir / "analysis_result.json").is_file() or (case_dir / "analysis_report.md").is_file()
+
+
+def _update_profile_queue_job(db, job_id: str, progress: int, message: str, queue_items: list[dict]) -> None:
+    job = db.get(Job, job_id)
+    if job:
+        _set_job(job, "running", min(95, progress), message, result=_profile_queue_result(queue_items))
+        db.commit()
+
+
+def _run_profile_optional_case_steps(
+    db,
+    *,
+    job_id: str,
+    item: dict,
+    artifact: CaseArtifact,
+    queue_items: list[dict],
+    base_progress: int,
+    auto_enrich: bool,
+    auto_asr: bool,
+    auto_ocr: bool,
+    auto_analyze: bool,
+    reused: bool = False,
+) -> None:
+    if auto_enrich:
+        if _case_has_enrichment_archive(artifact):
+            item["enrichment_status"] = "success"
+            item["enrichment_reused"] = True
+        else:
+            item["status"] = "enriching"
+            item["message"] = "正在写入富化归档"
+            _update_profile_queue_job(db, job_id, base_progress + 65, item["message"], queue_items)
+            try:
+                item["enrichment"] = build_enrichment_archive(
+                    artifact,
+                    capture_method="profile_build_queue_reuse" if reused else "profile_build_queue",
+                    permission_note="local personal analysis",
+                )
+                item["enrichment_status"] = "success"
+            except Exception as error:
+                item["enrichment_status"] = "failed"
+                item["enrichment_error"] = _optional_error_payload(error, ErrorCode.ENRICHMENT_FAILED)
+
+    if auto_asr:
+        if _case_has_asr(artifact):
+            item["asr_status"] = "success"
+            item["asr_reused"] = True
+        else:
+            item["status"] = "asr_optional"
+            item["message"] = "正在执行可选 ASR"
+            _update_profile_queue_job(db, job_id, base_progress + 70, item["message"], queue_items)
+            try:
+                item["asr"] = run_case_asr(artifact)
+                item["asr_status"] = item["asr"].get("status") or "success"
+            except AppError as error:
+                item["asr_status"] = "provider_missing" if error.code == ErrorCode.ASR_PROVIDER_NOT_CONFIGURED else "failed"
+                item["asr_error"] = error.as_dict()
+            except Exception as error:
+                item["asr_status"] = "failed"
+                item["asr_error"] = _optional_error_payload(error, ErrorCode.ASR_FAILED)
+
+    if auto_ocr:
+        if _case_has_ocr(artifact):
+            item["ocr_status"] = "success"
+            item["ocr_reused"] = True
+        else:
+            item["status"] = "ocr_optional"
+            item["message"] = "正在执行可选 OCR"
+            _update_profile_queue_job(db, job_id, base_progress + 74, item["message"], queue_items)
+            try:
+                item["ocr"] = run_case_ocr(artifact)
+                item["ocr_status"] = item["ocr"].get("status") or "success"
+            except AppError as error:
+                item["ocr_status"] = "provider_missing" if error.code == ErrorCode.OCR_PROVIDER_NOT_CONFIGURED else "failed"
+                item["ocr_error"] = error.as_dict()
+            except Exception as error:
+                item["ocr_status"] = "failed"
+                item["ocr_error"] = _optional_error_payload(error, ErrorCode.OCR_FAILED)
+
+    if auto_analyze:
+        if _case_has_ai_analysis(artifact):
+            item["analysis_status"] = "success"
+            item["analysis_reused"] = True
+        else:
+            item["status"] = "analyzing_optional"
+            item["message"] = "正在执行可选 AI 拆解"
+            _update_profile_queue_job(db, job_id, base_progress + 78, item["message"], queue_items)
+            try:
+                item["analysis"] = _analysis_result(analyze_case_artifact(artifact, mode="fast"))
+                item["analysis_status"] = "success"
+            except AppError as error:
+                item["analysis_status"] = "skipped" if error.code == ErrorCode.LLM_NOT_CONFIGURED else "failed"
+                item["analysis_error"] = error.as_dict()
+            except Exception as error:
+                item["analysis_status"] = "failed"
+                item["analysis_error"] = _optional_error_payload(error, ErrorCode.AUTO_ANALYSIS_FAILED)
+    else:
+        item["analysis_status"] = "skipped"
 
 
 def _profile_queue_item_from_payload(
@@ -801,6 +977,43 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 stored_item.video_url = stored_item.source_url
                 db.commit()
 
+                artifact = _find_reusable_profile_case(db, item)
+                if artifact:
+                    item["status"] = "reusing_case"
+                    item["message"] = "已找到已有素材包，跳过下载和建包"
+                    item["case_reused"] = True
+                    item["local_video_id"] = artifact.local_video_id
+                    item["case_id"] = artifact.case_id
+                    item["case"] = _artifact_result(artifact)
+                    completed_artifacts.append(artifact)
+                    _update_profile_queue_job(db, job_id, base_progress + 20, item["message"], queue_items)
+                    _run_profile_optional_case_steps(
+                        db,
+                        job_id=job_id,
+                        item=item,
+                        artifact=artifact,
+                        queue_items=queue_items,
+                        base_progress=base_progress,
+                        auto_enrich=auto_enrich,
+                        auto_asr=auto_asr,
+                        auto_ocr=auto_ocr,
+                        auto_analyze=auto_analyze,
+                        reused=True,
+                    )
+                    item["status"] = "completed"
+                    item["message"] = "已复用已有素材包"
+                    job = db.get(Job, job_id)
+                    if job:
+                        _set_job(
+                            job,
+                            "running",
+                            min(98, int(((index + 1) / total) * 95)),
+                            f"已处理 {index + 1}/{total}",
+                            result=_profile_queue_result(queue_items),
+                        )
+                        db.commit()
+                    continue
+
                 item["status"] = "resolving"
                 item["message"] = "正在解析清晰度候选"
                 job = db.get(Job, job_id)
@@ -833,76 +1046,19 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 item["case_id"] = artifact.case_id
                 item["case"] = _artifact_result(artifact)
 
-                if auto_enrich:
-                    item["status"] = "enriching"
-                    item["message"] = "正在写入富化归档"
-                    job = db.get(Job, job_id)
-                    if job:
-                        _set_job(job, "running", min(95, base_progress + 65), item["message"], result=_profile_queue_result(queue_items))
-                        db.commit()
-                    try:
-                        item["enrichment"] = build_enrichment_archive(
-                            artifact,
-                            capture_method="profile_build_queue",
-                            permission_note="local personal analysis",
-                        )
-                        item["enrichment_status"] = "success"
-                    except Exception as error:
-                        item["enrichment_status"] = "failed"
-                        item["enrichment_error"] = _optional_error_payload(error, ErrorCode.ENRICHMENT_FAILED)
-
-                if auto_asr:
-                    item["status"] = "asr_optional"
-                    item["message"] = "正在执行可选 ASR"
-                    job = db.get(Job, job_id)
-                    if job:
-                        _set_job(job, "running", min(95, base_progress + 70), item["message"], result=_profile_queue_result(queue_items))
-                        db.commit()
-                    try:
-                        item["asr"] = run_case_asr(artifact)
-                        item["asr_status"] = item["asr"].get("status") or "success"
-                    except AppError as error:
-                        item["asr_status"] = "provider_missing" if error.code == ErrorCode.ASR_PROVIDER_NOT_CONFIGURED else "failed"
-                        item["asr_error"] = error.as_dict()
-                    except Exception as error:
-                        item["asr_status"] = "failed"
-                        item["asr_error"] = _optional_error_payload(error, ErrorCode.ASR_FAILED)
-
-                if auto_ocr:
-                    item["status"] = "ocr_optional"
-                    item["message"] = "正在执行可选 OCR"
-                    job = db.get(Job, job_id)
-                    if job:
-                        _set_job(job, "running", min(95, base_progress + 74), item["message"], result=_profile_queue_result(queue_items))
-                        db.commit()
-                    try:
-                        item["ocr"] = run_case_ocr(artifact)
-                        item["ocr_status"] = item["ocr"].get("status") or "success"
-                    except AppError as error:
-                        item["ocr_status"] = "provider_missing" if error.code == ErrorCode.OCR_PROVIDER_NOT_CONFIGURED else "failed"
-                        item["ocr_error"] = error.as_dict()
-                    except Exception as error:
-                        item["ocr_status"] = "failed"
-                        item["ocr_error"] = _optional_error_payload(error, ErrorCode.OCR_FAILED)
-
-                if auto_analyze:
-                    item["status"] = "analyzing_optional"
-                    item["message"] = "正在执行可选 AI 拆解"
-                    job = db.get(Job, job_id)
-                    if job:
-                        _set_job(job, "running", min(95, base_progress + 78), item["message"], result=_profile_queue_result(queue_items))
-                        db.commit()
-                    try:
-                        item["analysis"] = _analysis_result(analyze_case_artifact(artifact, mode="fast"))
-                        item["analysis_status"] = "success"
-                    except AppError as error:
-                        item["analysis_status"] = "skipped" if error.code == ErrorCode.LLM_NOT_CONFIGURED else "failed"
-                        item["analysis_error"] = error.as_dict()
-                    except Exception as error:
-                        item["analysis_status"] = "failed"
-                        item["analysis_error"] = _optional_error_payload(error, ErrorCode.AUTO_ANALYSIS_FAILED)
-                else:
-                    item["analysis_status"] = "skipped"
+                _run_profile_optional_case_steps(
+                    db,
+                    job_id=job_id,
+                    item=item,
+                    artifact=artifact,
+                    queue_items=queue_items,
+                    base_progress=base_progress,
+                    auto_enrich=auto_enrich,
+                    auto_asr=auto_asr,
+                    auto_ocr=auto_ocr,
+                    auto_analyze=auto_analyze,
+                    reused=False,
+                )
 
                 item["status"] = "completed"
                 item["message"] = "素材包已生成"
@@ -1074,6 +1230,60 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         db.close()
 
 
+def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "running", 5, "准备分批蒸馏")
+            db.commit()
+
+        sample_set = _load_creator_clone_distill_set(payload)
+        selected_sample_ids = [str(value) for value in payload.get("selected_sample_ids") or [] if str(value)]
+        distill_mode = str(payload.get("distill_mode") or "quick")
+        batch_size = int(payload.get("batch_size") or MAX_DISTILL_SAMPLES)
+        max_samples = int(payload.get("max_samples") or BATCH_DISTILL_MAX_SAMPLES)
+
+        def progress(value: int, message: str) -> None:
+            current = db.get(Job, job_id)
+            if current:
+                _set_job(
+                    current,
+                    "running",
+                    max(1, min(98, int(value))),
+                    message,
+                    result={"set": sample_set.to_dict()},
+                )
+                db.commit()
+
+        progress(8, f"已载入素材池，准备分批蒸馏 {len(selected_sample_ids) or len(sample_set.samples)} 条样本")
+        result = batch_distill_creator_clone(
+            sample_set,
+            selected_sample_ids,
+            distill_mode=distill_mode,
+            batch_size=batch_size,
+            max_samples=max_samples,
+            progress=progress,
+        )
+        job = db.get(Job, job_id)
+        if job:
+            message = "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型"
+            _set_job(job, "success", 100, message, result={"ok": bool(result.get("result")), **result})
+            db.commit()
+    except AppError as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            db.commit()
+    except Exception as error:
+        job = db.get(Job, job_id)
+        if job:
+            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.PROFILE_BUILD_ITEM_FAILED)
+            db.commit()
+    finally:
+        db.close()
+
+
 def _create_job(job_type: str, message: str) -> Job:
     db = SessionLocal()
     try:
@@ -1152,18 +1362,11 @@ def profile_build_cases_job(payload: ProfileBuildCasesJobRequest, background_tas
     downloadable_count = sum(1 for item in queued_items if _is_profile_queue_downloadable(item))
     if not queued_items and not payload.selected_sample_ids:
         return error_response(AppError(ErrorCode.AWEME_ID_NOT_FOUND, f"请先从作品池选择 1-{settings.profile_build_max_items} 条作品。"))
-    if selected_count > MAX_DISTILL_SAMPLES:
-        return error_response(
-            AppError(
-                ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
-                f"当前自用版一次最多选择 {MAX_DISTILL_SAMPLES} 条样本进入蒸馏，避免上下文过长。请减少选择数量后重试。",
-            )
-        )
     if downloadable_count > settings.profile_build_max_items:
         return error_response(
             AppError(
                 ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
-                f"当前自用版一次最多处理 {settings.profile_build_max_items} 条作品，避免误批量下载。请减少选择数量后重试。",
+                f"当前自用版一次最多富化 {settings.profile_build_max_items} 条可下载视频，避免误批量下载。请减少选择数量后重试。",
             )
         )
     job = _create_job("profile-build-cases", "等待生成素材包队列")
@@ -1206,6 +1409,30 @@ def creator_clone_distill_job(payload: CreatorCloneDistillJobRequest, background
     job = _create_job("creator-clone-distill", "等待创作者克隆蒸馏")
     background_tasks.add_task(_run_creator_clone_distill_job, job.id, payload.model_dump())
     return {"ok": True, "job_id": job.id, "selected_count": selected_count}
+
+
+@router.post("/creator-clone-batch-distill")
+def creator_clone_batch_distill_job(payload: CreatorCloneBatchDistillJobRequest, background_tasks: BackgroundTasks):
+    selected_count = len([value for value in payload.selected_sample_ids if str(value)]) or len(payload.samples)
+    if selected_count <= 0:
+        return error_response(AppError(ErrorCode.AWEME_ID_NOT_FOUND, "请先导入素材池并选择样本。"))
+    if selected_count > BATCH_DISTILL_MAX_SAMPLES or payload.max_samples > BATCH_DISTILL_MAX_SAMPLES:
+        return error_response(
+            AppError(
+                ErrorCode.PROFILE_BUILD_QUEUE_LIMIT,
+                f"当前分批蒸馏最多支持 {BATCH_DISTILL_MAX_SAMPLES} 条样本。请减少选择数量后重试。",
+            )
+        )
+    batch_size = max(1, min(int(payload.batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES))
+    job = _create_job("creator-clone-batch-distill", "等待分批蒸馏")
+    background_tasks.add_task(_run_creator_clone_batch_distill_job, job.id, payload.model_dump())
+    return {
+        "ok": True,
+        "job_id": job.id,
+        "selected_count": selected_count,
+        "batch_size": batch_size,
+        "batch_count": (selected_count + batch_size - 1) // batch_size,
+    }
 
 
 @router.post("/resolve-qualities")

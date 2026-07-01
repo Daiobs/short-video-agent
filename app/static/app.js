@@ -38,6 +38,8 @@ const douyinRefererInput = document.getElementById("douyin-referer-input");
 const douyinClearCookieInput = document.getElementById("douyin-clear-cookie-input");
 const saveDouyinSettingsButton = document.getElementById("save-douyin-settings-button");
 const douyinSaveResult = document.getElementById("douyin-save-result");
+const testDouyinCookieButton = document.getElementById("test-douyin-cookie-button");
+const douyinCookieTestResult = document.getElementById("douyin-cookie-test-result");
 const resultCard = document.getElementById("result-card");
 const caseSummary = document.getElementById("case-summary");
 const homeCaseView = document.getElementById("home-case-view");
@@ -102,6 +104,7 @@ const profileQueueCard = document.getElementById("profile-queue-card");
 const profileQueueSummary = document.getElementById("profile-queue-summary");
 const profileQueueItems = document.getElementById("profile-queue-items");
 const creatorCloneDistillButton = document.getElementById("creator-clone-distill-button");
+const creatorCloneBatchDistillButton = document.getElementById("creator-clone-batch-distill-button");
 const creatorCloneSelectionStatus = document.getElementById("creator-clone-selection-status");
 const profileSelectionBasket = document.getElementById("profile-selection-basket");
 const profileEvidenceStatus = document.getElementById("profile-evidence-status");
@@ -722,9 +725,10 @@ function setCreatorCloneStep(step = getCreatorCloneWizardState()) {
   const state = step || getCreatorCloneWizardState();
   const selected = selectedProfileItems();
   const hasSelected = selected.length > 0;
-  const canDistill = hasSelected && selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES;
+  const canSingleDistill = hasSelected && selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES;
+  const canBatchDistill = hasSelected && selected.length <= PROFILE_BUILD_MAX_ITEMS;
   profileEnrichmentSection?.classList.toggle("hidden", !hasSelected && !["ENRICH_READY", "ENRICHING"].includes(state));
-  profileDistillationSection?.classList.toggle("hidden", !canDistill && !["DISTILL_READY", "DISTILLING", "EXPORT_READY"].includes(state));
+  profileDistillationSection?.classList.toggle("hidden", !canSingleDistill && !canBatchDistill && !["DISTILL_READY", "DISTILLING", "EXPORT_READY"].includes(state));
   renderCreatorCloneNextAction();
 }
 
@@ -739,9 +743,11 @@ function renderCreatorCloneOverview(summary = {}) {
   const nextAction = !profileItems.length
     ? "先导入一组对标素材"
     : !selected.length
-      ? "选择 3-20 条代表样本"
+      ? `选择 3-${PROFILE_BUILD_MAX_ITEMS} 条样本`
       : selectedBuildable.some((item) => !item.has_frames)
       ? "开始富化证据"
+      : selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
+        ? "可以开始分批大模型蒸馏"
         : "可以开始大模型蒸馏";
   const total = summary.scanned_count || profileItems.length;
   profileSummary.innerHTML = `
@@ -768,7 +774,7 @@ function updateCreatorCloneSelectionStatus() {
     {full: 0, partial: 0, metadata_only: 0},
   );
   if (creatorCloneSelectionStatus) {
-    creatorCloneSelectionStatus.textContent = `已选 ${selected.length} 条；可富化 ${buildable.length}/${PROFILE_BUILD_MAX_ITEMS} 条；不可富化 ${unbuildableCount} 条。完整 ${counts.full || 0}，部分 ${counts.partial || 0}，仅元数据 ${counts.metadata_only || 0}。`;
+    creatorCloneSelectionStatus.textContent = `已选 ${selected.length} 条；可富化 ${buildable.length}/${PROFILE_BUILD_MAX_ITEMS} 条；不可富化 ${unbuildableCount} 条；单次蒸馏最多 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条，分批蒸馏最多 ${PROFILE_BUILD_MAX_ITEMS} 条。完整 ${counts.full || 0}，部分 ${counts.partial || 0}，仅元数据 ${counts.metadata_only || 0}。`;
   }
   renderProfileSelectionBasket(selected);
   if (profileSelectedBuildButton) {
@@ -776,9 +782,7 @@ function updateCreatorCloneSelectionStatus() {
       ? "请先选择代表样本。"
       : buildable.length > PROFILE_BUILD_MAX_ITEMS
         ? `可下载视频超过当前富化上限 ${PROFILE_BUILD_MAX_ITEMS} 条。`
-        : selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
-          ? `选中样本超过当前蒸馏上限 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条。`
-          : "";
+        : "";
     profileSelectedBuildButton.disabled = Boolean(disabledReason);
     profileSelectedBuildButton.title = disabledReason || (buildable.length
       ? `将富化 ${buildable.length} 条可解析视频，并保留 ${unbuildableCount} 条参考样本`
@@ -792,6 +796,15 @@ function updateCreatorCloneSelectionStatus() {
         : "";
     creatorCloneDistillButton.disabled = Boolean(distillDisabledReason);
     creatorCloneDistillButton.title = distillDisabledReason || `将蒸馏 ${selected.length} 条样本`;
+  }
+  if (creatorCloneBatchDistillButton) {
+    const batchDisabledReason = !selected.length
+      ? "请先选择要分批蒸馏的样本。"
+      : selected.length > PROFILE_BUILD_MAX_ITEMS
+        ? `分批蒸馏最多支持 ${PROFILE_BUILD_MAX_ITEMS} 条样本。`
+        : "";
+    creatorCloneBatchDistillButton.disabled = Boolean(batchDisabledReason);
+    creatorCloneBatchDistillButton.title = batchDisabledReason || `将 ${selected.length} 条样本按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批蒸馏并汇总`;
   }
   renderProfileEnrichmentPlan(selected, buildable);
   renderProfileDistillReadiness(selected);
@@ -827,7 +840,7 @@ function renderProfileSelectionBasket(selected) {
   profileSelectionBasket.innerHTML = `
     <div class="selection-basket-head">
       <strong>本轮样本篮</strong>
-      <span>${selected.length}/${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条</span>
+      <span>${selected.length <= CREATOR_CLONE_MAX_DISTILL_SAMPLES ? `${selected.length}/${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条` : `已选 ${selected.length} 条 · 分批上限 ${PROFILE_BUILD_MAX_ITEMS}`}</span>
     </div>
     <div class="selection-basket-list">
       ${selected
@@ -882,7 +895,7 @@ function renderProfileEnrichmentPlan(selected, buildable) {
   const missingFrames = buildableItems.filter((item) => !item.has_frames).length;
   const missingAsr = buildableItems.filter((item) => !item.has_asr).length;
   const missingOcr = buildableItems.filter((item) => !item.has_ocr).length;
-  const warning = buildableItems.length > PROFILE_BUILD_MAX_ITEMS || selectedItems.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES;
+  const warning = buildableItems.length > PROFILE_BUILD_MAX_ITEMS;
   profileEvidenceStatus.classList.toggle("warning", warning);
   if (!selectedItems.length) {
     profileEvidenceStatus.innerHTML = "先从素材池选择代表样本；富化后会回填视频、关键帧、OCR、ASR 等证据，再进入大模型蒸馏。";
@@ -890,9 +903,10 @@ function renderProfileEnrichmentPlan(selected, buildable) {
   }
   const limitNote = buildableItems.length > PROFILE_BUILD_MAX_ITEMS
     ? `可下载视频超过当前富化上限 ${PROFILE_BUILD_MAX_ITEMS} 条，请减少视频样本，避免误批量下载。`
-    : selectedItems.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
-      ? `选中样本超过当前蒸馏上限 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条，请减少参考样本，避免上下文过长。`
-      : "";
+    : "";
+  const distillLimitNote = selectedItems.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
+    ? `本轮可先富化全部样本；单次蒸馏上限 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条，超过后请使用“分批蒸馏已选样本”做账号级汇总。`
+    : "";
   const providerNote = [
     counts.asrProviderMissing ? `ASR provider 未配置 ${counts.asrProviderMissing} 条` : "",
     counts.ocrProviderMissing ? `OCR provider 未配置 ${counts.ocrProviderMissing} 条` : "",
@@ -919,7 +933,7 @@ function renderProfileEnrichmentPlan(selected, buildable) {
     <div class="enrichment-plan-steps" aria-label="本轮富化步骤">
       ${steps.map((step) => `<span>${escapeHtml(step)}</span>`).join("")}
     </div>
-    <p class="enrichment-plan-note">当前证据：视频 ${counts.video}/${selectedItems.length}，关键帧 ${counts.frames}/${selectedItems.length}，OCR ${counts.ocr}/${selectedItems.length}，ASR ${counts.asr}/${selectedItems.length}，评论 ${counts.comments}/${selectedItems.length}。${providerNote ? `${escapeHtml(providerNote)}。` : ""}</p>
+    <p class="enrichment-plan-note">当前证据：视频 ${counts.video}/${selectedItems.length}，关键帧 ${counts.frames}/${selectedItems.length}，OCR ${counts.ocr}/${selectedItems.length}，ASR ${counts.asr}/${selectedItems.length}，评论 ${counts.comments}/${selectedItems.length}。${providerNote ? `${escapeHtml(providerNote)}。` : ""}${distillLimitNote ? `${escapeHtml(distillLimitNote)}。` : ""}</p>
   `;
 }
 
@@ -1596,6 +1610,11 @@ function renderCompactProfileTable() {
     .join("");
 }
 
+function profileScanMaxPagesForCount(count) {
+  const target = Number(count || 20);
+  return Math.max(1, Math.min(20, Math.ceil(target / 10)));
+}
+
 async function scanProfile(sourceMode = "public") {
   let activeSource = "public";
   profileScanButton.disabled = true;
@@ -1610,13 +1629,15 @@ async function scanProfile(sourceMode = "public") {
     const profileValue = firstUrlFromText(rawProfileValue) || rawProfileValue;
     const isUrl = /^https?:\/\//i.test(profileValue);
     activeSource = ["public", "manual", "structured", "handoff", "case"].includes(sourceMode) ? sourceMode : "public";
+    const requestedCount = Number(formData.get("count") || 20);
+    const requestedMaxPages = activeSource === "public" ? profileScanMaxPagesForCount(requestedCount) : 1;
     const profilePayload = {
       profile_url: activeSource === "public" && isUrl ? profileValue : "",
       sec_user_id: activeSource === "public" && !isUrl ? profileValue : "",
       manual_links: activeSource === "manual" ? String(formData.get("manual_links") || "") : "",
       structured_items: activeSource === "structured" ? String(formData.get("structured_items") || "") : "",
-      count: Number(formData.get("count") || 20),
-      max_pages: 1,
+      count: requestedCount,
+      max_pages: requestedMaxPages,
       sort_by: String(profileSort?.value || "like_count"),
     };
     const clonePayload = {
@@ -1628,6 +1649,7 @@ async function scanProfile(sourceMode = "public") {
       structured_items: profilePayload.structured_items,
       case_ids: activeSource === "case" ? String(formData.get("case_ids") || "") : "",
       count: profilePayload.count,
+      max_pages: profilePayload.max_pages,
       sort_by: profilePayload.sort_by,
     };
     let endpoint = "/api/creator-clone/import";
@@ -1985,6 +2007,7 @@ function renderProfileQueueSummary({completedCount, failedCount, referenceOnlyCo
     ["参考", pipelineSummary.reference_only_count],
     ["下载", pipelineSummary.downloaded_count],
     ["素材包", pipelineSummary.case_count],
+    ["复用", pipelineSummary.reused_case_count],
     ["富化", pipelineSummary.enriched_count],
     ["ASR", pipelineSummary.asr_success_count],
     ["OCR", pipelineSummary.ocr_success_count],
@@ -2077,11 +2100,17 @@ async function pollProfileQueue(jobId) {
     }
     updateCreatorCloneSelectionStatus();
     if (profileAutoDistill?.checked) {
-      profileScanStatus.textContent = "样本富化队列完成，正在继续进行大模型蒸馏...";
-      await distillSelectedCreatorClone({confirmReadiness: false, triggeredByQueue: true});
+      const selected = selectedProfileItems();
+      if (selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES) {
+        profileScanStatus.textContent = "样本富化队列完成，正在继续进行分批大模型蒸馏...";
+        await batchDistillSelectedCreatorClone({confirm: false, triggeredByQueue: true});
+      } else {
+        profileScanStatus.textContent = "样本富化队列完成，正在继续进行大模型蒸馏...";
+        await distillSelectedCreatorClone({confirmReadiness: false, triggeredByQueue: true});
+      }
       return;
     }
-    profileScanStatus.textContent = "样本富化队列完成。请确认代表样本仍然勾选，然后点击“大模型蒸馏”。";
+    profileScanStatus.textContent = "样本富化队列完成。请确认样本仍然勾选，然后点击“大模型蒸馏”或“分批蒸馏已选样本”。";
     return;
   }
   if (job.status === "failed") {
@@ -2107,10 +2136,6 @@ async function buildSelectedProfileQueue() {
   const referenceOnlyCount = selected.length - buildableCount;
   if (buildableCount > PROFILE_BUILD_MAX_ITEMS) {
     profileScanStatus.textContent = `当前自用版最多一次富化 ${PROFILE_BUILD_MAX_ITEMS} 条可下载视频，避免误批量下载。`;
-    return;
-  }
-  if (selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES) {
-    profileScanStatus.textContent = `当前 MVP 最多选择 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条进行蒸馏，避免上下文过长。`;
     return;
   }
   profileSelectedBuildButton.disabled = true;
@@ -2636,11 +2661,14 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
 }
 
 function applyCreatorCloneDistillPayload(payload) {
+  const batch = payload.batch_distill || {};
   const recoveryHint = payload.recovery === "prompt_only"
     ? (payload.error_code === "LLM_NOT_CONFIGURED"
       ? "大模型未配置，已生成蒸馏 Prompt，可复制后手动分析。"
       : `${payload.error_code || "LLM_FAILED"}：${payload.message || "大模型蒸馏失败"} 已保留素材池证据和蒸馏 Prompt，可稍后重试或手动分析。`)
-    : "创作者克隆蒸馏完成。";
+    : batch.batch_count
+      ? `分批蒸馏完成：${formatNumber(batch.batch_count)} 个批次，已生成总汇总。`
+      : "创作者克隆蒸馏完成。";
   profileScanStatus.textContent = recoveryHint;
   currentCloneSetId = payload.set?.set_id || currentCloneSetId;
   renderCreatorCloneResult(payload.result || null, payload.set, payload.prompt || "", payload.exports || {});
@@ -2733,6 +2761,64 @@ async function distillSelectedCreatorClone(options = {}) {
   }
 }
 
+async function batchDistillSelectedCreatorClone(options = {}) {
+  const selected = selectedProfileItems();
+  if (!selected.length) {
+    profileScanStatus.textContent = "请先选择要分批蒸馏的样本。";
+    return;
+  }
+  if (selected.length > PROFILE_BUILD_MAX_ITEMS) {
+    profileScanStatus.textContent = `当前分批蒸馏最多支持 ${PROFILE_BUILD_MAX_ITEMS} 条样本。`;
+    return;
+  }
+  const shouldContinue = options.confirm === false
+    ? true
+    : window.confirm(
+      `将把 ${selected.length} 条样本按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批进行蒸馏，最后再汇总为账号级报告。这个过程可能会多次调用大模型并耗时较久。确认开始？`,
+    );
+  if (!shouldContinue) {
+    profileScanStatus.textContent = "已取消分批蒸馏。";
+    return;
+  }
+  const selectedIds = selected.map(profileItemKey);
+  creatorCloneDistillRunning = true;
+  creatorCloneBatchDistillButton.disabled = true;
+  creatorCloneDistillButton.disabled = true;
+  renderCreatorCloneNextAction();
+  try {
+    jobCard.classList.remove("hidden");
+    progressBar.style.width = "0%";
+    jobMessage.className = "job-message";
+    jobMessage.textContent = options.triggeredByQueue ? "富化完成，正在创建分批蒸馏任务..." : "正在创建分批蒸馏任务...";
+    jobResult.textContent = "";
+    const response = await fetch("/api/jobs/creator-clone-batch-distill", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        sample_set_id: currentCloneSetId,
+        samples: currentCloneSetId ? [] : profileItems.map(creatorCloneSamplePayload),
+        selected_sample_ids: selectedIds,
+        distill_mode: "quick",
+        batch_size: CREATOR_CLONE_MAX_DISTILL_SAMPLES,
+        max_samples: PROFILE_BUILD_MAX_ITEMS,
+        title: "创作者克隆实验室素材池",
+        source_platform: "douyin",
+      }),
+    });
+    const payload = await readJsonResponse(response);
+    profileScanStatus.textContent = `已创建分批蒸馏任务：${payload.selected_count || selected.length} 条样本，${payload.batch_count || 1} 个批次。`;
+    await pollCreatorCloneDistillJob(payload.job_id);
+  } catch (error) {
+    profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "分批蒸馏失败"}`;
+    jobMessage.className = "job-message failed";
+    jobMessage.textContent = profileScanStatus.textContent;
+  } finally {
+    creatorCloneDistillRunning = false;
+    updateCreatorCloneSelectionStatus();
+    renderCreatorCloneNextAction();
+  }
+}
+
 async function loadLlmStatus() {
   try {
     const response = await fetch("/api/settings/llm", {cache: "no-store"});
@@ -2801,6 +2887,7 @@ function renderDataSourceStatus(status = {}) {
       <dt>Cookie API</dt><dd>${status.has_cookie ? "已配置" : "未配置"}</dd>
       <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
       <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
+      ${renderDouyinCookieDiagnosticsRows(status.cookie_diagnostics || {})}
       <dt>当前策略</dt><dd>${escapeHtml(status.status_message || "")}</dd>
     </dl>
     <ul class="preflight-contract-summary">
@@ -2820,6 +2907,66 @@ function renderDataSourceStatus(status = {}) {
   if (douyinClearCookieInput) {
     douyinClearCookieInput.checked = false;
   }
+}
+
+function renderDouyinCookieDiagnosticsRows(diagnostics = {}) {
+  if (!diagnostics.has_cookie) {
+    return "";
+  }
+  const important = normalizeItems(diagnostics.present_important_keys).join(" / ") || "未检测到";
+  const missing = normalizeItems(diagnostics.missing_login_keys).join(" / ") || "无";
+  return `
+    <dt>Cookie 字段</dt><dd>${formatNumber(diagnostics.pair_count || 0)} 个；登录态字段 ${formatNumber(diagnostics.login_key_count || 0)} 个</dd>
+    <dt>关键字段</dt><dd>${escapeHtml(important)}</dd>
+    <dt>缺失登录字段</dt><dd>${escapeHtml(missing)}</dd>
+  `;
+}
+
+function creatorCloneCurrentProfileValue() {
+  const quick = creatorCloneUnifiedInputValue();
+  if (quick) {
+    return firstUrlFromText(quick) || quick;
+  }
+  if (!profileForm) {
+    return "";
+  }
+  const formData = new FormData(profileForm);
+  return String(formData.get("profile_url") || "").trim();
+}
+
+function renderDouyinCookieTestResult(test = {}) {
+  if (!douyinCookieTestResult) {
+    return;
+  }
+  const diagnostics = test.cookie_diagnostics || {};
+  const statusClass = test.status === "ok" ? "success" : ["config_only", "not_configured"].includes(test.status) ? "muted-badge" : "warning";
+  const rows = [
+    ["自检状态", test.status || ""],
+    ["Cookie 结构", diagnostics.has_cookie ? `${formatNumber(diagnostics.pair_count || 0)} 个字段，${formatNumber(diagnostics.login_key_count || 0)} 个登录态字段` : "未配置"],
+    ["关键字段", normalizeItems(diagnostics.present_important_keys).join(" / ") || "未检测到"],
+    ["API 请求", test.api_checked ? `已请求，HTTP ${test.status_code || "未知"}` : "未请求"],
+    ["返回类型", test.api_checked ? `${test.is_json ? "JSON" : "非 JSON"}${test.content_type ? ` · ${test.content_type}` : ""}` : "未检测"],
+    ["返回作品", test.api_checked ? `${formatNumber(test.aweme_count || 0)} 条` : "未检测"],
+    ["接口消息", test.api_status_msg || ""],
+  ].filter(([, value]) => value !== "");
+  const nextSteps = normalizeItems(test.safe_next_steps);
+  const endpointResults = normalizeItems(test.endpoint_results);
+  douyinCookieTestResult.className = `settings-test-result ${statusClass}`;
+  douyinCookieTestResult.innerHTML = `
+    <strong>${escapeHtml(test.message || "Cookie API 自检完成。")}</strong>
+    <dl>
+      ${rows.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd>`).join("")}
+    </dl>
+    ${endpointResults.length ? `
+      <div class="endpoint-test-list">
+        <strong>候选接口</strong>
+        ${endpointResults.map((item) => `
+          <span>${escapeHtml(item.endpoint || "")} · ${escapeHtml(item.status || "")}${item.status_code ? ` · HTTP ${escapeHtml(String(item.status_code))}` : ""}${item.aweme_count ? ` · ${formatNumber(item.aweme_count)} 条` : ""}</span>
+        `).join("")}
+      </div>
+    ` : ""}
+    ${nextSteps.length ? `<ul>${nextSteps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul>` : ""}
+  `;
 }
 
 async function loadDataSourceStatus() {
@@ -3043,6 +3190,34 @@ douyinSettingsForm?.addEventListener("submit", async (event) => {
     douyinSaveResult.textContent = `${error.error_code || "ERROR"}：${error.message || "保存失败"}`;
   } finally {
     saveDouyinSettingsButton.disabled = false;
+  }
+});
+
+testDouyinCookieButton?.addEventListener("click", async () => {
+  testDouyinCookieButton.disabled = true;
+  if (douyinCookieTestResult) {
+    douyinCookieTestResult.textContent = "正在自检 Cookie 结构和 Cookie API...";
+  }
+  try {
+    const profileValue = creatorCloneCurrentProfileValue();
+    const payload = {
+      profile_url: firstUrlFromText(profileValue) || profileValue,
+      count: 5,
+    };
+    const response = await fetch("/api/settings/data-sources/douyin/test", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const result = await readJsonResponse(response);
+    renderDouyinCookieTestResult(result.test || {});
+    await loadDataSourceStatus();
+  } catch (error) {
+    if (douyinCookieTestResult) {
+      douyinCookieTestResult.textContent = `${error.error_code || "ERROR"}：${error.message || "Cookie API 自检失败"}`;
+    }
+  } finally {
+    testDouyinCookieButton.disabled = false;
   }
 });
 
@@ -3274,6 +3449,10 @@ profileSelectedBuildButton.addEventListener("click", async () => {
 
 creatorCloneDistillButton.addEventListener("click", async () => {
   await distillSelectedCreatorClone();
+});
+
+creatorCloneBatchDistillButton?.addEventListener("click", async () => {
+  await batchDistillSelectedCreatorClone();
 });
 
 copyCreatorCloneSpecButton.addEventListener("click", async () => {
