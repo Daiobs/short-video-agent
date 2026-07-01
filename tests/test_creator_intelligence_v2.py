@@ -348,6 +348,31 @@ def test_creator_intelligence_project_api_exposes_v2_contract() -> None:
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 
+def test_cookie_runtime_settings_do_not_change_creator_workflow(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", tmp_path / "local_settings.json")
+    sample_set = sample_set_for_v2()
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    before = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()["workflow"]
+    response = client.put(
+        "/api/settings/data-sources/douyin",
+        json={
+            "douyin_cookie": "Cookie: sessionid=workflow-secret; sid_guard=guard; uid_tt=uid; sid_tt=sid",
+            "user_agent": "Workflow Test UA",
+            "referer": "https://www.douyin.com/",
+        },
+    )
+    after = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()["workflow"]
+
+    assert response.status_code == 200
+    assert response.json()["data_sources"]["has_cookie"] is True
+    assert "workflow-secret" not in json.dumps(response.json(), ensure_ascii=False)
+    assert before["state"] == after["state"] == WorkflowState.EVIDENCE_READY
+    assert before["next_action"] == after["next_action"]
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
 def test_creator_intelligence_workflow_api_dispatches_selection() -> None:
     sample_set = sample_set_for_v2()
     sample_set.selected_sample_ids = []

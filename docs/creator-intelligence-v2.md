@@ -206,8 +206,9 @@ Bridge into the existing API:
 
 Initial integration:
 
-- Frontend wizard state now first reads `creator_intelligence.workflow` when present.
-- If the user has newer local selection state than the backend snapshot, the UI falls back to the existing frontend inference instead of being pulled backward.
+- Frontend wizard state now reads `creator_intelligence.workflow.ui.next_action`
+  and `creator_intelligence.workflow.ui.stage`; local UI state is only a display
+  fallback before a project exists.
 - Recommended selection, enrichment, and distillation entry points now sync selected samples through the workflow dispatch API before advancing.
 - Recent project restore now reads `/api/creator-intelligence/projects/{project_id}` first, then adapts the v2 project payload into the existing table view while legacy UI is being retired.
 
@@ -347,9 +348,13 @@ Verification:
 
 Implemented:
 
-- The creator distillation wizard reads `creator_intelligence.workflow` first
-  through `workflowStateFromCreatorIntelligence()` and
-  `getCreatorCloneWizardStateFromWorkflow()`.
+- The creator distillation wizard renders from
+  `creator_intelligence.workflow.ui.stage`, `ui.step_label`, and
+  `ui.next_action`; legacy helper names remain as read-only compatibility
+  aliases.
+- Old frontend-only action states such as `POOL_EMPTY`, `SELECT_TO_ENRICH`,
+  `SELECT_TO_DISTILL`, `ENRICH_EMPTY`, `ENRICH_DONE`, and `EXPORT_EMPTY` are
+  no longer present in the main script.
 - Selection, enrichment, single distillation, and batch distillation paths
   dispatch workflow actions before changing major UI stages.
 - Recent project restore reads `/api/creator-intelligence/projects/{project_id}`
@@ -361,7 +366,9 @@ Verification:
 - `tests/test_p0_workflow.py`
   - static assertions for `dispatchCreatorIntelligenceWorkflowAction`,
     `markCreatorCloneDistillationStarted`, `profilePayloadFromCreatorIntelligenceProject`,
-    and restored `DONE` report rendering.
+    retired v1 action states, and restored `DONE` report rendering.
+- `tests/test_creator_intelligence_v2.py`
+  - `test_cookie_runtime_settings_do_not_change_creator_workflow`
 
 ### Async Job Contract Alignment
 

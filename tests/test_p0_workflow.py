@@ -571,16 +571,16 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "ui.step_label" in script
     assert "workflowNextAction()" in script
     assert "POOL_READY" in script
-    assert "POOL_EMPTY" in script
     assert "SELECT_EMPTY" in script
-    assert "SELECT_TO_ENRICH" in script
-    assert "SELECT_TO_DISTILL" in script
-    assert "ENRICH_EMPTY" in script
     assert "ENRICH_READY" in script
-    assert "ENRICH_DONE" in script
     assert "DISTILL_BLOCKED" in script
     assert "BATCH_DISTILL_READY" in script
-    assert "EXPORT_EMPTY" in script
+    assert "POOL_EMPTY" not in script
+    assert "SELECT_TO_ENRICH" not in script
+    assert "SELECT_TO_DISTILL" not in script
+    assert "ENRICH_EMPTY" not in script
+    assert "ENRICH_DONE" not in script
+    assert "EXPORT_EMPTY" not in script
     assert "/api/settings/data-sources" in script
     assert "dataset.creatorCloneAction" in script
     assert "ready_for_profile_scan" in script
@@ -683,7 +683,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function setCreatorCloneDistillButtonsLocked" in script
     assert "function setCreatorCloneEnrichmentLocked" in script
     assert "function renderSegmentSampleList" in script
-    assert "if (state === \"SELECT_TO_ENRICH\")" in script
+    assert "if (state === \"SELECT_TO_ENRICH\")" not in script
     assert "await buildSelectedProfileQueue();" in script
     assert "if (creatorCloneEnrichmentRunning)" in script
     assert "证据富化任务正在运行。" in script
@@ -9104,18 +9104,18 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "function creatorCloneActionStateForCurrentView" in script
     assert "IMPORT_EMPTY" in script
     assert "POOL_READY" in script
-    assert "POOL_EMPTY" in script
     assert "SELECT_EMPTY" in script
-    assert "SELECT_TO_ENRICH" in script
-    assert "SELECT_TO_DISTILL" in script
-    assert "ENRICH_EMPTY" in script
     assert "ENRICH_READY" in script
-    assert "ENRICH_DONE" in script
     assert "DISTILL_BLOCKED" in script
     assert "DISTILL_READY" in script
     assert "BATCH_DISTILL_READY" in script
-    assert "EXPORT_EMPTY" in script
     assert "EXPORT_READY" in script
+    assert "POOL_EMPTY" not in script
+    assert "SELECT_TO_ENRICH" not in script
+    assert "SELECT_TO_DISTILL" not in script
+    assert "ENRICH_EMPTY" not in script
+    assert "ENRICH_DONE" not in script
+    assert "EXPORT_EMPTY" not in script
     assert "下一步：开始导入素材" in script
     assert "nextAction.label" in script
     assert "ui.step_label" in script

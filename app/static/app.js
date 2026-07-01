@@ -1226,30 +1226,11 @@ function getWizardStep() {
 
 function creatorCloneStateStepIndex(state = getCreatorCloneWizardState()) {
   const uiStep = workflowUiState().step_index;
-  if (uiStep !== undefined && uiStep !== null && state === getCreatorCloneWizardStateFromWorkflow()) {
+  if (uiStep !== undefined && uiStep !== null) {
     return Number(uiStep) || 0;
   }
-  return {
-    IMPORT_EMPTY: 0,
-    IMPORT_READY: 0,
-    POOL_EMPTY: 1,
-    POOL_READY: 1,
-    RECOMMENDED_READY: 2,
-    SELECT_EMPTY: 2,
-    SELECT_TO_ENRICH: 2,
-    SELECT_TO_DISTILL: 2,
-    SAMPLE_SELECTED: 2,
-    ENRICH_EMPTY: 3,
-    ENRICH_READY: 3,
-    ENRICH_DONE: 3,
-    ENRICHING: 3,
-    DISTILL_BLOCKED: 4,
-    DISTILL_READY: 4,
-    BATCH_DISTILL_READY: 4,
-    DISTILLING: 4,
-    EXPORT_EMPTY: 5,
-    EXPORT_READY: 5,
-  }[state] ?? 0;
+  void state;
+  return 0;
 }
 
 function getCreatorCloneStage() {
@@ -1257,14 +1238,7 @@ function getCreatorCloneStage() {
   if (engineStage) {
     return normalizeProfileStage(engineStage);
   }
-  return {
-    0: "import",
-    1: "pool",
-    2: "select",
-    3: "enrich",
-    4: "distill",
-    5: "export",
-  }[creatorCloneStateStepIndex()] || "import";
+  return "import";
 }
 
 function stageIndexFromName(stage) {
@@ -1402,17 +1376,8 @@ function renderCreatorCloneOverview(summary = {}) {
   const items = activeProfileItems();
   const selected = selectedProfileItems();
   const buildable = items.filter(isProfileItemBuildable);
-  const selectedBuildable = selected.filter(isProfileItemBuildable);
   const coverage = profileEvidenceCoverageSummary(items);
-  const nextAction = !items.length
-    ? "先导入一组对标素材"
-    : !selected.length
-      ? `选择 3-${PROFILE_BUILD_MAX_ITEMS} 条样本`
-      : selectedBuildable.some((item) => !item.has_frames)
-      ? "开始富化证据"
-      : selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
-        ? "可以开始分批大模型蒸馏"
-        : "可以开始大模型蒸馏";
+  const nextAction = workflowNextAction()?.summary || creatorCloneStateMeta().summary || "等待 Workflow Engine 返回下一步。";
   const total = summary.scanned_count || items.length;
   profileSummary.innerHTML = `
     <article><span>素材数量</span><strong>${formatNumber(total)}</strong></article>
@@ -2727,38 +2692,18 @@ async function handleWizardPrimaryAction() {
     syncProfileStageToWizard({scroll: true});
     return;
   }
-  if (state === "POOL_EMPTY") {
-    setProfileStageView("import", {scroll: true});
-    renderCreatorCloneNextAction();
-    return;
-  }
   if (["POOL_READY", "RECOMMENDED_READY"].includes(state)) {
     await useRecommendedProfileSamples();
     return;
   }
-  if (state === "SELECT_TO_ENRICH") {
-    setProfileStageView("enrich", {scroll: true});
-    await buildSelectedProfileQueue();
-    return;
-  }
-  if (state === "SELECT_TO_DISTILL") {
-    setProfileStageView("distill", {scroll: true});
-    renderCreatorCloneNextAction();
-    return;
-  }
-  if (state === "ENRICH_EMPTY" || state === "DISTILL_BLOCKED") {
+  if (state === "SELECT_EMPTY" || state === "DISTILL_BLOCKED") {
     setProfileStageView("select", {scroll: true});
     renderCreatorCloneNextAction();
     return;
   }
-  if (["SAMPLE_SELECTED", "ENRICH_READY"].includes(state)) {
+  if (state === "ENRICH_READY") {
     setProfileStageView("enrich", {scroll: true});
     await buildSelectedProfileQueue();
-    return;
-  }
-  if (state === "ENRICH_DONE") {
-    setProfileStageView("distill", {scroll: true});
-    renderCreatorCloneNextAction();
     return;
   }
   if (state === "DISTILL_READY") {
@@ -2769,11 +2714,6 @@ async function handleWizardPrimaryAction() {
   if (state === "BATCH_DISTILL_READY") {
     setProfileStageView("distill", {scroll: true});
     await batchDistillSelectedCreatorClone({confirm: true});
-    return;
-  }
-  if (state === "EXPORT_EMPTY") {
-    setProfileStageView("distill", {scroll: true});
-    renderCreatorCloneNextAction();
     return;
   }
   if (state === "EXPORT_READY") {
