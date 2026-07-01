@@ -315,7 +315,7 @@ function forgetRecentCreatorCloneSetId() {
 }
 
 async function restoreRecentCreatorCloneSet() {
-  if (recentCreatorCloneRestoreAttempted || currentCloneSetId || profileItems.length) {
+  if (recentCreatorCloneRestoreAttempted || currentCloneSetId || activeProfileItems().length) {
     return false;
   }
   recentCreatorCloneRestoreAttempted = true;
@@ -339,9 +339,10 @@ async function restoreRecentCreatorCloneSet() {
         : "pool";
       setProfileStageView(fallbackStage);
       if (profileScanStatus) {
+        const itemCount = activeProfileItems().length;
         profileScanStatus.textContent = selected.length
           ? `已恢复上次素材池和 ${formatNumber(selected.length)} 条已选样本。`
-          : `已恢复上次素材池：${formatNumber(profileItems.length)} 条素材。`;
+          : `已恢复上次素材池：${formatNumber(itemCount)} 条素材。`;
       }
     }
     return true;
@@ -359,7 +360,7 @@ async function restoreRecentProfileBuildJob(setId) {
   const shouldUseStoredJob = state && state.set_id === setId;
   const selectedKeys = new Set(shouldUseStoredJob ? state.selected_sample_ids : []);
   if (selectedKeys.size) {
-    setProfileSelection(profileItems.filter((item) => profileItemMatchesKeySet(item, selectedKeys)));
+    setProfileSelection(activeProfileItems().filter((item) => profileItemMatchesKeySet(item, selectedKeys)));
   }
   try {
     const jobUrl = shouldUseStoredJob
@@ -375,7 +376,7 @@ async function restoreRecentProfileBuildJob(setId) {
     const resultItems = normalizeItems(job.result_json?.items);
     if (!selectedKeys.size && resultItems.length) {
       const queueKeys = new Set(resultItems.map(profileItemKey).filter(Boolean));
-      setProfileSelection(profileItems.filter((item) => profileItemMatchesKeySet(item, queueKeys)));
+      setProfileSelection(activeProfileItems().filter((item) => profileItemMatchesKeySet(item, queueKeys)));
     }
     rememberRecentProfileBuildState({
       setId,
@@ -628,6 +629,38 @@ function legacyProfileItemFromCreatorSample(sample = {}) {
     tags: normalizeItems(sample.tags || raw.tags),
     notes: raw.notes || "",
   };
+}
+
+function creatorProjectProfileItems() {
+  return normalizeItems(currentCreatorIntelligenceProject?.samples).map(legacyProfileItemFromCreatorSample);
+}
+
+function activeProfileItems() {
+  const projectItems = creatorProjectProfileItems();
+  const localItems = normalizeItems(profileItems);
+  if (!projectItems.length) {
+    return localItems;
+  }
+  if (!localItems.length) {
+    return projectItems;
+  }
+  const localByKey = new Map(
+    localItems
+      .map((item) => [profileItemKey(item), item])
+      .filter(([key]) => Boolean(key)),
+  );
+  const merged = projectItems.map((item) => {
+    const local = localByKey.get(profileItemKey(item));
+    return local ? {...item, ...local} : item;
+  });
+  const projectKeys = new Set(merged.map(profileItemKey).filter(Boolean));
+  localItems.forEach((item) => {
+    const key = profileItemKey(item);
+    if (key && !projectKeys.has(key)) {
+      merged.push(item);
+    }
+  });
+  return merged;
 }
 
 function cloneSetFromCreatorIntelligenceProject(payload = {}) {
@@ -923,12 +956,12 @@ function filterProfileItemsByMedia(items, mediaType) {
 }
 
 function visibleProfileItems() {
-  const mediaFiltered = filterProfileItemsByMedia(profileItems, profileMediaFilter?.value || "all");
+  const mediaFiltered = filterProfileItemsByMedia(activeProfileItems(), profileMediaFilter?.value || "all");
   return sortProfileItems(filterProfileItems(mediaFiltered, profileEvidenceFilter?.value || "all"), profileSort?.value || "like_count");
 }
 
 function selectedProfileItems() {
-  return profileItems.filter((item) => profileSelectedKeys.has(profileItemKey(item)));
+  return activeProfileItems().filter((item) => profileSelectedKeys.has(profileItemKey(item)));
 }
 
 function profileItemKey(item) {
@@ -1102,7 +1135,7 @@ function getCreatorCloneWizardState() {
   if (workflowState) {
     return workflowState;
   }
-  if (!profileItems.length) {
+  if (!activeProfileItems().length) {
     return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
   }
   const selected = selectedProfileItems();
@@ -1189,7 +1222,7 @@ function renderProfileStageView() {
     }
   });
   if (profileResultsCard) {
-    const shouldShowResultContainer = activeStage !== "import" && (profileItems.length || currentCloneSetId || currentCreatorCloneResult);
+    const shouldShowResultContainer = activeStage !== "import" && (activeProfileItems().length || currentCloneSetId || currentCreatorCloneResult);
     profileResultsCard.classList.toggle("hidden", !shouldShowResultContainer);
   }
 }
@@ -1228,12 +1261,12 @@ function creatorCloneStateMeta(state = getCreatorCloneWizardState()) {
     POOL_READY: {
       step: "当前步骤：构建素材池",
       button: "下一步：使用推荐样本继续",
-      summary: `已导入 ${formatNumber(profileItems.length)} 条素材，可使用推荐组合继续，或展开手动调整样本。`,
+      summary: `已导入 ${formatNumber(activeProfileItems().length)} 条素材，可使用推荐组合继续，或展开手动调整样本。`,
     },
     RECOMMENDED_READY: {
       step: "当前步骤：选择 N 条样本",
       button: "下一步：使用推荐样本继续",
-      summary: `已导入 ${formatNumber(profileItems.length)} 条素材，推荐组合包含 ${formatNumber(recommended.length)} 条样本。`,
+      summary: `已导入 ${formatNumber(activeProfileItems().length)} 条素材，推荐组合包含 ${formatNumber(recommended.length)} 条样本。`,
     },
     SELECT_EMPTY: {
       step: "当前步骤：选择 N 条样本",
@@ -1316,15 +1349,16 @@ function creatorCloneActionStateForCurrentView(state = getCreatorCloneWizardStat
   }
   const activeStage = normalizeProfileStage(profileStageView);
   const selected = selectedProfileItems();
+  const items = activeProfileItems();
   if (activeStage === "import") {
     return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
   }
   if (activeStage === "pool") {
-    if (!profileItems.length) return "POOL_EMPTY";
+    if (!items.length) return "POOL_EMPTY";
     return recommendedProfileSampleMix().length ? "RECOMMENDED_READY" : "POOL_READY";
   }
   if (activeStage === "select") {
-    if (!profileItems.length) return "POOL_EMPTY";
+    if (!items.length) return "POOL_EMPTY";
     if (!selected.length) return "SELECT_EMPTY";
     return hasPendingEnrichment(selected) ? "SELECT_TO_ENRICH" : "SELECT_TO_DISTILL";
   }
@@ -1400,11 +1434,12 @@ function renderCreatorCloneOverview(summary = {}) {
   if (!profileSummary) {
     return;
   }
+  const items = activeProfileItems();
   const selected = selectedProfileItems();
-  const buildable = profileItems.filter(isProfileItemBuildable);
+  const buildable = items.filter(isProfileItemBuildable);
   const selectedBuildable = selected.filter(isProfileItemBuildable);
-  const coverage = profileEvidenceCoverageSummary(profileItems);
-  const nextAction = !profileItems.length
+  const coverage = profileEvidenceCoverageSummary(items);
+  const nextAction = !items.length
     ? "先导入一组对标素材"
     : !selected.length
       ? `选择 3-${PROFILE_BUILD_MAX_ITEMS} 条样本`
@@ -1413,7 +1448,7 @@ function renderCreatorCloneOverview(summary = {}) {
       : selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
         ? "可以开始分批大模型蒸馏"
         : "可以开始大模型蒸馏";
-  const total = summary.scanned_count || profileItems.length;
+  const total = summary.scanned_count || items.length;
   profileSummary.innerHTML = `
     <article><span>素材数量</span><strong>${formatNumber(total)}</strong></article>
     <article><span>已选样本</span><strong>${formatNumber(selected.length)}</strong></article>
@@ -1748,7 +1783,7 @@ function renderProfileDecisionBoard(payload) {
   if (!profileDecisionBoard) {
     return;
   }
-  const items = normalizeItems(profileItems);
+  const items = activeProfileItems();
   if (!items.length) {
     profileDecisionBoard.classList.add("hidden");
     profileDecisionBoard.innerHTML = "";
@@ -1820,8 +1855,9 @@ function renderProfileSegmentsPreview(segments) {
   if (!profileSegmentsPreview) {
     return;
   }
-  const latestItems = profileItems.length
-    ? sortProfileItems(profileItems, "create_time").slice(0, 5).map((item) => ({
+  const items = activeProfileItems();
+  const latestItems = items.length
+    ? sortProfileItems(items, "create_time").slice(0, 5).map((item) => ({
         ...item,
         metric_value: item.create_time || "",
       }))
@@ -2651,7 +2687,7 @@ async function runCreatorCloneImportStep() {
       return;
     }
     await scanProfile("public");
-    if (!profileItems.length) {
+    if (!activeProfileItems().length) {
       setActiveImportMode("manual");
       profileManualLinks?.focus();
       profileScanStatus.textContent = profileScanStatus.textContent || "主页导入未得到素材，已切换到作品链接粘贴方式。";
@@ -3105,17 +3141,17 @@ async function buildSelectedProfileQueue() {
 }
 
 function topProfileItemsBy(key, count = 3) {
-  return sortProfileItems(profileItems, key).slice(0, count);
+  return sortProfileItems(activeProfileItems(), key).slice(0, count);
 }
 
 function lowPerformanceProfileItems(count = 3) {
-  return [...profileItems]
+  return [...activeProfileItems()]
     .sort((left, right) => Number(left.engagement_score || 0) - Number(right.engagement_score || 0))
     .slice(0, count);
 }
 
 function needsEnrichmentProfileItems(count = 5) {
-  return sortProfileItems(profileItems.filter((item) => isProfileItemBuildable(item) && !item.has_frames), "engagement_score").slice(0, count);
+  return sortProfileItems(activeProfileItems().filter((item) => isProfileItemBuildable(item) && !item.has_frames), "engagement_score").slice(0, count);
 }
 
 function profileEvidenceScore(item) {
@@ -3129,7 +3165,7 @@ function profileEvidenceScore(item) {
 }
 
 function readyEvidenceProfileItems(count = 5) {
-  return [...profileItems]
+  return [...activeProfileItems()]
     .filter((item) => profileEvidenceScore(item) >= 2)
     .sort((left, right) => {
       const scoreDiff = profileEvidenceScore(right) - profileEvidenceScore(left);
@@ -3318,7 +3354,7 @@ function profilePresetLabel(preset) {
 }
 
 function applyProfilePresetSelection(preset) {
-  if (!profileItems.length) {
+  if (!activeProfileItems().length) {
     profileScanStatus.textContent = "请先扫描或导入账号素材清单。";
     return;
   }
@@ -3721,7 +3757,7 @@ async function distillSelectedCreatorClone(options = {}) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         sample_set_id: currentCloneSetId,
-        samples: currentCloneSetId ? [] : profileItems.map(creatorCloneSamplePayload),
+        samples: currentCloneSetId ? [] : activeProfileItems().map(creatorCloneSamplePayload),
         selected_sample_ids: selectedIds,
         distill_mode: "quick",
         include_case_reports: true,
@@ -3778,7 +3814,7 @@ async function batchDistillSelectedCreatorClone(options = {}) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         sample_set_id: currentCloneSetId,
-        samples: currentCloneSetId ? [] : profileItems.map(creatorCloneSamplePayload),
+        samples: currentCloneSetId ? [] : activeProfileItems().map(creatorCloneSamplePayload),
         selected_sample_ids: selectedIds,
         distill_mode: "quick",
         batch_size: CREATOR_CLONE_MAX_DISTILL_SAMPLES,

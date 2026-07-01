@@ -532,6 +532,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "currentCreatorIntelligenceProject" in script
     assert "currentCreatorIntelligenceStrategy" in script
     assert "function applyCreatorIntelligencePayload" in script
+    assert "function creatorProjectProfileItems" in script
+    assert "function activeProfileItems" in script
+    assert "filterProfileItemsByMedia(activeProfileItems()" in script
+    assert "return activeProfileItems().filter((item) => profileSelectedKeys.has(profileItemKey(item)))" in script
+    assert "const items = activeProfileItems();" in script
     assert "function creatorStrategyFromResult" in script
     assert "function creatorCloneResultFromStrategyOutput" in script
     assert "function renderCreatorStrategyOutput" in script
