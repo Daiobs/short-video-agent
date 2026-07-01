@@ -157,6 +157,7 @@ let profileScanPayload = null;
 let currentCloneSetId = "";
 let currentDistillPrompt = "";
 let currentCreatorCloneResult = null;
+let currentCreatorIntelligenceProject = null;
 let currentCreatorIntelligenceWorkflow = null;
 let currentCreatorIntelligenceBehavior = null;
 let chromeHelperStatusLoaded = false;
@@ -325,14 +326,9 @@ async function restoreRecentCreatorCloneSet() {
     profileScanStatus.textContent = "正在恢复上次素材池...";
   }
   try {
-    const response = await fetch(`/api/creator-clone/sets/${encodeURIComponent(setId)}`, {cache: "no-store"});
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}`, {cache: "no-store"});
     const payload = await readJsonResponse(response);
-    renderProfileResults({
-      set: payload.set,
-      capture_audit: payload.capture_audit,
-      handoff_manifest: payload.handoff_manifest,
-      provider: "recent creator clone set",
-    });
+    renderProfileResults(profilePayloadFromCreatorIntelligenceProject(payload));
     const restoredQueue = await restoreRecentProfileBuildJob(setId);
     if (!restoredQueue) {
       const selected = selectedProfileItems();
@@ -591,6 +587,88 @@ function normalizeItems(value) {
     return value.filter((item) => item !== undefined && item !== null && item !== "");
   }
   return [value];
+}
+
+function legacyProfileItemFromCreatorSample(sample = {}) {
+  const metrics = sample.metrics || {};
+  const evidence = sample.evidence || {};
+  const raw = sample.raw || {};
+  return {
+    sample_id: sample.sample_id || raw.sample_id || "",
+    source_type: sample.source || raw.source_type || "unknown",
+    source_url: sample.source_url || raw.source_url || "",
+    webpage_url: sample.source_url || raw.webpage_url || raw.source_url || "",
+    aweme_id: sample.platform_item_id || raw.aweme_id || "",
+    title: sample.title || raw.title || "",
+    desc: sample.description || raw.desc || "",
+    author: sample.author || raw.author || "",
+    cover_url: sample.cover_url || raw.cover_url || "",
+    media_type: sample.media_kind || raw.media_type || "unknown",
+    like_count: Number(metrics.like_count || raw.like_count || 0),
+    comment_count: Number(metrics.comment_count || raw.comment_count || 0),
+    share_count: Number(metrics.share_count || raw.share_count || 0),
+    collect_count: Number(metrics.collect_count || raw.collect_count || 0),
+    view_count: Number(metrics.view_count || raw.view_count || 0),
+    engagement_score: Number(metrics.engagement_score || raw.engagement_score || 0),
+    create_time: sample.created_at || raw.create_time || "",
+    case_id: sample.case_id || raw.case_id || "",
+    understanding_level: evidence.level || raw.understanding_level || "metadata_only",
+    has_video: Boolean(evidence.has_video || raw.has_video),
+    has_frames: Boolean(evidence.has_frames || raw.has_frames),
+    has_asr: Boolean(evidence.has_asr || raw.has_asr),
+    has_ocr: Boolean(evidence.has_ocr || raw.has_ocr),
+    has_comments: Boolean(evidence.has_comments || raw.has_comments),
+    enrichment_status: evidence.enrichment_status || raw.enrichment_status || "pending",
+    asr_status: evidence.asr_status || raw.asr_status || "pending",
+    ocr_status: evidence.ocr_status || raw.ocr_status || "pending",
+    analysis_status: evidence.analysis_status || raw.analysis_status || "not_analyzed",
+    selected: Boolean(sample.selected || raw.selected),
+    tags: normalizeItems(sample.tags || raw.tags),
+    notes: raw.notes || "",
+  };
+}
+
+function cloneSetFromCreatorIntelligenceProject(payload = {}) {
+  const project = payload.project || {};
+  if (!project.project_id) {
+    return null;
+  }
+  const profile = project.profile || {};
+  const rawProfile = profile.raw_profile || {};
+  return {
+    set_id: project.project_id,
+    title: project.title || "创作者蒸馏素材池",
+    creator_name: profile.display_name || "",
+    source_platform: profile.platform || "unknown",
+    content_profile: rawProfile.content_profile || "auto",
+    profile_metadata: {
+      ...rawProfile,
+      sec_user_id: rawProfile.sec_user_id || profile.creator_id || "",
+      profile_url: rawProfile.profile_url || profile.source_url || "",
+      bio: rawProfile.bio || profile.bio || "",
+      source_platform: rawProfile.source_platform || profile.platform || "unknown",
+    },
+    samples: normalizeItems(project.samples).map(legacyProfileItemFromCreatorSample),
+    selected_sample_ids: normalizeItems(project.selected_sample_ids),
+    warnings: normalizeItems(project.warnings),
+    created_at: project.created_at || "",
+    sample_count: project.sample_count || normalizeItems(project.samples).length,
+    selected_count: project.selected_count || normalizeItems(project.selected_sample_ids).length,
+    performance_segments: payload.behavior_model?.performance_segments || {},
+  };
+}
+
+function profilePayloadFromCreatorIntelligenceProject(payload = {}) {
+  return {
+    set: cloneSetFromCreatorIntelligenceProject(payload),
+    creator_intelligence: {
+      project: payload.project || null,
+      workflow: payload.workflow || null,
+      behavior_model: payload.behavior_model || null,
+      strategy_output: payload.strategy_output || null,
+    },
+    provider: "creator intelligence project",
+  };
 }
 
 function formatReportValue(value) {
@@ -920,6 +998,7 @@ function hasPendingEnrichment(items = selectedProfileItems()) {
 
 function applyCreatorIntelligencePayload(payload = {}) {
   const intelligence = payload?.creator_intelligence || payload?.set?.creator_intelligence || null;
+  currentCreatorIntelligenceProject = intelligence?.project || payload?.project || null;
   currentCreatorIntelligenceWorkflow = intelligence?.workflow || null;
   currentCreatorIntelligenceBehavior = intelligence?.behavior_model || null;
 }

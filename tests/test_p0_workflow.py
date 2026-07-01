@@ -511,6 +511,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "shortVideoAgent.recentProfileStage" in script
     assert "function restoreRecentCreatorCloneSet" in script
     assert "function restoreRecentProfileBuildJob" in script
+    assert "function profilePayloadFromCreatorIntelligenceProject" in script
+    assert "function legacyProfileItemFromCreatorSample" in script
+    assert "function cloneSetFromCreatorIntelligenceProject" in script
     assert "function rememberRecentProfileBuildState" in script
     assert "function rememberRecentProfileStage" in script
     assert "function mergeProfileQueueItems" in script
@@ -518,6 +521,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function forgetRecentCreatorCloneSetId" in script
     assert "isSafeCreatorCloneSetId" in script
     assert "/api/creator-clone/sets/" in script
+    assert "/api/creator-intelligence/projects/" in script
     assert "正在恢复上次素材池" in script
     assert "已恢复上次素材池" in script
     assert "function profileScanMaxPagesForCount" in script
@@ -525,6 +529,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function useRecommendedProfileSamples" in script
     assert "currentCreatorIntelligenceWorkflow" in script
     assert "currentCreatorIntelligenceBehavior" in script
+    assert "currentCreatorIntelligenceProject" in script
     assert "function applyCreatorIntelligencePayload" in script
     assert "function workflowStateFromCreatorIntelligence" in script
     assert "function wizardStateFromWorkflowState" in script

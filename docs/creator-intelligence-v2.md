@@ -208,6 +208,7 @@ Initial integration:
 - Frontend wizard state now first reads `creator_intelligence.workflow` when present.
 - If the user has newer local selection state than the backend snapshot, the UI falls back to the existing frontend inference instead of being pulled backward.
 - Recommended selection, enrichment, and distillation entry points now sync selected samples through the workflow dispatch API before advancing.
+- Recent project restore now reads `/api/creator-intelligence/projects/{project_id}` first, then adapts the v2 project payload into the existing table view while legacy UI is being retired.
 
 ### M4: Cognition Layer Contract
 
