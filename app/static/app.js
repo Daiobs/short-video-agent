@@ -998,7 +998,7 @@ function hasPendingEnrichment(items = selectedProfileItems()) {
 
 function applyCreatorIntelligencePayload(payload = {}) {
   const intelligence = payload?.creator_intelligence || payload?.set?.creator_intelligence || null;
-  currentCreatorIntelligenceProject = intelligence?.project || payload?.project || null;
+  currentCreatorIntelligenceProject = intelligence?.project || payload?.project || currentCreatorIntelligenceProject;
   currentCreatorIntelligenceWorkflow = intelligence?.workflow || null;
   currentCreatorIntelligenceBehavior = intelligence?.behavior_model || null;
 }

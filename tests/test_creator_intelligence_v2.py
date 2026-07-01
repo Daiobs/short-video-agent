@@ -154,6 +154,7 @@ def test_creator_clone_set_endpoint_exposes_creator_intelligence_state() -> None
     assert response.status_code == 200
     payload = response.json()
     intelligence = payload["creator_intelligence"]
+    assert intelligence["project"]["project_id"] == sample_set.set_id
     assert intelligence["workflow"]["state"] == WorkflowState.EVIDENCE_READY
     assert intelligence["workflow"]["selected_count"] == 1
     assert intelligence["behavior_model"]["project_id"] == sample_set.set_id
@@ -177,6 +178,7 @@ def test_creator_clone_set_endpoint_restores_done_state_from_strategy_output() -
 
     assert response.status_code == 200
     intelligence = response.json()["creator_intelligence"]
+    assert intelligence["project"]["project_id"] == sample_set.set_id
     assert intelligence["workflow"]["state"] == WorkflowState.DONE
     assert intelligence["workflow"]["has_strategy_output"] is True
     assert intelligence["strategy_output"] == strategy

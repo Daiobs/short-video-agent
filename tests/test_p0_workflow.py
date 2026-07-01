@@ -10254,6 +10254,7 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
     assert payload["result"]["creator_clone_strategy"]["content_strategy"]
     assert payload["result"]["creator_clone_strategy"]["anti_patterns"] == ["硬广"]
     assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
+    assert payload["creator_intelligence"]["project"]["project_id"] == payload["set"]["set_id"]
     assert payload["creator_intelligence"]["strategy_output"] == payload["result"]["creator_clone_strategy"]
     assert Path(payload["exports"]["creator_clone_result_json"]).is_file()
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
@@ -10393,6 +10394,7 @@ def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch
     assert payload["result"]["summary"] == "后台任务蒸馏完成。"
     assert payload["result"]["sample_overview"]["selected_count"] == 2
     assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
+    assert payload["creator_intelligence"]["project"]["project_id"] == payload["set"]["set_id"]
     assert payload["creator_intelligence"]["strategy_output"] == payload["result"]["creator_clone_strategy"]
     assert Path(payload["exports"]["creator_clone_result_json"]).is_file()
     assert Path(payload["exports"]["creator_clone_md"]).is_file()

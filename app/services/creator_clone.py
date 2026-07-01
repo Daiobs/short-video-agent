@@ -635,7 +635,10 @@ def creator_intelligence_payload_for_sample_set(sample_set: CloneSampleSet, stra
         engine.strategy_output = strategy
         engine.state = WorkflowState.DONE
         engine.message = "Creator strategy output ready."
-    payload = {"workflow": engine.get_state().to_dict()}
+    payload = {
+        "project": project.to_dict(),
+        "workflow": engine.get_state().to_dict(),
+    }
     if project.selected_samples:
         payload["behavior_model"] = build_behavior_representation(project).to_dict()
     if strategy:
