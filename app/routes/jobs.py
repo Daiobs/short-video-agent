@@ -1087,19 +1087,20 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 db.commit()
 
         final_result = _profile_queue_result(queue_items)
-        updated_set = None
+        updated_sample_set = None
         if sample_set_id and selected_sample_ids:
             try:
-                updated_set = update_sample_set_selection(sample_set_id, selected_sample_ids).to_dict()
+                updated_sample_set = update_sample_set_selection(sample_set_id, selected_sample_ids)
             except AppError as error:
                 final_result["set_selection_error"] = error.as_dict()
         if sample_set_id and completed_artifacts:
             try:
-                updated_set = update_sample_set_with_case_artifacts(sample_set_id, completed_artifacts).to_dict()
+                updated_sample_set = update_sample_set_with_case_artifacts(sample_set_id, completed_artifacts)
             except AppError as error:
                 final_result["set_update_error"] = error.as_dict()
-        if updated_set:
-            final_result["set"] = updated_set
+        if updated_sample_set:
+            final_result["set"] = updated_sample_set.to_dict()
+            final_result["creator_intelligence"] = creator_intelligence_payload_for_sample_set(updated_sample_set)
         counts = _profile_queue_counts(queue_items)
         job = db.get(Job, job_id)
         if job:

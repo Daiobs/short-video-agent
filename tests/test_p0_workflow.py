@@ -3212,6 +3212,11 @@ def test_profile_build_cases_queue_backfills_asr_ocr_evidence_into_sample_set(mo
     assert any("素材包" in note for note in result["pipeline_summary"]["notes"])
     assert any("本轮选中 1 条" in note for note in result["pipeline_summary"]["notes"])
     assert result["set"]["selected_sample_ids"] == [f"sample_{aweme_id}"]
+    assert result["creator_intelligence"]["project"]["project_id"] == set_id
+    assert result["creator_intelligence"]["workflow"]["state"] == "EVIDENCE_READY"
+    assert result["creator_intelligence"]["workflow"]["selected_count"] == 1
+    assert result["creator_intelligence"]["behavior_model"]["selected_count"] == 1
+    assert result["creator_intelligence"]["behavior_model"]["evidence_matrix"]["with_keyframes"] == 1
     updated_sample = load_sample_set(set_id).samples[0]
     assert updated_sample.case_id == case_id
     assert updated_sample.has_video is True
