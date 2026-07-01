@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 import secrets
 import time
 from pathlib import Path
@@ -18,6 +16,7 @@ from app.services.creator_clone import (
     build_sample_set,
     build_sample_set_from_handoff_manifest,
     creator_clone_dir,
+    creator_intelligence_payload_for_sample_set,
     distill_creator_clone,
     export_paths,
     load_sample_set,
@@ -30,8 +29,6 @@ from app.services.creator_clone import (
 from app.services.creator_intelligence import (
     WorkflowAction,
     WorkflowEngine,
-    WorkflowState,
-    build_behavior_representation,
     project_from_clone_sample_set,
 )
 from app.services.local_chrome import load_capture_audit, load_handoff_manifest, local_helper_security_contract
@@ -142,34 +139,6 @@ def creator_clone_handoff_token():
     }
 
 
-def load_creator_strategy_output(set_id: str) -> dict:
-    result_path = creator_clone_dir(set_id) / "creator_clone_result.json"
-    if not result_path.is_file():
-        return {}
-    try:
-        payload = json.loads(result_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    strategy = payload.get("creator_clone_strategy") if isinstance(payload, dict) else {}
-    return strategy if isinstance(strategy, dict) else {}
-
-
-def creator_intelligence_payload(sample_set, strategy_output: dict | None = None) -> dict:
-    project = project_from_clone_sample_set(sample_set)
-    engine = WorkflowEngine.from_project(project)
-    strategy = strategy_output if isinstance(strategy_output, dict) else load_creator_strategy_output(sample_set.set_id)
-    if strategy:
-        engine.strategy_output = strategy
-        engine.state = WorkflowState.DONE
-        engine.message = "Creator strategy output ready."
-    payload = {"workflow": engine.get_state().to_dict()}
-    if project.selected_samples:
-        payload["behavior_model"] = build_behavior_representation(project).to_dict()
-    if strategy:
-        payload["strategy_output"] = strategy
-    return payload
-
-
 def normalize_selected_sample_ids(sample_set, selected_sample_ids: list[str]) -> list[str]:
     selected_keys = {str(value) for value in selected_sample_ids if str(value)}
     selected: list[str] = []
@@ -212,7 +181,7 @@ def get_creator_clone_set(set_id: str):
             "set": sample_set.to_dict(),
             "has_result": result_path.is_file(),
             "has_prompt": prompt_path.is_file(),
-            "creator_intelligence": creator_intelligence_payload(sample_set),
+            "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
             "capture_audit": load_capture_audit(set_id),
             "handoff_manifest": load_handoff_manifest(set_id),
             "exports": export_paths(set_id),
@@ -236,7 +205,7 @@ def dispatch_creator_clone_workflow(set_id: str, payload: CreatorCloneWorkflowDi
         return {
             "ok": True,
             "set": sample_set.to_dict(),
-            "creator_intelligence": creator_intelligence_payload(sample_set),
+            "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
             "exports": export_paths(set_id),
         }
     except ValueError as error:
@@ -275,7 +244,7 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
             return {
                 "ok": True,
                 **result,
-                "creator_intelligence": creator_intelligence_payload(sample_set, (result.get("result") or {}).get("creator_clone_strategy")),
+                "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set, (result.get("result") or {}).get("creator_clone_strategy")),
             }
         except AppError as error:
             if error.code not in RECOVERABLE_DISTILL_ERROR_CODES:

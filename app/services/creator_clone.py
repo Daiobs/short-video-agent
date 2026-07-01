@@ -24,7 +24,14 @@ from app.services.llm_settings import llm_is_configured
 from app.services.runtime_settings import effective_llm_settings
 from app.services.profile_scan import scan_profile
 from app.providers.profile_base import ProfileScanRequest
-from app.services.creator_intelligence import CreatorCloneStrategy, build_behavior_representation, project_from_clone_selection
+from app.services.creator_intelligence import (
+    CreatorCloneStrategy,
+    WorkflowEngine,
+    WorkflowState,
+    build_behavior_representation,
+    project_from_clone_sample_set,
+    project_from_clone_selection,
+)
 
 
 VALID_SOURCE_TYPES = {"douyin", "xhs", "bili", "local", "manual", "unknown"}
@@ -598,6 +605,34 @@ def update_sample_set_selection(set_id: str, selected_sample_ids: list[str]) -> 
     sample_set.selected_sample_ids = selected
     save_sample_set(sample_set)
     return sample_set
+
+
+def load_creator_strategy_output(set_id: str) -> dict:
+    result_path = creator_clone_dir(set_id) / "creator_clone_result.json"
+    if not result_path.is_file():
+        return {}
+    try:
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    strategy = payload.get("creator_clone_strategy") if isinstance(payload, dict) else {}
+    return strategy if isinstance(strategy, dict) else {}
+
+
+def creator_intelligence_payload_for_sample_set(sample_set: CloneSampleSet, strategy_output: dict | None = None) -> dict:
+    project = project_from_clone_sample_set(sample_set)
+    engine = WorkflowEngine.from_project(project)
+    strategy = strategy_output if isinstance(strategy_output, dict) else load_creator_strategy_output(sample_set.set_id)
+    if strategy:
+        engine.strategy_output = strategy
+        engine.state = WorkflowState.DONE
+        engine.message = "Creator strategy output ready."
+    payload = {"workflow": engine.get_state().to_dict()}
+    if project.selected_samples:
+        payload["behavior_model"] = build_behavior_representation(project).to_dict()
+    if strategy:
+        payload["strategy_output"] = strategy
+    return payload
 
 
 def dedupe_samples(samples: list[CloneSample]) -> tuple[list[CloneSample], int]:

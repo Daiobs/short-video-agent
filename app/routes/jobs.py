@@ -27,6 +27,7 @@ from app.services.creator_clone import (
     CloneSampleSet,
     MAX_DISTILL_SAMPLES,
     batch_distill_creator_clone,
+    creator_intelligence_payload_for_sample_set,
     dedupe_samples,
     distill_creator_clone,
     load_sample_set,
@@ -1198,7 +1199,20 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
             )
             job = db.get(Job, job_id)
             if job:
-                _set_job(job, "success", 100, "创作者克隆蒸馏完成", result={"ok": True, **result})
+                _set_job(
+                    job,
+                    "success",
+                    100,
+                    "创作者克隆蒸馏完成",
+                    result={
+                        "ok": True,
+                        **result,
+                        "creator_intelligence": creator_intelligence_payload_for_sample_set(
+                            sample_set,
+                            (result.get("result") or {}).get("creator_clone_strategy"),
+                        ),
+                    },
+                )
                 db.commit()
         except AppError as error:
             if error.code not in RECOVERABLE_DISTILL_ERROR_CODES:
@@ -1277,7 +1291,20 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         job = db.get(Job, job_id)
         if job:
             message = "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型"
-            _set_job(job, "success", 100, message, result={"ok": bool(result.get("result")), **result})
+            _set_job(
+                job,
+                "success",
+                100,
+                message,
+                result={
+                    "ok": bool(result.get("result")),
+                    **result,
+                    "creator_intelligence": creator_intelligence_payload_for_sample_set(
+                        sample_set,
+                        (result.get("result") or {}).get("creator_clone_strategy"),
+                    ),
+                },
+            )
             db.commit()
     except AppError as error:
         job = db.get(Job, job_id)
