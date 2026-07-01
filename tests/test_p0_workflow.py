@@ -9846,6 +9846,9 @@ def test_creator_clone_prompt_marks_metadata_only_samples() -> None:
     assert "结构化认知模型" in prompt
     assert "performance_segments" in prompt
     assert "media_mix" in prompt
+    assert "creator_clone_strategy" in prompt
+    assert "content_strategy" in prompt
+    assert "validation_rules" in prompt
     assert "账号可见资料" in prompt
     assert "甜美 COS 账号" in prompt
     assert "follower_count" in prompt
@@ -10237,6 +10240,9 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
     assert payload["ok"] is True
     assert payload["result"]["summary"] == "用轻剧情和标题判断题驱动停留。"
     assert payload["result"]["sample_overview"]["selected_count"] == 2
+    assert payload["result"]["creator_clone_strategy"]["positioning"] == "现场轻剧情；快速看到人物反应；景区互动短剧"
+    assert payload["result"]["creator_clone_strategy"]["content_strategy"]
+    assert payload["result"]["creator_clone_strategy"]["anti_patterns"] == ["硬广"]
     assert Path(payload["exports"]["creator_clone_result_json"]).is_file()
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
 

@@ -24,7 +24,7 @@ from app.services.llm_settings import llm_is_configured
 from app.services.runtime_settings import effective_llm_settings
 from app.services.profile_scan import scan_profile
 from app.providers.profile_base import ProfileScanRequest
-from app.services.creator_intelligence import build_behavior_representation, project_from_clone_selection
+from app.services.creator_intelligence import CreatorCloneStrategy, build_behavior_representation, project_from_clone_selection
 
 
 VALID_SOURCE_TYPES = {"douyin", "xhs", "bili", "local", "manual", "unknown"}
@@ -1734,7 +1734,17 @@ def build_final_creator_clone_reduce_prompt(
 def _unique_text_values(values, limit: int = 8, item_limit: int = 100) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
-    rows = values if isinstance(values, list) else [values]
+    rows: list = []
+
+    def add_row(item) -> None:
+        if isinstance(item, list):
+            for child in item:
+                add_row(child)
+            return
+        if item not in (None, "", [], {}):
+            rows.append(item)
+
+    add_row(values)
     for item in rows:
         if isinstance(item, dict):
             text = item.get("name") or item.get("title") or item.get("formula") or item.get("summary") or item.get("point") or json.dumps(item, ensure_ascii=False)
@@ -2027,12 +2037,119 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
         key: current_segments.get(key) or fallback_segments.get(key) or []
         for key in creator_clone_schema()["performance_segments"]
     }
+    result["creator_clone_strategy"] = normalize_creator_clone_strategy(result)
     return result
+
+
+def normalize_creator_clone_strategy(result: dict) -> dict:
+    explicit = result.get("creator_clone_strategy") if isinstance(result.get("creator_clone_strategy"), dict) else {}
+    v2_root = {key: result.get(key) for key in CreatorCloneStrategy.empty_schema() if key in result}
+    positioning = str(explicit.get("positioning") or v2_root.get("positioning") or "").strip()
+    if not positioning:
+        legacy_positioning = result.get("creator_positioning") if isinstance(result.get("creator_positioning"), dict) else {}
+        positioning_parts = [
+            legacy_positioning.get("what_the_creator_sells") or "",
+            legacy_positioning.get("audience_promise") or "",
+            legacy_positioning.get("hidden_genre") or "",
+        ]
+        positioning = "；".join(part for part in positioning_parts if part).strip()
+
+    spec = result.get("creator_clone_spec") if isinstance(result.get("creator_clone_spec"), dict) else {}
+    expression = result.get("expression_patterns") if isinstance(result.get("expression_patterns"), dict) else {}
+    thinking = result.get("thinking_patterns") if isinstance(result.get("thinking_patterns"), dict) else {}
+
+    content_strategy = _unique_text_values(
+        [
+            explicit.get("content_strategy"),
+            v2_root.get("content_strategy"),
+            result.get("topic_buckets"),
+            result.get("transferable_formulas"),
+            spec.get("topic_selection_rules"),
+            spec.get("structure_rules"),
+            spec.get("expression_rules"),
+            spec.get("visual_rules"),
+        ],
+        limit=12,
+        item_limit=140,
+    )
+    hooks = _unique_text_values(
+        [
+            explicit.get("hooks"),
+            v2_root.get("hooks"),
+            expression.get("opening_hooks"),
+            thinking.get("tension_sources"),
+        ],
+        limit=10,
+        item_limit=120,
+    )
+    templates = _normalize_strategy_dicts(
+        explicit.get("templates") or v2_root.get("templates") or result.get("transferable_formulas"),
+        limit=8,
+        fallback_key="template",
+    )
+    anti_patterns = _unique_text_values(
+        [explicit.get("anti_patterns"), v2_root.get("anti_patterns"), spec.get("anti_patterns")],
+        limit=10,
+        item_limit=120,
+    )
+    idea_bank = _normalize_strategy_dicts(
+        explicit.get("idea_bank") or v2_root.get("idea_bank") or result.get("candidate_ideas"),
+        limit=10,
+        fallback_key="idea",
+    )
+    validation_rules = _unique_text_values(
+        [
+            explicit.get("validation_rules"),
+            v2_root.get("validation_rules"),
+            spec.get("self_check_rubric"),
+        ],
+        limit=10,
+        item_limit=120,
+    )
+    return CreatorCloneStrategy(
+        positioning=positioning,
+        content_strategy=tuple(content_strategy),
+        hooks=tuple(hooks),
+        templates=tuple(templates),
+        anti_patterns=tuple(anti_patterns),
+        idea_bank=tuple(idea_bank),
+        validation_rules=tuple(validation_rules),
+    ).to_dict()
+
+
+def _normalize_strategy_dicts(value, limit: int = 8, fallback_key: str = "item") -> list[dict]:
+    rows = value if isinstance(value, list) else [value]
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    for item in rows:
+        if isinstance(item, dict):
+            cleaned = _drop_empty_prompt_values(item)
+            text = (
+                cleaned.get("name")
+                or cleaned.get("title")
+                or cleaned.get("formula")
+                or cleaned.get("summary")
+                or cleaned.get("point")
+                or json.dumps(cleaned, ensure_ascii=False)
+            )
+        else:
+            text = str(item or "").strip()
+            cleaned = {fallback_key: text} if text else {}
+        text = _truncate_text(str(text or ""), 140)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        if isinstance(cleaned, dict):
+            normalized.append(dict(cleaned))
+        if len(normalized) >= limit:
+            break
+    return normalized
 
 
 def creator_clone_schema() -> dict:
     return {
         "summary": "",
+        "creator_clone_strategy": CreatorCloneStrategy.empty_schema(),
         "content_profile": {
             "requested": "",
             "requested_label": "",
@@ -2090,10 +2207,39 @@ def render_creator_clone_markdown(result: dict) -> str:
     positioning = result.get("creator_positioning") or {}
     spec = result.get("creator_clone_spec") or {}
     content_profile = result.get("content_profile") or {}
+    strategy = result.get("creator_clone_strategy") or {}
     lines = [
         "# Creator Clone Report",
         "",
         f"## Summary\n\n{result.get('summary') or ''}",
+        "",
+        "## Strategy Output",
+        "",
+        f"- Positioning: {strategy.get('positioning') or ''}",
+        "",
+        "### Content Strategy",
+        "",
+        _markdown_list(strategy.get("content_strategy")),
+        "",
+        "### Hooks",
+        "",
+        _markdown_list(strategy.get("hooks")),
+        "",
+        "### Templates",
+        "",
+        _markdown_list(strategy.get("templates")),
+        "",
+        "### Anti-patterns",
+        "",
+        _markdown_list(strategy.get("anti_patterns")),
+        "",
+        "### Idea Bank",
+        "",
+        _markdown_list(strategy.get("idea_bank")),
+        "",
+        "### Validation Rules",
+        "",
+        _markdown_list(strategy.get("validation_rules")),
         "",
         "## Analysis Template",
         "",

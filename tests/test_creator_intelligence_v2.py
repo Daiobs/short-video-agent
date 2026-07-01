@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app
 from app.services.creator_clone import CloneSample, CloneSampleSet
-from app.services.creator_clone import save_sample_set
+from app.services.creator_clone import normalize_creator_clone_result, save_sample_set
 from app.services.creator_intelligence import (
     CreatorCloneStrategy,
     WorkflowAction,
@@ -158,3 +158,36 @@ def test_creator_clone_set_endpoint_exposes_creator_intelligence_state() -> None
     assert intelligence["behavior_model"]["project_id"] == sample_set.set_id
     assert intelligence["behavior_model"]["evidence_matrix"]["with_keyframes"] == 1
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
+def test_creator_clone_result_exposes_structured_strategy_contract() -> None:
+    sample_set = sample_set_for_v2()
+    raw = {
+        "summary": "视觉吸引账号规律。",
+        "creator_positioning": {
+            "what_the_creator_sells": "甜美 COS 视觉吸引",
+            "audience_promise": "快速看到妆造和人物状态",
+            "hidden_genre": "美拍氛围",
+        },
+        "topic_buckets": [{"name": "近景妆造", "why_it_works": "第一眼抓停留"}],
+        "expression_patterns": {"opening_hooks": ["0-1 秒直接给脸和眼神"]},
+        "transferable_formulas": [{"name": "近景眼神钩子", "beat_structure": ["脸", "动作", "标题"]}],
+        "creator_clone_spec": {
+            "anti_patterns": ["不要照搬擦边表达"],
+            "self_check_rubric": ["第一眼是否有人物亮点"],
+        },
+        "candidate_ideas": [{"title": "粉色妆造回头杀", "formula_used": "近景眼神钩子"}],
+    }
+
+    normalized = normalize_creator_clone_result(raw, sample_set, [sample_set.samples[0]])
+    strategy = normalized["creator_clone_strategy"]
+
+    assert strategy == {
+        "positioning": "甜美 COS 视觉吸引；快速看到妆造和人物状态；美拍氛围",
+        "content_strategy": ["近景妆造", "近景眼神钩子"],
+        "hooks": ["0-1 秒直接给脸和眼神"],
+        "templates": [{"name": "近景眼神钩子", "beat_structure": ["脸", "动作", "标题"]}],
+        "anti_patterns": ["不要照搬擦边表达"],
+        "idea_bank": [{"title": "粉色妆造回头杀", "formula_used": "近景眼神钩子"}],
+        "validation_rules": ["第一眼是否有人物亮点"],
+    }
