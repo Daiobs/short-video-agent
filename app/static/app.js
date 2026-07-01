@@ -160,6 +160,7 @@ let currentCreatorCloneResult = null;
 let currentCreatorIntelligenceProject = null;
 let currentCreatorIntelligenceWorkflow = null;
 let currentCreatorIntelligenceBehavior = null;
+let currentCreatorIntelligenceStrategy = null;
 let chromeHelperStatusLoaded = false;
 let profileLastChromeProfileValue = "";
 let profileChromeLaunchCommand = "";
@@ -482,6 +483,7 @@ function resetCreatorClonePoolForNewProfile() {
   profileScanPayload = null;
   currentCreatorCloneResult = null;
   currentDistillPrompt = "";
+  currentCreatorIntelligenceStrategy = null;
   profileLastChromeProfileValue = "";
   forgetRecentCreatorCloneSetId();
   profileQueueCard?.classList.add("hidden");
@@ -669,6 +671,10 @@ function profilePayloadFromCreatorIntelligenceProject(payload = {}) {
     },
     provider: "creator intelligence project",
   };
+}
+
+function creatorStrategyFromResult(result = {}) {
+  return result?.creator_clone_strategy || currentCreatorIntelligenceStrategy || null;
 }
 
 function formatReportValue(value) {
@@ -1001,6 +1007,7 @@ function applyCreatorIntelligencePayload(payload = {}) {
   currentCreatorIntelligenceProject = intelligence?.project || payload?.project || currentCreatorIntelligenceProject;
   currentCreatorIntelligenceWorkflow = intelligence?.workflow || null;
   currentCreatorIntelligenceBehavior = intelligence?.behavior_model || null;
+  currentCreatorIntelligenceStrategy = intelligence?.strategy_output || payload?.strategy_output || currentCreatorIntelligenceStrategy;
 }
 
 function workflowStateFromCreatorIntelligence() {
@@ -1857,6 +1864,7 @@ function renderProfileResults(payload) {
   profileScanPayload = payload;
   currentCreatorCloneResult = null;
   currentDistillPrompt = "";
+  currentCreatorIntelligenceStrategy = null;
   applyCreatorIntelligencePayload(payload);
   creatorCloneResultCard?.classList.add("hidden");
   const cloneSet = payload.set || null;
@@ -3419,6 +3427,7 @@ function firstCloneValue(value, fallback = "待补充") {
 }
 
 function renderCreatorCloneActionSummary(result) {
+  const strategy = creatorStrategyFromResult(result) || {};
   const positioning = result.creator_positioning || {};
   const formulas = normalizeItems(result.transferable_formulas);
   const ideas = normalizeItems(result.candidate_ideas);
@@ -3426,11 +3435,12 @@ function renderCreatorCloneActionSummary(result) {
   const antiPatterns = normalizeItems(spec.anti_patterns);
   const nextActions = normalizeItems(result.next_actions);
   const summaryCards = [
-    ["核心定位", positioning.what_the_creator_sells || result.summary || "待补充"],
-    ["可复用公式", firstCloneValue(formulas.map((item) => item?.name || item), "待补充")],
-    ["优先选题", firstCloneValue(ideas.map((item) => item?.title || item), "待补充")],
-    ["不要照搬", firstCloneValue(antiPatterns, "暂无明确禁忌")],
-    ["下一步", firstCloneValue(nextActions, "基于公式生成 3-5 个候选选题并人工筛选")],
+    ["核心定位", strategy.positioning || positioning.what_the_creator_sells || result.summary || "待补充"],
+    ["内容策略", firstCloneValue(strategy.content_strategy || formulas.map((item) => item?.name || item), "待补充")],
+    ["可复用模板", firstCloneValue(normalizeItems(strategy.templates).map((item) => item?.name || item?.title || item?.template || item), "待补充")],
+    ["优先选题", firstCloneValue(normalizeItems(strategy.idea_bank).map((item) => item?.title || item?.idea || item), firstCloneValue(ideas.map((item) => item?.title || item), "待补充"))],
+    ["不要照搬", firstCloneValue(strategy.anti_patterns || antiPatterns, "暂无明确禁忌")],
+    ["自检规则", firstCloneValue(strategy.validation_rules || nextActions, "基于公式生成 3-5 个候选选题并人工筛选")],
   ];
   return `
     <section class="creator-clone-action-summary" aria-label="创作者克隆可执行摘要">
@@ -3452,6 +3462,37 @@ function renderCreatorCloneActionSummary(result) {
           .join("")}
       </div>
     </section>
+  `;
+}
+
+function renderCreatorStrategyOutput(strategy = {}) {
+  if (!strategy || typeof strategy !== "object") {
+    return "";
+  }
+  const hasStrategy = [
+    strategy.positioning,
+    ...normalizeItems(strategy.content_strategy),
+    ...normalizeItems(strategy.hooks),
+    ...normalizeItems(strategy.templates),
+    ...normalizeItems(strategy.anti_patterns),
+    ...normalizeItems(strategy.idea_bank),
+    ...normalizeItems(strategy.validation_rules),
+  ].some((item) => item !== undefined && item !== null && item !== "");
+  if (!hasStrategy) {
+    return "";
+  }
+  return `
+    <div class="public-report-grid creator-strategy-grid" aria-label="Creator Intelligence Strategy Output">
+      ${renderPublicCard("策略定位", renderPublicFields([["Positioning", strategy.positioning]]), "featured")}
+      ${renderPublicCard("内容策略", renderPublicList(strategy.content_strategy, "暂无内容策略。"), "featured")}
+      ${renderPublicCard("开头钩子", renderPublicList(strategy.hooks, "暂无开头钩子。"))}
+      ${renderPublicCard("可复用模板", renderFormulaCards(strategy.templates), "featured")}
+      ${renderPublicCard("选题库", renderCandidateIdeas(strategy.idea_bank), "featured")}
+      ${renderPublicCard("边界与自检", `
+        <h5>不要照搬</h5>${renderPublicList(strategy.anti_patterns, "暂无反模式。")}
+        <h5>校验规则</h5>${renderPublicList(strategy.validation_rules, "暂无自检规则。")}
+      `)}
+    </div>
   `;
 }
 
@@ -3518,6 +3559,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
   const positioning = result.creator_positioning || {};
   const patterns = result.expression_patterns || {};
   const spec = result.creator_clone_spec || {};
+  const strategy = creatorStrategyFromResult(result) || {};
   const contentProfile = result.content_profile || overview.content_profile || {};
   const templateLabel = contentProfile.effective_label || contentProfile.requested_label || "自动判断";
   creatorCloneResult.innerHTML = `
@@ -3527,6 +3569,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
     </section>
     ${renderCreatorCloneActionSummary(result)}
     ${renderCreatorCloneEvidenceOverview(overview)}
+    ${renderCreatorStrategyOutput(strategy)}
     ${renderCompactPerformanceSegments(result.performance_segments || {})}
     <div class="public-report-grid">
       ${renderPublicCard("创作者定位", renderPublicFields([
@@ -4357,10 +4400,12 @@ creatorCloneBatchDistillButton?.addEventListener("click", async () => {
 });
 
 copyCreatorCloneSpecButton.addEventListener("click", async () => {
-  if (!currentCreatorCloneResult?.creator_clone_spec) {
+  const strategy = creatorStrategyFromResult(currentCreatorCloneResult || {}) || null;
+  const payload = strategy || currentCreatorCloneResult?.creator_clone_spec || null;
+  if (!payload) {
     return;
   }
-  await navigator.clipboard.writeText(JSON.stringify(currentCreatorCloneResult.creator_clone_spec, null, 2));
+  await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
   copyCreatorCloneSpecButton.textContent = "已复制";
   window.setTimeout(() => {
     copyCreatorCloneSpecButton.textContent = "复制 Creator Clone Spec";

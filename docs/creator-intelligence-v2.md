@@ -233,6 +233,7 @@ Initial integration:
 - Legacy model outputs such as `creator_positioning`, `transferable_formulas`, `creator_clone_spec`, and `candidate_ideas` are mapped into the v2 strategy schema for backward compatibility.
 - `GET /api/creator-clone/sets/{set_id}` restores workflow state as `DONE` when a saved strategy output exists.
 - Sync and async distillation responses both return `creator_intelligence.strategy_output` when a strategy exists.
+- The public report now renders the schema-driven `strategy_output` first, with legacy clone fields kept as fallback and supporting detail.
 
 ## Success Criteria
 

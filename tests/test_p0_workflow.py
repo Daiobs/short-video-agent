@@ -530,7 +530,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "currentCreatorIntelligenceWorkflow" in script
     assert "currentCreatorIntelligenceBehavior" in script
     assert "currentCreatorIntelligenceProject" in script
+    assert "currentCreatorIntelligenceStrategy" in script
     assert "function applyCreatorIntelligencePayload" in script
+    assert "function creatorStrategyFromResult" in script
+    assert "function renderCreatorStrategyOutput" in script
+    assert "creator-strategy-grid" in script
+    assert "strategy_output" in script
+    assert "const strategy = creatorStrategyFromResult(currentCreatorCloneResult || {})" in script
     assert "function workflowStateFromCreatorIntelligence" in script
     assert "function wizardStateFromWorkflowState" in script
     assert "function getCreatorCloneWizardStateFromWorkflow" in script
