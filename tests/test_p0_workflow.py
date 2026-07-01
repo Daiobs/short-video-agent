@@ -10237,6 +10237,10 @@ def test_creator_clone_distill_job_unconfigured_returns_prompt(monkeypatch) -> N
     assert job["result_json"]["error_code"] == "LLM_NOT_CONFIGURED"
     assert "prompt" in job["result_json"]
     assert "distill_prompt.md" in job["result_json"]["exports"]["distill_prompt_md"]
+    assert job["result_json"]["creator_intelligence"]["project"]["project_id"] == set_id
+    assert job["result_json"]["creator_intelligence"]["workflow"]["state"] == "SAMPLE_SELECTED"
+    assert job["result_json"]["creator_intelligence"]["workflow"]["selected_count"] == len(samples)
+    assert job["result_json"]["creator_intelligence"]["behavior_model"]["selected_count"] == len(samples)
 
 
 def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) -> None:

@@ -1237,6 +1237,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                         "error_code": error.code,
                         "message": error.message,
                         **prompt_payload,
+                        "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
                     },
                 )
                 db.commit()
