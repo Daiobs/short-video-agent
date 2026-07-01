@@ -590,21 +590,29 @@ def update_sample_set_with_case_artifacts(set_id: str, artifacts: list[CaseArtif
 
 def update_sample_set_selection(set_id: str, selected_sample_ids: list[str]) -> CloneSampleSet:
     sample_set = load_sample_set(set_id)
+    selected = normalize_sample_set_selected_ids(sample_set, selected_sample_ids)
+    selected_set = set(selected)
+    for sample in sample_set.samples:
+        sample.selected = sample.sample_id in selected_set
+    sample_set.selected_sample_ids = selected
+    save_sample_set(sample_set)
+    return sample_set
+
+
+def normalize_sample_set_selected_ids(sample_set: CloneSampleSet, selected_sample_ids: list[str]) -> list[str]:
     selected_keys = {str(value) for value in selected_sample_ids if str(value)}
     selected: list[str] = []
     for sample in sample_set.samples:
-        selected_now = (
+        if (
             sample.sample_id in selected_keys
             or sample.aweme_id in selected_keys
             or sample.case_id in selected_keys
             or sample.source_url in selected_keys
-        )
-        sample.selected = selected_now
-        if selected_now:
+        ):
             selected.append(sample.sample_id)
-    sample_set.selected_sample_ids = selected
-    save_sample_set(sample_set)
-    return sample_set
+    if not selected:
+        raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "请至少选择 1 条素材。")
+    return selected
 
 
 def load_creator_strategy_output(set_id: str) -> dict:

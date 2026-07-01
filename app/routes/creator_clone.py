@@ -20,6 +20,7 @@ from app.services.creator_clone import (
     distill_creator_clone,
     export_paths,
     load_sample_set,
+    normalize_sample_set_selected_ids,
     normalize_content_profile,
     prompt_only_result,
     sample_from_dict,
@@ -139,22 +140,6 @@ def creator_clone_handoff_token():
     }
 
 
-def normalize_selected_sample_ids(sample_set, selected_sample_ids: list[str]) -> list[str]:
-    selected_keys = {str(value) for value in selected_sample_ids if str(value)}
-    selected: list[str] = []
-    for sample in sample_set.samples:
-        if (
-            sample.sample_id in selected_keys
-            or sample.aweme_id in selected_keys
-            or sample.case_id in selected_keys
-            or sample.source_url in selected_keys
-        ):
-            selected.append(sample.sample_id)
-    if not selected:
-        raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "请至少选择 1 条素材。")
-    return selected
-
-
 @router.post("/import-handoff")
 def import_creator_clone_handoff(payload: CreatorCloneHandoffImportRequest):
     try:
@@ -197,7 +182,7 @@ def dispatch_creator_clone_workflow(set_id: str, payload: CreatorCloneWorkflowDi
         if action != WorkflowAction.SELECT_SAMPLES:
             raise AppError(ErrorCode.PROFILE_SCAN_FAILED, f"当前仅支持 {WorkflowAction.SELECT_SAMPLES.value} workflow action。")
         sample_set = load_sample_set(set_id)
-        selected_sample_ids = normalize_selected_sample_ids(sample_set, payload.selected_sample_ids)
+        selected_sample_ids = normalize_sample_set_selected_ids(sample_set, payload.selected_sample_ids)
         project = project_from_clone_sample_set(sample_set)
         engine = WorkflowEngine.from_project(project)
         engine.dispatch(action, {"selected_sample_ids": selected_sample_ids})

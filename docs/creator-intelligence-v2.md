@@ -195,6 +195,8 @@ Bridge into the existing API:
 - `GET /api/creator-clone/sets/{set_id}` now returns `creator_intelligence.workflow`.
 - When samples are selected, the same payload also returns `creator_intelligence.behavior_model`.
 - `POST /api/creator-clone/sets/{set_id}/workflow` now accepts the first explicit workflow action: `SELECT_SAMPLES`.
+- `GET /api/creator-intelligence/projects/{project_id}` exposes the v2 contract directly as `project`, `workflow`, `behavior_model`, and `strategy_output`.
+- `POST /api/creator-intelligence/projects/{project_id}/workflow` provides the v2 workflow dispatch surface.
 
 ### M3: UI State-Driven Wizard
 

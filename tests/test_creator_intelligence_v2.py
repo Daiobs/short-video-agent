@@ -229,6 +229,48 @@ def test_creator_clone_workflow_dispatch_rejects_unknown_sample_ids() -> None:
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 
+def test_creator_intelligence_project_api_exposes_v2_contract() -> None:
+    sample_set = sample_set_for_v2()
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    response = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["project"]["project_id"] == sample_set.set_id
+    assert payload["project"]["profile"]["display_name"] == "测试创作者"
+    assert payload["workflow"]["state"] == WorkflowState.EVIDENCE_READY
+    assert payload["behavior_model"]["project_id"] == sample_set.set_id
+    assert "set" not in payload
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
+def test_creator_intelligence_workflow_api_dispatches_selection() -> None:
+    sample_set = sample_set_for_v2()
+    sample_set.selected_sample_ids = []
+    for sample in sample_set.samples:
+        sample.selected = False
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    response = client.post(
+        f"/api/creator-intelligence/projects/{sample_set.set_id}/workflow",
+        json={"action": WorkflowAction.SELECT_SAMPLES.value, "selected_sample_ids": ["sample_ready"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["project"]["selected_sample_ids"] == ["sample_ready"]
+    assert payload["workflow"]["state"] == WorkflowState.EVIDENCE_READY
+    assert payload["behavior_model"]["selected_count"] == 1
+
+    reloaded = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()
+    assert reloaded["project"]["selected_sample_ids"] == ["sample_ready"]
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
 def test_creator_clone_result_exposes_structured_strategy_contract() -> None:
     sample_set = sample_set_for_v2()
     raw = {
