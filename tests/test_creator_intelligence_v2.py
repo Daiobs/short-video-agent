@@ -273,6 +273,35 @@ def test_creator_intelligence_workflow_api_dispatches_selection() -> None:
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 
+def test_creator_intelligence_workflow_api_advances_evidence_and_distillation_state() -> None:
+    sample_set = sample_set_for_v2()
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    evidence_response = client.post(
+        f"/api/creator-intelligence/projects/{sample_set.set_id}/workflow",
+        json={"action": WorkflowAction.MARK_EVIDENCE_READY.value},
+    )
+
+    assert evidence_response.status_code == 200
+    evidence_payload = evidence_response.json()
+    assert evidence_payload["workflow"]["state"] == WorkflowState.EVIDENCE_READY
+    assert evidence_payload["workflow"]["has_behavior_model"] is True
+    assert evidence_payload["behavior_model"]["selected_count"] == 1
+
+    distill_response = client.post(
+        f"/api/creator-intelligence/projects/{sample_set.set_id}/workflow",
+        json={"action": WorkflowAction.START_DISTILLATION.value},
+    )
+
+    assert distill_response.status_code == 200
+    distill_payload = distill_response.json()
+    assert distill_payload["workflow"]["state"] == WorkflowState.DISTILLING
+    assert distill_payload["workflow"]["has_behavior_model"] is True
+    assert distill_payload["behavior_model"]["selected_count"] == 1
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
 def test_creator_clone_result_exposes_structured_strategy_contract() -> None:
     sample_set = sample_set_for_v2()
     raw = {
