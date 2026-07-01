@@ -707,6 +707,56 @@ function creatorProjectProfileItems() {
   return normalizeItems(currentCreatorIntelligenceProject?.samples).map(legacyProfileItemFromCreatorSample);
 }
 
+function creatorWorkflowFromProject(project = null, strategy = null) {
+  if (!project?.project_id) {
+    return null;
+  }
+  const samples = normalizeItems(project.samples);
+  const selectedIds = new Set(normalizeItems(project.selected_sample_ids).map(String));
+  const selectedSamples = selectedIds.size
+    ? samples.filter((sample) => selectedIds.has(String(sample.sample_id || "")))
+    : samples.filter((sample) => sample.selected);
+  const evidenceReadyCount = selectedSamples.filter((sample) => {
+    const evidence = sample.evidence || {};
+    return evidence.ready_for_distillation
+      || evidence.level === "full"
+      || evidence.level === "partial"
+      || evidence.has_frames
+      || evidence.has_asr
+      || evidence.has_ocr
+      || evidence.has_comments;
+  }).length;
+  const hasStrategyOutput = Boolean(strategy && typeof strategy === "object" && Object.keys(strategy).length);
+  const state = hasStrategyOutput
+    ? "DONE"
+    : selectedSamples.length && evidenceReadyCount >= selectedSamples.length
+      ? "EVIDENCE_READY"
+      : selectedSamples.length
+        ? "SAMPLE_SELECTED"
+        : samples.length
+          ? "SAMPLE_READY"
+          : "IMPORT";
+  return {
+    project_id: project.project_id,
+    state,
+    sample_count: samples.length,
+    selected_count: selectedSamples.length,
+    evidence_ready_count: evidenceReadyCount,
+    has_behavior_model: selectedSamples.length > 0,
+    has_strategy_output: hasStrategyOutput,
+    message: hasStrategyOutput
+      ? "Creator strategy output ready."
+      : state === "EVIDENCE_READY"
+        ? "Evidence model ready."
+        : state === "SAMPLE_SELECTED"
+          ? "Samples selected."
+          : state === "SAMPLE_READY"
+            ? "Sample pool ready."
+            : "Input required.",
+    updated_at: project.updated_at || new Date().toISOString(),
+  };
+}
+
 function activeProfileItems() {
   const projectItems = creatorProjectProfileItems();
   const localItems = normalizeItems(profileItems);
@@ -1135,10 +1185,15 @@ function hasPendingEnrichment(items = selectedProfileItems()) {
 
 function applyCreatorIntelligencePayload(payload = {}) {
   const intelligence = payload?.creator_intelligence || payload?.set?.creator_intelligence || null;
-  currentCreatorIntelligenceProject = intelligence?.project || payload?.project || creatorProjectFromCloneSet(payload?.set) || currentCreatorIntelligenceProject;
-  currentCreatorIntelligenceWorkflow = intelligence?.workflow || null;
-  currentCreatorIntelligenceBehavior = intelligence?.behavior_model || null;
-  currentCreatorIntelligenceStrategy = intelligence?.strategy_output || payload?.strategy_output || currentCreatorIntelligenceStrategy;
+  const nextProject = intelligence?.project || payload?.project || creatorProjectFromCloneSet(payload?.set) || currentCreatorIntelligenceProject;
+  const previousProjectId = currentCreatorIntelligenceProject?.project_id || "";
+  const nextProjectId = nextProject?.project_id || "";
+  const projectChanged = previousProjectId && nextProjectId && previousProjectId !== nextProjectId;
+  currentCreatorIntelligenceProject = nextProject;
+  const incomingStrategy = intelligence?.strategy_output || payload?.strategy_output || null;
+  currentCreatorIntelligenceStrategy = incomingStrategy || (projectChanged ? null : currentCreatorIntelligenceStrategy);
+  currentCreatorIntelligenceWorkflow = intelligence?.workflow || payload?.workflow || creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy);
+  currentCreatorIntelligenceBehavior = intelligence?.behavior_model || payload?.behavior_model || null;
 }
 
 function workflowStateFromCreatorIntelligence() {
