@@ -9,11 +9,10 @@ from app.services.creator_clone import (
     creator_intelligence_payload_for_sample_set,
     export_paths,
     load_sample_set,
-    normalize_sample_set_selected_ids,
-    update_sample_set_selection,
 )
 from app.services.creator_intelligence import BehaviorRepresentation
-from app.services.creator_intelligence import WorkflowAction, WorkflowEngine, project_from_clone_sample_set
+from app.services.creator_intelligence import project_from_clone_sample_set
+from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
 
 
 router = APIRouter(prefix="/api/creator-intelligence", tags=["creator-intelligence"])
@@ -56,24 +55,16 @@ def get_creator_intelligence_project(project_id: str):
 @router.post("/projects/{project_id}/workflow")
 def dispatch_creator_intelligence_workflow(project_id: str, payload: CreatorIntelligenceWorkflowDispatchRequest):
     try:
-        action = WorkflowAction(payload.action)
-        sample_set = load_sample_set(project_id)
-        engine = WorkflowEngine.from_project(project_from_clone_sample_set(sample_set))
-        if action == WorkflowAction.SELECT_SAMPLES:
-            selected_sample_ids = normalize_sample_set_selected_ids(sample_set, payload.selected_sample_ids)
-            engine.dispatch(action, {"selected_sample_ids": selected_sample_ids})
-            sample_set = update_sample_set_selection(project_id, selected_sample_ids)
-            return project_payload_for_sample_set(sample_set)
-        if action in {WorkflowAction.MARK_EVIDENCE_READY, WorkflowAction.START_DISTILLATION}:
-            workflow = engine.dispatch(action).to_dict()
-            return project_payload_for_sample_set(
-                sample_set,
-                workflow=workflow,
-                behavior_model=engine.behavior_model,
-            )
-        raise AppError(
-            ErrorCode.PROFILE_SCAN_FAILED,
-            f"当前 workflow action 暂不支持持久化：{action.value}。",
+        result = dispatch_creator_workflow(
+            project_id,
+            payload.action,
+            selected_sample_ids=payload.selected_sample_ids,
+        )
+        return project_payload_for_sample_set(
+            result.sample_set,
+            workflow=result.workflow,
+            behavior_model=result.behavior_model,
+            strategy_output=result.strategy_output,
         )
     except ValueError as error:
         return error_response(AppError(ErrorCode.PROFILE_SCAN_FAILED, str(error)))

@@ -19,6 +19,7 @@ from app.services.creator_intelligence import (
     project_from_clone_sample_set,
     project_from_clone_selection,
 )
+from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
 
 client = TestClient(app)
 
@@ -208,6 +209,28 @@ def test_creator_clone_workflow_dispatch_selects_samples_and_persists_state() ->
 
     reloaded = client.get(f"/api/creator-clone/sets/{sample_set.set_id}").json()
     assert reloaded["set"]["selected_sample_ids"] == ["sample_ready"]
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
+def test_shared_creator_workflow_dispatch_service_selects_samples() -> None:
+    sample_set = sample_set_for_v2()
+    sample_set.selected_sample_ids = []
+    for sample in sample_set.samples:
+        sample.selected = False
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    result = dispatch_creator_workflow(
+        sample_set.set_id,
+        WorkflowAction.SELECT_SAMPLES,
+        selected_sample_ids=["7650000000000000001"],
+    )
+
+    assert result.sample_set.selected_sample_ids == ["sample_ready"]
+    assert result.workflow["state"] == WorkflowState.EVIDENCE_READY
+    assert result.behavior_model["selected_count"] == 1
+    reloaded = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()
+    assert reloaded["project"]["selected_sample_ids"] == ["sample_ready"]
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 

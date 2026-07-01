@@ -20,18 +20,12 @@ from app.services.creator_clone import (
     distill_creator_clone,
     export_paths,
     load_sample_set,
-    normalize_sample_set_selected_ids,
     normalize_content_profile,
     prompt_only_result,
     sample_from_dict,
     save_sample_set,
-    update_sample_set_selection,
 )
-from app.services.creator_intelligence import (
-    WorkflowAction,
-    WorkflowEngine,
-    project_from_clone_sample_set,
-)
+from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
 from app.services.local_chrome import load_capture_audit, load_handoff_manifest, local_helper_security_contract
 
 
@@ -178,31 +172,11 @@ def get_creator_clone_set(set_id: str):
 @router.post("/sets/{set_id}/workflow")
 def dispatch_creator_clone_workflow(set_id: str, payload: CreatorCloneWorkflowDispatchRequest):
     try:
-        action = WorkflowAction(payload.action)
-        sample_set = load_sample_set(set_id)
-        project = project_from_clone_sample_set(sample_set)
-        engine = WorkflowEngine.from_project(project)
-        intelligence = None
-        if action == WorkflowAction.SELECT_SAMPLES:
-            selected_sample_ids = normalize_sample_set_selected_ids(sample_set, payload.selected_sample_ids)
-            engine.dispatch(action, {"selected_sample_ids": selected_sample_ids})
-            sample_set = update_sample_set_selection(set_id, selected_sample_ids)
-            intelligence = creator_intelligence_payload_for_sample_set(sample_set)
-        elif action in {WorkflowAction.MARK_EVIDENCE_READY, WorkflowAction.START_DISTILLATION}:
-            workflow = engine.dispatch(action).to_dict()
-            intelligence = creator_intelligence_payload_for_sample_set(sample_set)
-            intelligence["workflow"] = workflow
-            if engine.behavior_model:
-                intelligence["behavior_model"] = engine.behavior_model.to_dict()
-        else:
-            raise AppError(
-                ErrorCode.PROFILE_SCAN_FAILED,
-                f"当前 workflow action 暂不支持持久化：{action.value}。",
-            )
+        result = dispatch_creator_workflow(set_id, payload.action, selected_sample_ids=payload.selected_sample_ids)
         return {
             "ok": True,
-            "set": sample_set.to_dict(),
-            "creator_intelligence": intelligence,
+            "set": result.sample_set.to_dict(),
+            "creator_intelligence": result.creator_intelligence,
             "exports": export_paths(set_id),
         }
     except ValueError as error:
