@@ -516,7 +516,7 @@ def test_creator_intelligence_v2_doc_tracks_completion_evidence() -> None:
     assert "dispatch_creator_workflow" in doc
     assert "profile-build-cases" in doc
     assert "prompt-only recovery" in doc
-    assert "Retire remaining legacy frontend names" in doc
+    assert "Collapse the remaining local sample view-model adapter" in doc
 
 
 def test_creator_intelligence_core_does_not_depend_on_legacy_creator_clone_dtos() -> None:

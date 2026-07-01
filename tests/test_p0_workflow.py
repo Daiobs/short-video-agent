@@ -512,7 +512,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function restoreRecentCreatorCloneSet" in script
     assert "function restoreRecentProfileBuildJob" in script
     assert "function profilePayloadFromCreatorIntelligenceProject" in script
-    assert "function legacyProfileItemFromCreatorSample" in script
+    assert "function sampleViewItemFromCreatorSample" in script
     assert "function cloneSetFromCreatorIntelligenceProject" in script
     assert "function rememberRecentProfileBuildState" in script
     assert "function rememberRecentProfileStage" in script
@@ -532,19 +532,19 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "currentCreatorIntelligenceProject" in script
     assert "currentCreatorIntelligenceStrategy" in script
     assert "function applyCreatorIntelligencePayload" in script
-    assert "function creatorProjectProfileItems" in script
-    assert "function activeProfileItems" in script
-    assert "function creatorSampleFromLegacyProfileItem" in script
+    assert "function creatorProjectSampleViewItems" in script
+    assert "function activeCreatorSampleViewItems" in script
+    assert "function creatorSampleFromViewItem" in script
     assert "function creatorProjectFromCloneSet" in script
     assert "function creatorWorkflowFromProject" not in script
-    assert "function syncCreatorProjectSamplesFromProfileItems" in script
-    assert "syncCreatorProjectSamplesFromProfileItems(profileItems);" in script
+    assert "function syncCreatorProjectSamplesFromViewItems" in script
+    assert "syncCreatorProjectSamplesFromViewItems(profileSampleViewItems);" in script
     assert "creatorProjectFromCloneSet(payload?.set)" in script
     assert "creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy)" not in script
     assert "const projectChanged = previousProjectId && nextProjectId && previousProjectId !== nextProjectId;" in script
-    assert "filterProfileItemsByMedia(activeProfileItems()" in script
-    assert "return activeProfileItems().filter((item) => profileSelectedKeys.has(profileItemKey(item)))" in script
-    assert "const items = activeProfileItems();" in script
+    assert "filterCreatorSampleViewItemsByMedia(activeCreatorSampleViewItems()" in script
+    assert "return activeCreatorSampleViewItems().filter((item) => profileSelectedKeys.has(sampleViewItemKey(item)))" in script
+    assert "const items = activeCreatorSampleViewItems();" in script
     assert "function creatorStrategyFromResult" in script
     assert "function creatorCloneResultFromStrategyOutput" in script
     assert "function renderCreatorStrategyOutput" in script
@@ -654,7 +654,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "highest_collect_samples" in script
     assert "高收藏样本" in script
     assert "最新样本" in script
-    assert "function filterProfileItemsByMedia" in script
+    assert "function filterCreatorSampleViewItemsByMedia" in script
     assert "function renderProfileTableRow" in script
     assert "function installProfileCoverFallbacks" in script
     assert "profileCoverMarkup" in script
@@ -774,13 +774,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "profileEvidenceStatus" in script
     assert "profileEvidenceFilter" in script
     assert "let profileSelectedKeys = new Set()" in script
-    assert "selected_sample_ids: selectedProfileItems().map(profileItemKey)" in script
+    assert "selected_sample_ids: selectedCreatorSampleViewItems().map(sampleViewItemKey)" in script
     assert "persistedSelected" in script
-    assert "function filterProfileItems" in script
-    assert "function visibleProfileItems" in script
+    assert "function filterCreatorSampleViewItems" in script
+    assert "function visibleCreatorSampleViewItems" in script
     assert "profileSelectedKeys.has" in script
     assert "已全选当前列表" in script
-    assert "function isProfileItemBuildable" in script
+    assert "function isSampleViewItemBuildable" in script
     assert '"collect_count"' in script
     assert "收藏样本" in script
     assert '["image", "text"].includes' in script
@@ -803,8 +803,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'label: "AI"' in script
     assert 'item.analysis_status === "success"' in script
     assert "function profileEvidenceCoverageSummary" in script
-    assert "function needsEnrichmentProfileItems" in script
-    assert "function readyEvidenceProfileItems" in script
+    assert "function needsEnrichmentCreatorSampleViewItems" in script
+    assert "function readyEvidenceCreatorSampleViewItems" in script
     assert "profileEvidenceScore" in script
     assert "function profileDistillReadiness" in script
     assert "function renderProfileDistillReadiness" in script
@@ -9095,7 +9095,7 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "page_confirmed: true" not in script
     assert script.count("resetProfileChromeConfirmation();") >= 4
     assert "recommendedProfileSampleMix" in script
-    assert "dedupeProfileItems" in script
+    assert "dedupeCreatorSampleViewItems" in script
     assert "function getCreatorCloneWizardState()" in script
     assert "currentCreatorIntelligenceWorkflow" in script
     assert "function applyCreatorIntelligencePayload" in script

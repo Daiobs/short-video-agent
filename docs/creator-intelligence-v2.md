@@ -107,7 +107,7 @@ UI = render(workflow_state)
 Current problem:
 
 ```text
-profileItems / samples / case / payload / cloneResult
+sample view models / samples / case / payload / cloneResult
 ```
 
 These are mixed across UI, API, and prompt construction.
@@ -161,7 +161,8 @@ Prompt optimization should move toward schema contracts:
 
 - Add a workflow state model.
 - Add normalized domain models without removing legacy fields yet.
-- Add adapters that translate current `profileItems`, `samples`, and `case` payloads into the new model.
+- Add adapters that translate current sample view models, `samples`, and `case`
+  payloads into the new model.
 
 Initial code entry points:
 
@@ -292,7 +293,7 @@ Implemented:
   `project_from_clone_sample_set()` / `CreatorProject`.
 - Legacy response payloads now include `creator_intelligence.project`.
 - Frontend view-model helpers adapt old `set` payloads into `CreatorProject`
-  and prefer `CreatorProject.samples` over the legacy `profileItems` array.
+  and prefer `CreatorProject.samples` over the local sample view-model array.
 - Queue evidence updates are synced back into the frontend `CreatorProject`
   view model.
 
@@ -304,7 +305,7 @@ Verification:
   - `test_creator_intelligence_project_api_exposes_v2_contract`
 - `tests/test_p0_workflow.py`
   - static frontend assertions for `creatorProjectFromCloneSet`,
-    `activeProfileItems`, and `syncCreatorProjectSamplesFromProfileItems`.
+    `activeCreatorSampleViewItems`, and `syncCreatorProjectSamplesFromViewItems`.
 
 ### Cognitive Modeling Layer
 
@@ -422,8 +423,8 @@ Preserved:
 
 Remaining cleanup after this branch:
 
-- Retire remaining legacy frontend names such as `profileItems` once the UI no
-  longer needs compatibility adapters.
+- Collapse the remaining local sample view-model adapter once older
+  creator-clone response shapes are no longer needed.
 - Persist all transient workflow transitions if a future product decision needs
   resumable `DISTILLING` state across server restarts.
 - Move remaining compatibility prompt details out of `creator_clone.py` once
