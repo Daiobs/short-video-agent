@@ -278,7 +278,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'data-profile-build-max-items="150"' in response.text
     assert 'data-creator-clone-max-distill-samples="20"' in response.text
     assert "单作品解析" in response.text
-    assert "创作者克隆实验室" in response.text
+    assert "创作者蒸馏" in response.text
+    assert "短视频爆款分析素材包生成器" in response.text
+    assert "默认清晰度偏好" not in response.text
+    assert 'type="hidden" id="quality-preference" value="1080"' in response.text
     assert "主页 URL / sec_user_id" in response.text
     assert "导入一组对标素材" in response.text
     assert "1. 导入素材" in response.text
@@ -291,17 +294,21 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="creator-clone-current-step"' in response.text
     assert 'id="creator-clone-next-summary"' in response.text
     assert 'id="creator-clone-next-button"' in response.text
+    assert 'class="job-card compact-job-card hidden" id="job-card"' in response.text
+    assert response.text.index('id="creator-clone-next-bar"') < response.text.index('id="job-card"') < response.text.index('<form id="profile-form"')
+    assert 'id="job-result"' not in response.text
     assert 'class="primary-cta"' in response.text
     assert "当前步骤：导入素材" in response.text
     assert "下一步：开始导入素材" in response.text
     assert "高级操作" in response.text
+    assert '<details class="creator-clone-advanced-actions hidden">' in response.text
     assert "输入主页 URL、作品链接、aweme_id 或粘贴多条分享文案" in response.text
     assert "换一种导入方式" in response.text
     assert "粘贴作品链接" in response.text
     assert 'id="profile-scan-button"' in response.text
     assert 'id="profile-sort"' in response.text
     assert 'id="profile-evidence-filter"' in response.text
-    assert "证据筛选" in response.text
+    assert '<span class="table-head-label">理解状态</span>' in response.text
     assert "可富化视频" in response.text
     assert "已有关键帧" in response.text
     assert 'id="profile-results-body"' in response.text
@@ -311,7 +318,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "默认不依赖 Cookie" in response.text
     assert "Cookie / Web API 仅作为可选增强层" in response.text
     assert "不绕风控" in response.text
-    assert "Creator Clone Lab" in response.text
+    assert "Creator Distillation" in response.text
     assert "浏览器辅助采集" in response.text
     assert "粘贴作品链接" in response.text
     assert "JSON / CSV 导入" in response.text
@@ -354,7 +361,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "主页 URL / sec_user_id" in public_section
     assert "本机 Chrome 辅助入口" in response.text
     assert "素材池概览" in response.text
-    assert "样本选择" in response.text
+    assert '<div class="profile-selection-toolbar" id="profile-selection-section" aria-label="素材选样工具栏">' in response.text
+    assert 'id="creator-clone-selection-status" class="profile-selection-status"' in response.text
+    assert 'id="profile-preset-kind"' in response.text
+    assert 'id="profile-preset-count"' not in response.text
     assert "证据富化" in response.text
     assert "可视化输出" in response.text
     assert 'id="profile-chrome-status"' in response.text
@@ -369,22 +379,55 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-continue-chrome-button"' in response.text
     assert "本机 Chrome 辅助状态：尚未检测" in response.text
     assert "本地文件导入（后续接入）" in response.text
-    assert "手动调整样本" in response.text
-    assert '<details class="manual-sample-adjustments">' in response.text
-    assert '<details class="profile-material-details">' in response.text
-    assert "推荐样本篮" in response.text
+    assert '<details class="profile-material-details" data-profile-stage-section="select" open>' in response.text
+    assert 'class="profile-table-module-row"' not in response.text
+    assert '<div class="profile-selection-toolbar" id="profile-selection-section" aria-label="素材选样工具栏">' in response.text
+    assert 'class="profile-table-toolbar-row"' not in response.text
+    assert "profile-selection-controls" not in response.text
+    assert "profile-material-dropdown" not in response.text
+    assert "profile-table-material-head" not in response.text
+    table_head = response.text[
+        response.text.index("<thead>") : response.text.index("</thead>")
+    ]
+    assert 'class="profile-material-toolbar"' not in table_head
+    assert 'class="table-head-filter"' in table_head
+    assert 'id="profile-sort"' in table_head
+    assert 'id="profile-media-filter"' in table_head
+    assert 'id="profile-evidence-filter"' in table_head
+    assert 'data-profile-stage-nav="import"' in response.text
+    assert 'data-profile-stage-nav="pool"' in response.text
+    assert 'data-profile-stage-nav="select"' in response.text
+    assert 'data-profile-stage-nav="enrich"' in response.text
+    assert 'data-profile-stage-nav="distill"' in response.text
+    assert 'data-profile-stage-nav="export"' in response.text
+    assert 'data-profile-stage-section="import"' in response.text
+    assert 'data-profile-stage-section="pool"' in response.text
+    assert 'data-profile-stage-section="select"' in response.text
+    assert 'data-profile-stage-section="enrich"' in response.text
+    assert 'data-profile-stage-section="distill"' in response.text
+    assert 'data-profile-stage-section="export"' in response.text
+    assert 'id="creator-clone-recommendation" class="creator-clone-recommendation hidden"' in response.text
+    assert "推荐样本篮" not in response.text
     assert "使用推荐样本继续" in Path("app/static/app.js").read_text(encoding="utf-8")
     assert "全选" in response.text
     assert "推荐组合" in response.text
-    assert "高赞 Top 3" in response.text
-    assert "高评 Top 3" in response.text
-    assert "高分享 Top 3" in response.text
-    assert "低表现 3 条" in response.text
-    assert 'data-profile-preset="recommended_mix"' in response.text
-    assert 'data-profile-preset="top_likes"' in response.text
-    assert 'data-profile-preset="top_comments"' in response.text
-    assert 'data-profile-preset="top_shares"' in response.text
-    assert 'data-profile-preset="low_performance"' in response.text
+    assert "高赞" in response.text
+    assert "高评" in response.text
+    assert "高分享" in response.text
+    assert "高收藏" in response.text
+    assert "最新" in response.text
+    assert "待富化" in response.text
+    assert "证据完整" in response.text
+    assert "低表现" in response.text
+    assert '<option value="recommended_mix">推荐组合</option>' in response.text
+    assert '<option value="top_likes_5">高赞 5 条</option>' in response.text
+    assert '<option value="top_comments_5">高评 5 条</option>' in response.text
+    assert '<option value="top_shares_5">高分享 5 条</option>' in response.text
+    assert '<option value="top_collects_5">高收藏 5 条</option>' in response.text
+    assert '<option value="latest_5">最新 5 条</option>' in response.text
+    assert '<option value="low_performance_5">低表现 5 条</option>' in response.text
+    assert '<option value="needs_enrichment_5">待富化 5 条</option>' in response.text
+    assert '<option value="ready_evidence_5">证据完整 5 条</option>' in response.text
     assert "继续采集更多" in response.text
     enrich_button = response.text[
         response.text.index('id="profile-selected-build-button"') - 80 : response.text.index('id="profile-selected-build-button"') + 180
@@ -412,32 +455,41 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'data-profile-import="' not in response.text
     assert 'data-profile-build="' not in response.text
     assert 'id="profile-selected-import-button"' not in response.text
-    assert "素材明细" in response.text
-    assert response.text.index("素材明细") < response.text.index("<th>选择</th>")
+    assert "素材列表" in response.text
+    assert 'id="profile-media-filter"' in response.text
+    assert response.text.index("素材列表") < response.text.index("<th>选择</th>")
     assert "<th>选择</th>" in response.text
-    assert "<th>素材</th>" in response.text
-    assert "<th>类型</th>" in response.text
-    assert "<th>互动数据</th>" in response.text
-    assert "<th>理解状态</th>" in response.text
+    assert 'class="table-head-filter profile-material-head-tools"' in response.text
+    assert 'class="profile-material-head-title"' in response.text
+    assert '<span class="table-head-label">类型</span>' in response.text
+    assert '<span class="table-head-label">互动数据</span>' in response.text
+    assert '<span class="table-head-label">理解状态</span>' in response.text
     assert "<th>处理状态</th>" in response.text
     assert "<th>操作</th>" in response.text
     assert "高级：仅富化当前样本" in response.text
+    assert "高级：执行蒸馏" in response.text
     assert 'id="creator-clone-batch-distill-button"' in response.text
-    assert "分批蒸馏已选样本" in response.text
-    assert 'id="profile-selection-basket"' in response.text
-    assert "本轮样本篮" in Path("app/static/app.js").read_text(encoding="utf-8")
+    assert "高级：分批蒸馏" in response.text
+    assert 'id="profile-selection-basket"' not in response.text
+    assert "本轮样本篮" not in Path("app/static/app.js").read_text(encoding="utf-8")
     assert 'id="profile-auto-distill"' in response.text
-    assert "富化完成后自动大模型蒸馏" in response.text
+    assert 'class="profile-run-options hidden"' in response.text
+    assert "运行选项" in response.text
+    assert "富化完成后自动进入大模型蒸馏" in response.text
+    assert "默认富化完成后停在蒸馏步骤" in response.text
     assert 'id="profile-auto-analyze"' not in response.text
     assert 'name="count" type="hidden" value="150"' in response.text
     assert 'id="profile-evidence-status"' in response.text
     assert 'id="profile-distill-readiness"' in response.text
     assert "富化后会回填视频、关键帧、OCR、ASR" in response.text
+    assert '<section id="profile-queue-card" class="profile-queue-card hidden">' in response.text
+    assert "素材包队列" in response.text
     assert "下载视频" in response.text
     assert "生成素材包" in response.text
     assert "写入富化归档" in response.text
     assert "本地工作流预检" in response.text
-    assert "Creator Clone 数据源" in response.text
+    assert "本机 Chrome 助手使用提示" in response.text
+    assert "创作者蒸馏数据源" in response.text
     assert 'id="data-source-status-list"' in response.text
     assert 'id="test-douyin-cookie-button"' in response.text
     assert 'id="douyin-cookie-test-result"' in response.text
@@ -453,16 +505,42 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderCreatorCloneNextAction" in script
     assert "function runCreatorCloneNextAction" in script
     assert "function runCreatorCloneImportStep" in script
+    assert "RECENT_CREATOR_CLONE_SET_STORAGE_KEY" in script
+    assert "shortVideoAgent.recentCreatorCloneSetId" in script
+    assert "shortVideoAgent.recentProfileBuildState" in script
+    assert "shortVideoAgent.recentProfileStage" in script
+    assert "function restoreRecentCreatorCloneSet" in script
+    assert "function restoreRecentProfileBuildJob" in script
+    assert "function rememberRecentProfileBuildState" in script
+    assert "function rememberRecentProfileStage" in script
+    assert "function mergeProfileQueueItems" in script
+    assert "function rememberRecentCreatorCloneSetId" in script
+    assert "function forgetRecentCreatorCloneSetId" in script
+    assert "isSafeCreatorCloneSetId" in script
+    assert "/api/creator-clone/sets/" in script
+    assert "正在恢复上次素材池" in script
+    assert "已恢复上次素材池" in script
     assert "function profileScanMaxPagesForCount" in script
     assert "max_pages: profilePayload.max_pages" in script
     assert "function useRecommendedProfileSamples" in script
     assert "creatorCloneExportActions.open = true" in script
     assert "下一步：使用推荐样本继续" in script
     assert "下一步：开始富化证据" in script
+    assert "下一步：进入大模型蒸馏" in script
+    assert "下一步：开始分批蒸馏" in script
     assert "下一步：开始大模型蒸馏" in script
     assert "下一步：下载报告" in script
     assert "POOL_READY" in script
+    assert "POOL_EMPTY" in script
+    assert "SELECT_EMPTY" in script
+    assert "SELECT_TO_ENRICH" in script
+    assert "SELECT_TO_DISTILL" in script
+    assert "ENRICH_EMPTY" in script
     assert "ENRICH_READY" in script
+    assert "ENRICH_DONE" in script
+    assert "DISTILL_BLOCKED" in script
+    assert "BATCH_DISTILL_READY" in script
+    assert "EXPORT_EMPTY" in script
     assert "/api/settings/data-sources" in script
     assert "dataset.creatorCloneAction" in script
     assert "ready_for_profile_scan" in script
@@ -473,7 +551,14 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".primary-cta" in stylesheet
     assert ".advanced-action-list" in stylesheet
     assert ".profile-panel-actions" in stylesheet
-    assert ".manual-sample-adjustments" in stylesheet
+    assert ".profile-selection-toolbar" in stylesheet
+    assert ".profile-selection-status" in stylesheet
+    assert ".profile-material-head-tools" in stylesheet
+    assert ".profile-material-head-title" in stylesheet
+    assert ".profile-preset-count-control" not in stylesheet
+    assert ".table-head-label" in stylesheet
+    assert ".profile-table-material-head" not in stylesheet
+    assert ".profile-material-dropdown" not in stylesheet
     assert ".profile-material-details" in stylesheet
     assert response.text.count("primary-cta") == 1
     assert "// Settings" in script
@@ -498,13 +583,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderProfileCaptureAudit" in script
     assert "function renderProfileDecisionBoard" in script
     assert "素材池决策概览" in script
-    assert "推荐选样" in script
-    assert "建议样本组合" in script
-    assert "选择推荐组合后仍可手动增删" in script
-    assert "sample-strategy-list" in script
-    assert ".sample-strategy-list" in stylesheet
     assert "样本结构" in script
     assert "代表样本线索" in script
+    assert "进入样本选择" in script
+    assert 'data-profile-stage-go="select"' in script
     assert "profileDecisionBoard?.addEventListener" in script
     assert "本机辅助采集边界通过" in script
     assert "请求由用户本机 Chrome / 本机 IP 发起" in script
@@ -525,17 +607,55 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "highest_collect_samples" in script
     assert "高收藏样本" in script
     assert "最新样本" in script
-    assert "选这组" in script
+    assert "function filterProfileItemsByMedia" in script
+    assert "function renderProfileTableRow" in script
+    assert "function installProfileCoverFallbacks" in script
+    assert "profileCoverMarkup" in script
+    assert 'referrerpolicy="no-referrer"' in script
+    assert "creatorCloneNextActionRunning" in script
+    assert "处理中..." in script
+    assert "封面受限" in script
+    assert ".profile-group-row" in stylesheet
+    assert ".profile-cover.placeholder" in stylesheet
+    assert ".profile-cover-link" not in stylesheet
+    assert ".profile-material-toolbar" not in stylesheet
+    assert ".compact-job-card" in stylesheet
+    assert ".table-head-filter" in stylesheet
     assert "function applyProfilePresetSelection" in script
-    assert "function renderProfileSelectionBasket" in script
+    assert "function applyProfilePresetSelectValue" in script
+    assert "profilePresetKind" in script
+    assert "profilePresetCount" not in script
+    assert "top_likes|top_comments|top_shares|top_collects|latest|low_performance|needs_enrichment|ready_evidence" in script
+    assert "function renderProfileSelectionBasket" not in script
     assert "function selectedSampleReason" in script
     assert "function renderProfileEnrichmentPlan" in script
+    assert "function renderProfileEvidenceQueueProgress" in script
+    assert 'section.classList.remove("hidden");' in script
+    assert "function revealProfileQueueCard" in script
+    assert "profileEnrichmentSection?.classList.remove(\"hidden\")" in script
+    assert "revealProfileQueueCard();" in script
+    assert "profileQueueCard.scrollIntoView" in script
+    assert "function placeJobCard" in script
+    assert "function scrollProfileTaskPanel" in script
+    assert "profileScanPanel?.scrollIntoView" in script
+    assert 'const creatorCloneNextBar = document.getElementById("creator-clone-next-bar")' in script
+    assert "function resetJobCard" in script
+    assert "function setCreatorCloneDistillButtonsLocked" in script
+    assert "function setCreatorCloneEnrichmentLocked" in script
+    assert "function renderSegmentSampleList" in script
+    assert "if (state === \"SELECT_TO_ENRICH\")" in script
+    assert "await buildSelectedProfileQueue();" in script
+    assert "if (creatorCloneEnrichmentRunning)" in script
+    assert "证据富化任务正在运行。" in script
     assert "function pollCreatorCloneDistillJob" in script
     assert "/api/jobs/creator-clone-distill" in script
     assert "/api/jobs/creator-clone-batch-distill" in script
     assert "function batchDistillSelectedCreatorClone" in script
     assert "按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批" in script
-    assert "const canBatchDistill = hasSelected && selected.length <= PROFILE_BUILD_MAX_ITEMS" in script
+    assert "function setProfileStageView" in script
+    assert "function renderProfileStageView" in script
+    assert "data-profile-stage-nav" in script
+    assert "stage-hidden" in stylesheet
     assert "await batchDistillSelectedCreatorClone({confirm: false, triggeredByQueue: true})" in script
     assert "分批蒸馏最多 ${PROFILE_BUILD_MAX_ITEMS} 条" in script
     assert 'fetch("/api/creator-clone/distill"' not in script
@@ -543,9 +663,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "富化计划" in script
     assert "待补关键帧" in script
     assert "写入蒸馏输入" in script
-    assert "data-profile-remove-selection" in script
-    assert 'profileSelectionBasket?.addEventListener("click"' in script
-    assert 'profileSegmentsPreview?.addEventListener("click"' in script
+    assert "data-profile-remove-selection" not in script
+    assert 'profileSelectionBasket?.addEventListener("click"' not in script
     assert "最近采集审计" in script
     assert "字段覆盖" in script
     assert "capture-field-coverage" in script
@@ -564,9 +683,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".security-contract-card" in stylesheet
     assert ".capture-field-coverage" in stylesheet
     assert ".capture-field-grid" in stylesheet
-    assert ".profile-selection-basket" in stylesheet
-    assert ".selection-basket-item" in stylesheet
-    assert ".selection-basket-item .profile-evidence-badges" in stylesheet
+    assert ".profile-selection-basket" not in stylesheet
     assert ".enrichment-plan-metrics" in stylesheet
     assert ".enrichment-plan-steps" in stylesheet
     assert "/api/local-helper/chrome/status" in script
@@ -627,7 +744,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "保存 ${selected.length} 条参考样本，不执行视频下载" in script
     assert "不执行视频下载，可直接进入大模型蒸馏" in script
     assert "不可富化" in script
-    assert "超过当前上限" in script
+    assert "请使用分批蒸馏" in script
     assert "disabledReason" in script
     assert "profileSelectedBuildButton.title" in script
     assert "将富化" in script
@@ -638,7 +755,6 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'label: "素材包"' in script
     assert 'label: "AI"' in script
     assert 'item.analysis_status === "success"' in script
-    assert "${profileEvidenceBadges(item)}" in script
     assert "function profileEvidenceCoverageSummary" in script
     assert "function needsEnrichmentProfileItems" in script
     assert "function readyEvidenceProfileItems" in script
@@ -704,10 +820,18 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "PROFILE_BUILD_MAX_ITEMS" in script
     assert "document.body.dataset.creatorCloneMaxDistillSamples" in script
     assert "CREATOR_CLONE_MAX_DISTILL_SAMPLES" in script
-    assert "蒸馏样本超过当前上限" in script
+    assert "超过 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条时请使用分批蒸馏" in script
     assert "将蒸馏" in script
     assert "renderCreatorCloneEvidenceOverview" in script
     assert "function renderCreatorCloneActionSummary" in script
+    assert "id=\"profile-content-profile\"" in response.text
+    assert "账号类型 / 分析模板" in response.text
+    assert "美拍 / COS / 颜值" in response.text
+    assert "profileContentProfile" in script
+    assert "content_profile: profileContentProfile?.value || \"auto\"" in script
+    assert "function renderCompactPerformanceSegments" in script
+    assert "creator-clone-segment-disclosure" in script
+    assert '${renderPublicCard("样本分层"' not in script
     assert "可执行摘要" in script
     assert "核心定位" in script
     assert "可复用公式" in script
@@ -719,14 +843,17 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "LLM 未配置" in script
     assert "renderCreatorCloneEvidenceOverview(overview)" in script
     assert ".creator-clone-evidence-strip" in stylesheet
+    assert ".creator-clone-segment-disclosure" in stylesheet
+    assert ".profile-template-select" in stylesheet
+    assert "column-count: 2" in stylesheet
     assert ".creator-clone-action-summary" in stylesheet
     assert ".creator-clone-action-grid" in stylesheet
     assert "当前自用版最多一次富化" in script
     assert "可下载视频超过当前富化上限" in script
     assert "本轮可先富化全部样本" in script
     assert ".profile-source-card" in stylesheet
-    assert ".profile-selection-stage" in stylesheet
-    assert "#fbf9ff" in stylesheet
+    assert ".profile-selection-stage" not in stylesheet
+    assert ".profile-table-module-row" not in stylesheet
     assert ".local-helper-status" in stylesheet
     assert ".helper-readiness" in stylesheet
     assert ".local-helper-status ul" in stylesheet
@@ -744,7 +871,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".profile-decision-grid" in stylesheet
     assert ".profile-decision-card.featured" in stylesheet
     assert ".profile-queue-item" in stylesheet
-    assert ".profile-queue-summary-grid" in stylesheet
+    assert "grid-template-areas" in stylesheet
+    assert ".profile-queue-main" in stylesheet
+    assert ".profile-queue-message" in stylesheet
+    assert "grid-area: pipeline" in stylesheet
+    assert ".profile-queue-summary-grid" not in Path("app/static/app.js").read_text(encoding="utf-8")
     assert ".profile-queue-next-actions" in stylesheet
     assert ".profile-pipeline-strip" in stylesheet
     assert ".profile-queue-pipeline" in stylesheet
@@ -2631,6 +2762,35 @@ def test_profile_build_cases_queue_allows_more_reference_samples_than_distill_li
     payload = response.json()
     assert payload["ok"] is True
     assert payload["selected_count"] == MAX_DISTILL_SAMPLES + 1
+
+
+def test_recent_profile_build_cases_job_returns_latest_queue() -> None:
+    set_id = "clone_recent_profile_build_queue"
+    shutil.rmtree(settings.creator_clones_dir / set_id, ignore_errors=True)
+    save_sample_set(
+        CloneSampleSet(
+            set_id=set_id,
+            title="最近队列恢复",
+            samples=[CloneSample(sample_id="sample_recent_queue", title="最近队列", media_type="text")],
+        )
+    )
+    response = client.post(
+        "/api/jobs/profile-build-cases",
+        json={
+            "items": [{"sample_id": "sample_recent_queue", "media_type": "text", "title": "最近队列"}],
+            "selected_sample_ids": ["sample_recent_queue"],
+            "sample_set_id": set_id,
+        },
+    )
+
+    assert response.status_code == 200
+    job_id = response.json()["job_id"]
+    recent_response = client.get(f"/api/jobs/profile-build-cases/recent?sample_set_id={set_id}")
+
+    assert recent_response.status_code == 200
+    payload = recent_response.json()
+    assert payload["job"]["id"] == job_id
+    assert payload["job"]["type"] == "profile-build-cases"
 
 
 def test_creator_clone_distill_job_rejects_too_many_samples() -> None:
@@ -8831,8 +8991,8 @@ def test_external_profile_provider_requires_api_base(monkeypatch) -> None:
 def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     response = client.get("/")
     assert response.status_code == 200
-    assert "创作者克隆实验室" in response.text
-    assert "Creator Clone Lab" in response.text
+    assert "创作者蒸馏" in response.text
+    assert "Creator Distillation" in response.text
     assert "导入一组对标素材" in response.text
     assert "主页 URL / sec_user_id" in response.text
     assert "浏览器辅助采集" in response.text
@@ -8841,8 +9001,9 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "下一步：开始导入素材" in response.text
     assert "换一种导入方式" in response.text
     assert "高级操作" in response.text
-    assert "手动调整样本" in response.text
-    assert "素材明细" in response.text
+    assert '<details class="creator-clone-advanced-actions hidden">' in response.text
+    assert '<div class="profile-selection-toolbar" id="profile-selection-section" aria-label="素材选样工具栏">' in response.text
+    assert "素材列表" in response.text
     assert "主页扫描</button>" not in response.text
     assert "默认不依赖 Cookie" in response.text
     assert "Cookie / Web API 仅作为可选增强层" in response.text
@@ -8854,7 +9015,7 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "构建素材池" in response.text
     assert "选择 N 条样本" in response.text
     assert "素材池概览" in response.text
-    assert "样本选择" in response.text
+    assert '<div class="profile-selection-toolbar" id="profile-selection-section" aria-label="素材选样工具栏">' in response.text
     assert "证据富化" in response.text
     assert "大模型蒸馏" in response.text
     assert "creator-clone-distill-button" in response.text
@@ -8879,14 +9040,26 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "function getCreatorCloneWizardState()" in script
     assert "function renderWizardPrimaryAction" in script
     assert "function handleWizardPrimaryAction" in script
+    assert "function creatorCloneActionStateForCurrentView" in script
     assert "IMPORT_EMPTY" in script
     assert "POOL_READY" in script
+    assert "POOL_EMPTY" in script
+    assert "SELECT_EMPTY" in script
+    assert "SELECT_TO_ENRICH" in script
+    assert "SELECT_TO_DISTILL" in script
+    assert "ENRICH_EMPTY" in script
     assert "ENRICH_READY" in script
+    assert "ENRICH_DONE" in script
+    assert "DISTILL_BLOCKED" in script
     assert "DISTILL_READY" in script
+    assert "BATCH_DISTILL_READY" in script
+    assert "EXPORT_EMPTY" in script
     assert "EXPORT_READY" in script
     assert "下一步：开始导入素材" in script
     assert "下一步：使用推荐样本继续" in script
     assert "下一步：开始富化证据" in script
+    assert "下一步：进入大模型蒸馏" in script
+    assert "下一步：开始分批蒸馏" in script
     assert "下一步：开始大模型蒸馏" in script
     assert "下一步：下载报告" in script
 
@@ -9655,12 +9828,34 @@ def test_creator_clone_prompt_marks_metadata_only_samples() -> None:
     assert "metadata_only" in prompt
     assert "不能假装理解镜头节奏" in prompt
     assert "媒体类型统计" in prompt
+    assert "账号类型 / 分析模板" in prompt
+    assert "美拍 / COS / 颜值" in prompt
     assert "账号可见资料" in prompt
     assert "甜美 COS 账号" in prompt
     assert "follower_count" in prompt
     assert "图文/照片样本只能推断封面、标题、视觉承诺和静态构图" in prompt
     assert "CreatorCloneResult" not in prompt
     assert "creator_clone_spec" in prompt
+
+
+def test_creator_clone_prompt_allows_manual_content_profile_override() -> None:
+    sample_set = CloneSampleSet(
+        set_id="clone_test_content_profile",
+        title="模板测试素材池",
+        source_platform="douyin",
+        content_profile="emotional_copy",
+        samples=[
+            CloneSample(sample_id="sample_a", title="甜美 COS 变装", desc="颜值美拍", media_type="video"),
+        ],
+    )
+    prompt = build_distill_prompt(sample_set, sample_set.samples)
+    normalized = normalize_creator_clone_result({"summary": "ok"}, sample_set, sample_set.samples)
+
+    assert "账号类型 / 分析模板" in prompt
+    assert "鸡汤 / 情绪文案" in prompt
+    assert "文案段落逻辑" in prompt
+    assert normalized["content_profile"]["requested"] == "emotional_copy"
+    assert normalized["content_profile"]["effective"] == "emotional_copy"
 
 
 def test_creator_clone_prompt_includes_local_performance_segments() -> None:
@@ -10181,6 +10376,56 @@ def test_local_chrome_helper_token_and_invalid_token() -> None:
     )
     assert scan_response.status_code == 400
     assert scan_response.json()["error_code"] == "LOCAL_HELPER_TOKEN_INVALID"
+
+
+def test_local_chrome_merge_rejects_different_profile_and_refreshes_same_profile_metadata() -> None:
+    from app.services.creator_clone import creator_clone_dir
+    from app.services.local_chrome import _merge_into_existing_sample_set
+
+    set_id = "clone_test_profile_merge_guard"
+    output_dir = creator_clone_dir(set_id)
+    shutil.rmtree(output_dir, ignore_errors=True)
+    existing = CloneSampleSet(
+        set_id=set_id,
+        title="旧主页素材池",
+        source_platform="douyin",
+        profile_metadata={
+            "sec_user_id": "MS4wLjABAAAAoldProfile",
+            "profile_url": "https://www.douyin.com/user/MS4wLjABAAAAoldProfile?from_tab_name=main",
+        },
+        samples=[CloneSample(sample_id="old", aweme_id="7650000000000000001", title="旧作品")],
+    )
+    save_sample_set(existing)
+
+    same_profile = CloneSampleSet(
+        set_id="clone_incoming_same_profile",
+        title="同主页新采集",
+        source_platform="douyin",
+        profile_metadata={
+            "sec_user_id": "MS4wLjABAAAAoldProfile",
+            "profile_url": "https://www.douyin.com/user/MS4wLjABAAAAoldProfile?enter_from=author_card&vid=7651111111111111111",
+        },
+        samples=[CloneSample(sample_id="new", aweme_id="7650000000000000002", title="新作品")],
+    )
+    merged = _merge_into_existing_sample_set(set_id, same_profile)
+    assert len(merged.samples) == 2
+    assert merged.profile_metadata["profile_url"].endswith("vid=7651111111111111111")
+
+    different_profile = CloneSampleSet(
+        set_id="clone_incoming_different_profile",
+        title="不同主页",
+        source_platform="douyin",
+        profile_metadata={
+            "sec_user_id": "MS4wLjABAAAAdifferentProfile",
+            "profile_url": "https://www.douyin.com/user/MS4wLjABAAAAdifferentProfile",
+        },
+        samples=[CloneSample(sample_id="other", aweme_id="7650000000000000003", title="混入作品")],
+    )
+    with pytest.raises(AppError) as exc_info:
+        _merge_into_existing_sample_set(set_id, different_profile)
+    assert exc_info.value.code == ErrorCode.LOCAL_CHROME_SCAN_FAILED
+    assert "不是同一个主页" in exc_info.value.message
+    shutil.rmtree(output_dir, ignore_errors=True)
 
 
 def test_local_chrome_open_profile_requires_token(monkeypatch) -> None:

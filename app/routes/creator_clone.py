@@ -20,8 +20,10 @@ from app.services.creator_clone import (
     distill_creator_clone,
     export_paths,
     load_sample_set,
+    normalize_content_profile,
     prompt_only_result,
     sample_from_dict,
+    save_sample_set,
 )
 from app.services.local_chrome import load_capture_audit, load_handoff_manifest, local_helper_security_contract
 
@@ -60,6 +62,7 @@ class CreatorCloneDistillRequest(BaseModel):
     title: str = ""
     creator_name: str = ""
     source_platform: str = "unknown"
+    content_profile: str = "auto"
 
 
 class CreatorCloneHandoffImportRequest(BaseModel):
@@ -164,6 +167,7 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
     try:
         if payload.sample_set_id:
             sample_set = load_sample_set(payload.sample_set_id)
+            sample_set.content_profile = normalize_content_profile(payload.content_profile)
         else:
             samples = [sample_from_dict(item) for item in payload.samples if isinstance(item, dict)]
             if not samples:
@@ -173,7 +177,9 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
                 title=payload.title,
                 creator_name=payload.creator_name,
                 source_platform=payload.source_platform,
+                content_profile=payload.content_profile,
             )
+        save_sample_set(sample_set)
 
         try:
             result = distill_creator_clone(
@@ -227,7 +233,13 @@ def download_creator_clone_file(set_id: str, filename: str):
     return FileResponse(file_path, media_type=media_type, filename=filename)
 
 
-def build_sample_set_from_inline(samples: list, title: str = "", creator_name: str = "", source_platform: str = "unknown"):
+def build_sample_set_from_inline(
+    samples: list,
+    title: str = "",
+    creator_name: str = "",
+    source_platform: str = "unknown",
+    content_profile: str = "auto",
+):
     from app.services.creator_clone import CloneSampleSet, dedupe_samples, save_sample_set
     import uuid
 
@@ -240,6 +252,7 @@ def build_sample_set_from_inline(samples: list, title: str = "", creator_name: s
         title=title or "创作者克隆实验室素材池",
         creator_name=creator_name,
         source_platform=source_platform,
+        content_profile=normalize_content_profile(content_profile),
         samples=unique_samples,
         warnings=warnings,
     )

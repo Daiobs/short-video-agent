@@ -511,19 +511,50 @@ def build_handoff_manifest(
 
 def _merge_into_existing_sample_set(set_id: str, incoming: CloneSampleSet) -> CloneSampleSet:
     existing = load_sample_set(set_id)
+    existing_identity = _profile_identity_from_metadata(existing.profile_metadata)
+    incoming_identity = _profile_identity_from_metadata(incoming.profile_metadata)
+    if existing_identity and incoming_identity and existing_identity != incoming_identity:
+        raise AppError(
+            ErrorCode.LOCAL_CHROME_SCAN_FAILED,
+            "当前 Chrome 页面与已有素材池不是同一个主页，已拒绝合并。请重新开始采集新主页。",
+        )
     before_count = len(existing.samples)
     merged_samples, duplicate_count = dedupe_samples([*existing.samples, *incoming.samples])
     added_count = max(0, len(merged_samples) - before_count)
     existing.samples = merged_samples
     existing.creator_name = existing.creator_name or incoming.creator_name
     existing.source_platform = existing.source_platform or incoming.source_platform
-    existing.profile_metadata = {**incoming.profile_metadata, **existing.profile_metadata} if existing.profile_metadata else incoming.profile_metadata
+    existing.profile_metadata = {**existing.profile_metadata, **incoming.profile_metadata} if existing.profile_metadata else incoming.profile_metadata
     existing.warnings = [
         *existing.warnings,
         *incoming.warnings,
         f"继续采集完成：新增 {added_count} 条，重复 {duplicate_count} 条，当前素材池共 {len(existing.samples)} 条。",
     ]
     return existing
+
+
+def _profile_identity_from_metadata(metadata: dict) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    sec_user_id = str(metadata.get("sec_user_id") or "").strip()
+    if sec_user_id:
+        return _profile_identity_from_value(sec_user_id)
+    return _profile_identity_from_value(str(metadata.get("profile_url") or ""))
+
+
+def _profile_identity_from_value(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    sec_match = re.search(r"MS4w[A-Za-z0-9_.-]+", raw)
+    if sec_match:
+        return f"sec:{sec_match.group(0)}"
+    parsed = urlparse(raw)
+    if parsed.scheme in {"http", "https"} and parsed.hostname:
+        path_match = re.search(r"/user/([^/?#]+)", parsed.path or "", flags=re.IGNORECASE)
+        if path_match:
+            return f"path:/user/{path_match.group(1)}"
+    return ""
 
 
 def _capture_audit_payload(

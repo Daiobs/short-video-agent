@@ -9,17 +9,13 @@
 <body data-profile-build-max-items="{{ profile_build_max_items }}" data-creator-clone-max-distill-samples="{{ creator_clone_max_distill_samples }}">
 <header class="site-header">
     <div class="header-shell">
-        <div>
-            <div class="eyebrow">Local Workflow</div>
-            <h1>短视频爆款分析素材包生成器</h1>
-            <p>当前主功能是单作品解析和创作者克隆实验室：从单条作品沉淀素材包，也可以导入一组对标素材，通过大模型蒸馏创作者规律。</p>
-        </div>
+        <a class="site-title" href="#single" aria-label="短视频爆款分析素材包生成器">短视频爆款分析素材包生成器</a>
+        <nav class="primary-nav" aria-label="一级功能导航">
+            <button type="button" class="primary-nav-button" data-home-route="single">单作品解析</button>
+            <button type="button" class="primary-nav-button" data-home-route="profile">创作者蒸馏</button>
+        </nav>
         <button type="button" id="settings-toggle" class="icon-button" aria-label="打开设置" title="设置">⚙</button>
     </div>
-    <nav class="primary-nav" aria-label="一级功能导航">
-        <button type="button" class="primary-nav-button" data-home-route="single">单作品解析</button>
-        <button type="button" class="primary-nav-button" data-home-route="profile">创作者克隆实验室</button>
-    </nav>
 </header>
 
 <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -34,16 +30,36 @@
                 <button type="button" id="settings-close" class="ghost-button">关闭</button>
             </div>
         </div>
+        <input type="hidden" id="quality-preference" value="1080">
         <div class="settings-grid">
-            <div class="settings-panel">
-                <label>默认清晰度偏好
-                    <select id="quality-preference">
-                        <option value="best">最高可用</option>
-                        <option value="1080">1080p 优先</option>
-                        <option value="720">720p 优先</option>
-                    </select>
-                </label>
-                <p class="muted compact-copy">单作品解析会自动选择该偏好下的候选资源，真实下载 URL 只保存在服务端。</p>
+            <div class="settings-panel wide-settings-panel">
+                <div class="settings-panel-header">
+                    <h3>创作者蒸馏数据源</h3>
+                    <span id="data-source-status-badge" class="status-badge">读取中</span>
+                </div>
+                <p class="muted compact-copy">Cookie / Web API 只是可选增强层。默认主路径仍是手动作品链接和浏览器辅助采集；Cookie 不会写入素材包、Prompt 或日志。视频下载默认使用 1080p 优先。</p>
+                <div id="data-source-status-list" class="compact-dl"></div>
+                <form id="douyin-settings-form" class="settings-form">
+                    <label>Douyin Cookie
+                        <textarea name="douyin_cookie" id="douyin-cookie-input" rows="3" autocomplete="off" placeholder="留空表示保留当前 Cookie"></textarea>
+                    </label>
+                    <label>User-Agent
+                        <input name="user_agent" id="douyin-user-agent-input" placeholder="从浏览器 Network 请求头复制 User-Agent">
+                    </label>
+                    <label>Referer
+                        <input name="referer" id="douyin-referer-input" placeholder="https://www.douyin.com/">
+                    </label>
+                    <label class="settings-checkbox">
+                        <input type="checkbox" id="douyin-clear-cookie-input">
+                        清空本机保存的 Douyin Cookie
+                    </label>
+                    <div class="settings-actions">
+                        <button type="submit" id="save-douyin-settings-button">保存数据源设置</button>
+                        <button type="button" id="test-douyin-cookie-button">自检 Cookie API</button>
+                        <span id="douyin-save-result" class="muted"></span>
+                    </div>
+                    <div id="douyin-cookie-test-result" class="settings-test-result muted"></div>
+                </form>
             </div>
             <div class="settings-panel">
                 <div class="settings-panel-header">
@@ -104,37 +120,13 @@ LLM_MODEL=支持图片输入的模型</pre>
                     <button type="button" id="refresh-preflight-button" class="text-button">刷新</button>
                 </div>
                 <p class="muted compact-copy">检查 Chrome 辅助扫描、ffmpeg/ffprobe、ASR、OCR 和大模型配置是否已准备好。</p>
+                <div class="notice compact-notice chrome-helper-settings-note">
+                    <strong>本机 Chrome 助手使用提示</strong>
+                    <p>主页公开扫描受限时，请先在带 DevTools 的本机 Chrome 中打开目标抖音主页并完成登录/验证，再回到“创作者蒸馏”点击“本机 Chrome 辅助入口”。助手只读取页面可见作品列表和互动元数据，不读取、不保存 Cookie。</p>
+                    <p>如果状态显示“未检测到 Chrome DevTools”，请复制下方预检命令启动调试 Chrome；如果使用专用 profile，第一次需要在该窗口重新登录。</p>
+                </div>
                 <div id="preflight-summary" class="muted">读取中...</div>
                 <div id="preflight-list" class="preflight-list"></div>
-            </div>
-            <div class="settings-panel wide-settings-panel">
-                <div class="settings-panel-header">
-                    <h3>Creator Clone 数据源</h3>
-                    <span id="data-source-status-badge" class="status-badge">读取中</span>
-                </div>
-                <p class="muted compact-copy">Cookie / Web API 只是可选增强层。默认主路径仍是手动作品链接和浏览器辅助采集；Cookie 不会写入素材包、Prompt 或日志。</p>
-                <div id="data-source-status-list" class="compact-dl"></div>
-                <form id="douyin-settings-form" class="settings-form">
-                    <label>Douyin Cookie
-                        <textarea name="douyin_cookie" id="douyin-cookie-input" rows="3" autocomplete="off" placeholder="留空表示保留当前 Cookie"></textarea>
-                    </label>
-                    <label>User-Agent
-                        <input name="user_agent" id="douyin-user-agent-input" placeholder="从浏览器 Network 请求头复制 User-Agent">
-                    </label>
-                    <label>Referer
-                        <input name="referer" id="douyin-referer-input" placeholder="https://www.douyin.com/">
-                    </label>
-                    <label class="settings-checkbox">
-                        <input type="checkbox" id="douyin-clear-cookie-input">
-                        清空本机保存的 Douyin Cookie
-                    </label>
-                    <div class="settings-actions">
-                        <button type="submit" id="save-douyin-settings-button">保存数据源设置</button>
-                        <button type="button" id="test-douyin-cookie-button">自检 Cookie API</button>
-                        <span id="douyin-save-result" class="muted"></span>
-                    </div>
-                    <div id="douyin-cookie-test-result" class="settings-test-result muted"></div>
-                </form>
             </div>
         </div>
     </section>
@@ -208,17 +200,17 @@ LLM_MODEL=支持图片输入的模型</pre>
 
     <section class="home-panel hidden" id="home-profile" data-home-panel="profile">
         <section class="panel profile-scan-panel">
-            <div class="entry-label">Creator Clone Lab</div>
-            <h2>创作者克隆实验室</h2>
+            <div class="entry-label">Creator Distillation</div>
+            <h2>创作者蒸馏</h2>
             <p class="muted">导入一组对标素材，自由选择 N 条样本，通过大模型蒸馏创作者定位、选题规律、表达模板和可复用公式。</p>
             <div class="notice compact-notice">默认不依赖 Cookie，不绕验证码、不绕风控；Cookie / Web API 仅作为可选增强层。请确保你拥有素材分析权限。</div>
-            <div class="profile-flow-strip profile-main-flow" aria-label="创作者克隆工作流">
-                <span>1. 导入素材</span>
-                <span>2. 构建素材池</span>
-                <span>3. 选择 N 条样本</span>
-                <span>4. 证据富化</span>
-                <span>5. 大模型蒸馏</span>
-                <span>6. 可视化输出</span>
+            <div class="profile-flow-strip profile-main-flow" aria-label="创作者蒸馏工作流">
+                <button type="button" data-profile-stage-nav="import">1. 导入素材</button>
+                <button type="button" data-profile-stage-nav="pool">2. 构建素材池</button>
+                <button type="button" data-profile-stage-nav="select">3. 选择 N 条样本</button>
+                <button type="button" data-profile-stage-nav="enrich">4. 证据富化</button>
+                <button type="button" data-profile-stage-nav="distill">5. 大模型蒸馏</button>
+                <button type="button" data-profile-stage-nav="export">6. 可视化输出</button>
             </div>
             <section class="creator-clone-next-bar" id="creator-clone-next-bar" aria-live="polite">
                 <div>
@@ -227,7 +219,7 @@ LLM_MODEL=支持图片输入的模型</pre>
                 </div>
                 <div class="creator-clone-next-actions">
                     <button type="button" id="creator-clone-next-button" class="primary-cta">下一步：开始导入素材</button>
-                    <details class="creator-clone-advanced-actions">
+                    <details class="creator-clone-advanced-actions hidden">
                         <summary>高级操作</summary>
                         <div class="advanced-action-list">
                             <p>主按钮会按输入内容自动选择导入方式。需要指定数据源、实验扫描、复制 Prompt 或下载 JSON 时，再展开对应区域。</p>
@@ -238,7 +230,14 @@ LLM_MODEL=支持图片输入的模型</pre>
                     </details>
                 </div>
             </section>
-            <form id="profile-form" class="profile-scan-form">
+            <section class="job-card compact-job-card hidden" id="job-card" aria-live="polite">
+                <h3>任务状态</h3>
+                <div class="progress">
+                    <div id="progress-bar"></div>
+                </div>
+                <div id="job-message" class="job-message"></div>
+            </section>
+            <form id="profile-form" class="profile-scan-form" data-profile-stage-section="import">
                 <section class="creator-clone-task-input">
                     <label>输入主页 URL、作品链接、aweme_id 或粘贴多条分享文案
                         <textarea id="profile-quick-input" rows="5" placeholder="可粘贴抖音主页 URL、单条/多条作品链接、aweme_id，或完整分享文案。主按钮会自动判断导入方式。"></textarea>
@@ -379,7 +378,7 @@ https://v.douyin.com/xxxxxx/
                 <span id="profile-provider-badge" class="status-badge muted-badge"></span>
             </div>
             <div id="profile-warnings" class="notice hidden"></div>
-            <section class="creator-clone-stage profile-overview-stage" id="profile-overview-section">
+            <section class="creator-clone-stage profile-overview-stage" id="profile-overview-section" data-profile-stage-section="pool">
                 <div class="stage-heading">
                     <div>
                         <span class="entry-label">A. Overview</span>
@@ -396,56 +395,7 @@ https://v.douyin.com/xxxxxx/
                 </details>
             </section>
 
-            <section class="creator-clone-stage profile-selection-stage" id="profile-selection-section">
-                <div class="stage-heading">
-                    <div>
-                        <span class="entry-label">B. Sample Selection</span>
-                        <h3>样本选择</h3>
-                    </div>
-                </div>
-                <div id="creator-clone-recommendation" class="creator-clone-recommendation">
-                    <div class="recommendation-empty">导入素材后，系统会生成推荐样本篮：高赞 / 高评 / 高分享 / 最新 / 低表现混合。</div>
-                </div>
-                <details class="manual-sample-adjustments">
-                    <summary>手动调整样本</summary>
-                    <div class="compact-actions secondary-inline-actions">
-                        <button type="button" id="profile-select-all-button" class="text-button">全选当前列表</button>
-                        <button type="button" id="profile-clear-selection-button" class="text-button">清空选择</button>
-                    </div>
-                    <div class="profile-selection-controls">
-                        <label class="compact-select">排序维度
-                            <select id="profile-sort">
-                                <option value="like_count">点赞数</option>
-                                <option value="comment_count">评论数</option>
-                                <option value="share_count">分享数</option>
-                                <option value="collect_count">收藏数</option>
-                                <option value="engagement_score">综合分</option>
-                                <option value="create_time">发布时间</option>
-                            </select>
-                        </label>
-                        <label class="compact-select">证据筛选
-                            <select id="profile-evidence-filter">
-                                <option value="all">全部素材</option>
-                                <option value="buildable">可富化视频</option>
-                                <option value="metadata_only">仅元数据</option>
-                                <option value="has_frames">已有关键帧</option>
-                                <option value="ready_evidence">证据完整</option>
-                            </select>
-                        </label>
-                        <div class="profile-preset-grid" aria-label="分层选样快捷入口">
-                            <button type="button" data-profile-preset="recommended_mix">推荐组合</button>
-                            <button type="button" data-profile-preset="top_likes">高赞 Top 3</button>
-                            <button type="button" data-profile-preset="top_comments">高评 Top 3</button>
-                            <button type="button" data-profile-preset="top_shares">高分享 Top 3</button>
-                            <button type="button" data-profile-preset="low_performance">低表现 3 条</button>
-                        </div>
-                    </div>
-                </details>
-                <div id="creator-clone-selection-status" class="muted">已选 0 条。</div>
-                <div id="profile-selection-basket" class="profile-selection-basket hidden" aria-live="polite"></div>
-            </section>
-
-            <section class="creator-clone-stage gated-stage hidden" id="profile-enrichment-section">
+            <section class="creator-clone-stage gated-stage hidden" id="profile-enrichment-section" data-profile-stage-section="enrich">
                 <div class="stage-heading">
                     <div>
                         <span class="entry-label">C. Evidence</span>
@@ -464,23 +414,44 @@ https://v.douyin.com/xxxxxx/
                     <span>OCR</span>
                 </div>
                 <div class="profile-secondary-actions">
-                    <label class="inline-checkbox">
-                        <input type="checkbox" id="profile-auto-distill">
-                        富化完成后自动大模型蒸馏
-                    </label>
+                    <details class="profile-run-options hidden">
+                        <summary>运行选项</summary>
+                        <label class="inline-checkbox">
+                            <input type="checkbox" id="profile-auto-distill">
+                            富化完成后自动进入大模型蒸馏
+                        </label>
+                        <p class="muted compact-copy">默认富化完成后停在蒸馏步骤，由主按钮继续；大样本建议先检查队列结果再开始分批蒸馏。</p>
+                    </details>
                     <button type="button" id="profile-continue-chrome-button" class="text-button hidden">继续采集更多</button>
                 </div>
+                <section id="profile-queue-card" class="profile-queue-card hidden">
+                    <h3>素材包队列</h3>
+                    <div id="profile-queue-summary" class="muted"></div>
+                    <div id="profile-queue-items" class="profile-queue-items"></div>
+                </section>
             </section>
 
-            <section class="creator-clone-stage gated-stage hidden" id="profile-distillation-section">
+            <section class="creator-clone-stage gated-stage hidden" id="profile-distillation-section" data-profile-stage-section="distill">
                 <div class="stage-heading">
                     <div>
                         <span class="entry-label">D. Distillation</span>
                         <h3>大模型蒸馏</h3>
                     </div>
                     <div class="profile-panel-actions">
-                        <button type="button" id="creator-clone-distill-button" class="secondary-button subdued-module-action">高级：仅执行蒸馏</button>
-                        <button type="button" id="creator-clone-batch-distill-button" class="secondary-button subdued-module-action">分批蒸馏已选样本</button>
+                        <label class="profile-template-select">
+                            <span>分析模板</span>
+                            <select id="profile-content-profile" aria-label="账号类型 / 分析模板">
+                                <option value="auto">自动判断</option>
+                                <option value="beauty_cos">美拍 / COS / 颜值</option>
+                                <option value="emotional_copy">鸡汤 / 情绪文案</option>
+                                <option value="knowledge">教学 / 知识</option>
+                                <option value="story_twist">剧情 / 反转</option>
+                                <option value="commerce_seed">带货 / 种草</option>
+                                <option value="general">通用短视频</option>
+                            </select>
+                        </label>
+                        <button type="button" id="creator-clone-distill-button" class="secondary-button subdued-module-action">高级：执行蒸馏</button>
+                        <button type="button" id="creator-clone-batch-distill-button" class="secondary-button subdued-module-action hidden">高级：分批蒸馏</button>
                     </div>
                 </div>
                 <div id="profile-distill-readiness" class="profile-distill-readiness">
@@ -488,17 +459,76 @@ https://v.douyin.com/xxxxxx/
                 </div>
             </section>
 
-            <details class="profile-material-details">
-                <summary>素材明细</summary>
+            <details class="profile-material-details" data-profile-stage-section="select" open>
+                <summary>素材列表</summary>
+                <div class="profile-selection-toolbar" id="profile-selection-section" aria-label="素材选样工具栏">
+                    <div id="creator-clone-selection-status" class="profile-selection-status">已选 0 条。</div>
+                    <div id="creator-clone-recommendation" class="creator-clone-recommendation hidden"></div>
+                </div>
                 <div class="profile-table-wrap">
                     <table class="profile-table">
                         <thead>
                             <tr>
                                 <th>选择</th>
-                                <th>素材</th>
-                                <th>类型</th>
-                                <th>互动数据</th>
-                                <th>理解状态</th>
+                                <th>
+                                    <div class="table-head-filter profile-material-head-tools">
+                                        <div class="profile-material-head-title">
+                                            <span>素材</span>
+                                            <button type="button" id="profile-select-all-button" class="text-button">全选</button>
+                                            <button type="button" id="profile-clear-selection-button" class="text-button">清空</button>
+                                        </div>
+                                        <div class="profile-preset-controls">
+                                            <select id="profile-preset-kind" aria-label="快捷选样维度">
+                                                <option value="">手动选择</option>
+                                                <option value="recommended_mix">推荐组合</option>
+                                                <option value="top_likes_5">高赞 5 条</option>
+                                                <option value="top_comments_5">高评 5 条</option>
+                                                <option value="top_shares_5">高分享 5 条</option>
+                                                <option value="top_collects_5">高收藏 5 条</option>
+                                                <option value="latest_5">最新 5 条</option>
+                                                <option value="low_performance_5">低表现 5 条</option>
+                                                <option value="needs_enrichment_5">待富化 5 条</option>
+                                                <option value="ready_evidence_5">证据完整 5 条</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </th>
+                                <th>
+                                    <label class="table-head-filter">
+                                        <span class="table-head-label">类型</span>
+                                        <select id="profile-media-filter">
+                                            <option value="all">全部类型</option>
+                                            <option value="video">视频</option>
+                                            <option value="image">图文/照片</option>
+                                            <option value="unknown">未知</option>
+                                        </select>
+                                    </label>
+                                </th>
+                                <th>
+                                    <label class="table-head-filter">
+                                        <span class="table-head-label">互动数据</span>
+                                        <select id="profile-sort">
+                                            <option value="like_count">按点赞排序</option>
+                                            <option value="comment_count">按评论排序</option>
+                                            <option value="share_count">按分享排序</option>
+                                            <option value="collect_count">按收藏排序</option>
+                                            <option value="engagement_score">按综合分排序</option>
+                                            <option value="create_time">按发布时间排序</option>
+                                        </select>
+                                    </label>
+                                </th>
+                                <th>
+                                    <label class="table-head-filter">
+                                        <span class="table-head-label">理解状态</span>
+                                        <select id="profile-evidence-filter">
+                                            <option value="all">全部素材</option>
+                                            <option value="buildable">可富化视频</option>
+                                            <option value="metadata_only">仅元数据</option>
+                                            <option value="has_frames">已有关键帧</option>
+                                            <option value="ready_evidence">证据完整</option>
+                                        </select>
+                                    </label>
+                                </th>
                                 <th>处理状态</th>
                                 <th>操作</th>
                             </tr>
@@ -507,12 +537,7 @@ https://v.douyin.com/xxxxxx/
                     </table>
                 </div>
             </details>
-            <section id="profile-queue-card" class="profile-queue-card hidden">
-                <h3>素材包队列</h3>
-                <div id="profile-queue-summary" class="muted"></div>
-                <div id="profile-queue-items" class="profile-queue-items"></div>
-            </section>
-            <section id="creator-clone-result-card" class="creator-clone-result-card hidden">
+            <section id="creator-clone-result-card" class="creator-clone-result-card hidden" data-profile-stage-section="export">
                 <div class="section-heading-row">
                     <div>
                         <div class="entry-label">E. Export</div>
@@ -534,15 +559,6 @@ https://v.douyin.com/xxxxxx/
                 </details>
             </section>
         </section>
-    </section>
-
-    <section class="result-card hidden" id="job-card">
-        <h2>任务状态</h2>
-        <div class="progress">
-            <div id="progress-bar"></div>
-        </div>
-        <div id="job-message" class="job-message"></div>
-        <pre id="job-result"></pre>
     </section>
 </main>
 
