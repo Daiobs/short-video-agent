@@ -788,6 +788,17 @@ def _segment_sample_payload(sample: CloneSample, metric_key: str) -> dict:
     }
 
 
+def creator_clone_strategy_prompt_contract() -> str:
+    schema = CreatorCloneStrategy.empty_schema()
+    return (
+        "稳定输出契约 CreatorCloneSchema：\n"
+        "- 必须返回 creator_clone_strategy，且它必须严格符合下方 schema。\n"
+        "- 可以额外返回 summary、evidence_gaps、next_actions 等兼容字段，但网页主报告和 workflow 只信任 creator_clone_strategy。\n"
+        "- 如果证据不足，也要返回完整 schema，用空数组表达未知，不要输出自由文本替代 JSON。\n"
+        f"{json.dumps({'creator_clone_strategy': schema}, ensure_ascii=False, indent=2)}"
+    )
+
+
 def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[CloneSample], distill_mode: str = "quick", include_case_reports: bool = True) -> str:
     compact_samples = [sample_to_prompt_payload(sample, include_case_reports=include_case_reports) for sample in selected_samples]
     counts = understanding_counts(selected_samples)
@@ -809,6 +820,7 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
 - 必须区分 video / image / text / mixed / unknown：视频样本才能推断镜头节奏、动作和口播；图文/照片样本只能推断封面、标题、视觉承诺和静态构图；unknown 样本只能作为元数据参考。
 - 区分高赞、高评论、高分享、高收藏和弱样本；没有数据时用空数组。
 - 输出要适合后续在网页可视化展示。
+- {creator_clone_strategy_prompt_contract()}
 
 蒸馏模式：{distill_mode}
 素材池标题：{sample_set.title}
@@ -846,6 +858,7 @@ def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list
 - 只根据证据推断，不确定就写进 evidence_gaps。
 - 美拍/COS/颜值类样本重点看视觉吸引、人物人设、动作节奏、标题话题和互动引导。
 - 输出要短而有用，适合网页展示。
+- {creator_clone_strategy_prompt_contract()}
 
 返回 JSON 字段：
 {{
@@ -1164,6 +1177,7 @@ def build_reduce_distill_prompt(
 - 如果证据不足，写进 evidence_gaps；不要把没有 ASR/OCR/评论的部分说死。
 - 美拍/COS/颜值类优先归纳：第一眼吸引、人物人设、动作节奏、妆造/光线/构图、标题话题和互动引导。
 - 输出短、稳、可展示，避免长篇泛化。
+- {creator_clone_strategy_prompt_contract()}
 
 返回 JSON 字段：
 {{
@@ -1209,6 +1223,7 @@ def build_micro_reduce_distill_prompt(
 - 总输出尽量控制在 800 个中文字符内。
 - 只归纳共同规律，不重写单条报告。
 - 证据不足写进 evidence_gaps。
+- {creator_clone_strategy_prompt_contract()}
 
 返回 JSON：
 {{
@@ -1742,6 +1757,7 @@ def build_final_creator_clone_reduce_prompt(
 - 优先找跨批次反复出现的流量来源、视觉人设、标题话题、动作节奏、可复刻公式和风险边界。
 - 不要逐条复述样本；如果批次失败或证据不足，写进 evidence_gaps。
 - 按“账号类型 / 分析模板”的指导选择分析重点，不要把不匹配的模板强行套到账号上。
+- {creator_clone_strategy_prompt_contract()}
 
 返回 JSON 字段：
 {{

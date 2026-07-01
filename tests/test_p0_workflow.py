@@ -9908,6 +9908,8 @@ def test_creator_clone_prompt_marks_metadata_only_samples() -> None:
     assert "performance_segments" in prompt
     assert "media_mix" in prompt
     assert "creator_clone_strategy" in prompt
+    assert "稳定输出契约 CreatorCloneSchema" in prompt
+    assert "网页主报告和 workflow 只信任 creator_clone_strategy" in prompt
     assert "content_strategy" in prompt
     assert "validation_rules" in prompt
     assert "账号可见资料" in prompt
@@ -10313,6 +10315,43 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
     assert payload["creator_intelligence"]["strategy_output"] == payload["result"]["creator_clone_strategy"]
     assert Path(payload["exports"]["creator_clone_result_json"]).is_file()
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
+
+
+def test_creator_clone_distill_accepts_schema_first_llm_output(monkeypatch) -> None:
+    class FakeProvider:
+        def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            assert "稳定输出契约 CreatorCloneSchema" in prompt
+            return {
+                "summary": "schema-first 输出。",
+                "creator_clone_strategy": {
+                    "positioning": "甜美 COS 视觉账号",
+                    "content_strategy": ["近景人物第一眼"],
+                    "hooks": ["开头直接给脸和眼神"],
+                    "templates": [{"name": "近景三拍", "beats": ["脸", "动作", "标题"]}],
+                    "anti_patterns": ["不要照搬高风险擦边表达"],
+                    "idea_bank": [{"title": "粉色妆造回头杀"}],
+                    "validation_rules": ["第一秒是否有人物亮点"],
+                },
+            }
+
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: FakeProvider())
+    response = client.post(
+        "/api/creator-clone/distill",
+        json={
+            "samples": [{"sample_id": "sample_schema", "title": "schema 样本", "like_count": 100}],
+            "selected_sample_ids": ["sample_schema"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    strategy = payload["result"]["creator_clone_strategy"]
+    assert strategy == payload["creator_intelligence"]["strategy_output"]
+    assert set(strategy) == {"positioning", "content_strategy", "hooks", "templates", "anti_patterns", "idea_bank", "validation_rules"}
+    assert strategy["positioning"] == "甜美 COS 视觉账号"
+    assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
+    assert payload["creator_intelligence"]["workflow"]["next_action"]["command"] == "export_report"
 
 
 def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> None:

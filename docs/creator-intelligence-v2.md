@@ -330,8 +330,13 @@ Implemented:
 - `CreatorCloneStrategy.empty_schema()` defines the v2 strategy contract:
   `positioning`, `content_strategy`, `hooks`, `templates`, `anti_patterns`,
   `idea_bank`, and `validation_rules`.
+- All creator distillation prompt variants now include the stable
+  `CreatorCloneSchema` contract and state that the workflow/public report only
+  trusts `creator_clone_strategy`.
 - `normalize_creator_clone_result()` always emits `creator_clone_strategy`,
   mapping legacy model fields into the schema.
+- Schema-first model responses that return only `creator_clone_strategy` are
+  accepted and restored as `creator_intelligence.strategy_output`.
 - Sync and async distillation success responses return
   `creator_intelligence.strategy_output`.
 - Prompt-only recovery responses also return `creator_intelligence`, so the UI
@@ -344,6 +349,7 @@ Verification:
 - `tests/test_creator_intelligence_v2.py`
   - `test_creator_clone_result_exposes_structured_strategy_contract`
 - `tests/test_p0_workflow.py`
+  - `test_creator_clone_distill_accepts_schema_first_llm_output`
   - `test_creator_clone_distill_with_mock_llm_saves_visual_result`
   - `test_creator_clone_distill_job_with_mock_llm_saves_visual_result`
   - `test_creator_clone_distill_job_unconfigured_returns_prompt`
