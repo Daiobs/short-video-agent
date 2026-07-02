@@ -354,7 +354,7 @@ class CreatorRuntimeEngine:
             selected = normalize_sample_set_selected_ids(sample_set, selected_sample_ids or [])
             engine.dispatch(workflow_action, {"selected_sample_ids": selected})
             sample_set = update_sample_set_selection(set_id, selected)
-            engine = cls.from_sample_set(sample_set, strategy_output=strategy_output)
+            engine = cls.from_sample_set(sample_set, strategy_output={})
             engine.persist(workflow_action, {"selected_sample_ids": selected}, debug={"source": "dispatch_sample_set"})
             return CreatorRuntimeDispatchResult(sample_set=sample_set, state=engine.state)
 

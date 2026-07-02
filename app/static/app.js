@@ -860,6 +860,19 @@ function syncCreatorProjectSamplesFromViewItems(items = runtimeSampleRows) {
   }
 }
 
+function invalidateCreatorRuntimeReportForSelectionChange() {
+  currentCreatorRuntimeReport = null;
+  currentCreatorIntelligenceStrategy = null;
+  currentDistillPrompt = "";
+  if (currentCreatorRuntimeState?.strategy_output) {
+    currentCreatorRuntimeState = {
+      ...currentCreatorRuntimeState,
+      strategy_output: {},
+    };
+  }
+  creatorCloneResultCard?.classList.add("hidden");
+}
+
 function cloneSetFromCreatorIntelligenceProject(payload = {}) {
   const project = payload.project || {};
   if (!project.project_id) {
@@ -2980,6 +2993,7 @@ async function runCreatorCloneNextAction() {
 function setProfileSelection(items) {
   const selectedIds = new Set(items.map(sampleViewItemKey));
   profileSelectedKeys = selectedIds;
+  invalidateCreatorRuntimeReportForSelectionChange();
   document.querySelectorAll("[data-profile-select]").forEach((input) => {
     input.checked = selectedIds.has(input.value) && !input.disabled;
   });
@@ -5045,6 +5059,7 @@ profileResultsBody.addEventListener("change", (event) => {
     } else {
       profileSelectedKeys.delete(event.target.value);
     }
+    invalidateCreatorRuntimeReportForSelectionChange();
     updateCreatorCloneSelectionStatus();
     scheduleCreatorCloneSelectionSync();
   }
@@ -5060,6 +5075,7 @@ profileResultsBody.addEventListener("click", (event) => {
     return;
   }
   profileSelectedKeys.add(key);
+  invalidateCreatorRuntimeReportForSelectionChange();
   document.querySelectorAll("[data-profile-select]").forEach((input) => {
     if (input.value === key) {
       input.checked = true;

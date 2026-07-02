@@ -608,11 +608,14 @@ def update_sample_set_with_case_artifacts(set_id: str, artifacts: list[CaseArtif
 def update_sample_set_selection(set_id: str, selected_sample_ids: list[str]) -> CloneSampleSet:
     sample_set = load_sample_set(set_id)
     selected = normalize_sample_set_selected_ids(sample_set, selected_sample_ids)
+    previous_selected = list(sample_set.selected_sample_ids)
     selected_set = set(selected)
     for sample in sample_set.samples:
         sample.selected = sample.sample_id in selected_set
     sample_set.selected_sample_ids = selected
     save_sample_set(sample_set)
+    if previous_selected != selected:
+        clear_creator_strategy_outputs(set_id)
     return sample_set
 
 
@@ -642,6 +645,20 @@ def load_creator_strategy_output(set_id: str) -> dict:
         return {}
     strategy = payload.get("creator_clone_strategy") if isinstance(payload, dict) else {}
     return strategy if isinstance(strategy, dict) else {}
+
+
+def clear_creator_strategy_outputs(set_id: str) -> None:
+    base = creator_clone_dir(set_id)
+    for relative_path in (
+        "creator_clone_result.json",
+        "creator_clone.md",
+        "batch_distill/final_result.json",
+        "batch_distill/final_report.md",
+    ):
+        try:
+            (base / relative_path).unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 def creator_intelligence_payload_for_sample_set(sample_set: CloneSampleSet, strategy_output: dict | None = None) -> dict:

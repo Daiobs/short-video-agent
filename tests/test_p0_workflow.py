@@ -554,6 +554,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function creatorStrategyFromResult" in script
     assert "function creatorCloneResultFromStrategyOutput" in script
     assert "function renderCreatorStrategyOutput" in script
+    assert "function invalidateCreatorRuntimeReportForSelectionChange" in script
+    assert "invalidateCreatorRuntimeReportForSelectionChange();" in script
     assert "creator-strategy-grid" in script
     assert "strategy_output" in script
     assert 'workflowState === "DONE"' in script
