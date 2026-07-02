@@ -10,10 +10,13 @@ from app.services.creator_intelligence import (
     CreatorMemoryGraph,
     CreatorProfile,
     CreatorProject,
+    CreatorRuntimeEngine,
+    CreatorRuntimeState,
     CreatorSample,
     CreatorStateStore,
     Evidence,
     EvidenceLevel,
+    ExecutionLayer,
     LLMExecutionEngine,
     MediaKind,
     Platform,
@@ -197,3 +200,79 @@ def test_pipeline_debug_trace_is_persisted_with_workflow_state(tmp_path: Path) -
     assert loaded.workflow_state["state"] == WorkflowState.DISTILLING
     assert loaded.debug_trace[-1]["event"] == {"job_id": "job_1", "stage": "distill"}
     assert session.debug_trace[-1]["event"]["stage"] == "distill"
+
+
+def test_runtime_engine_is_unique_state_source_and_persists_runtime_state(tmp_path: Path) -> None:
+    store = CreatorStateStore(root=tmp_path)
+    engine = CreatorRuntimeEngine.from_project(runtime_project(), store=store, session_id="runtime_unique")
+
+    state = engine.dispatch(WorkflowAction.START_DISTILLATION, persist=True, debug={"job_id": "job_runtime"})
+
+    assert isinstance(state, CreatorRuntimeState)
+    assert state.workflow_dict()["state"] == WorkflowState.DISTILLING
+    assert state.current_step()["stage"] == "distill"
+    assert state.primary_action()["command"] == "wait"
+    loaded = store.load_session("runtime_unique")
+    assert loaded is not None
+    assert loaded.runtime_state["current_step"]["stage"] == "distill"
+    assert loaded.runtime_state["primary_action"]["command"] == "wait"
+
+
+def test_runtime_engine_restores_and_replays_pipeline(tmp_path: Path) -> None:
+    store = CreatorStateStore(root=tmp_path)
+    strategy = CreatorCloneStrategy(positioning="甜美 COS 近景视觉").to_dict()
+    engine = CreatorRuntimeEngine.from_project(runtime_project(), store=store, session_id="runtime_replay")
+
+    engine.dispatch(WorkflowAction.START_DISTILLATION, persist=True)
+    engine.dispatch(WorkflowAction.COMPLETE_DISTILLATION, {"strategy_output": strategy}, persist=True)
+
+    restored = CreatorRuntimeEngine.restore_state("runtime_replay", store)
+    replayed = CreatorRuntimeEngine.replay_actions("runtime_replay", store)
+
+    assert restored.state.workflow_dict()["state"] == WorkflowState.DONE
+    assert restored.state.strategy_output == strategy
+    assert [item["state"] for item in replayed] == [WorkflowState.DISTILLING, WorkflowState.DONE]
+    assert replayed[-1]["primary_action"]["command"] == "export_report"
+
+
+def test_execution_layer_outputs_stable_behavior_and_schema() -> None:
+    layer = ExecutionLayer()
+    behavior = layer.extract_behavior_model(runtime_project()).to_dict()
+    strategy = layer.validate_strategy_output(
+        {
+            "positioning": "甜美 COS 近景视觉",
+            "content_strategy": "近景人设先行",
+            "hooks": ["第一眼给脸和眼神"],
+            "templates": ["近景三拍公式"],
+            "anti_patterns": None,
+            "idea_bank": [{"title": "粉色妆造回头杀"}],
+            "validation_rules": ["第一秒是否有人物亮点"],
+        }
+    )
+
+    assert behavior["project_id"] == "runtime_project"
+    assert behavior["selected_count"] == 2
+    assert behavior["evidence_matrix"]["with_keyframes"] == 2
+    assert strategy == {
+        "positioning": "甜美 COS 近景视觉",
+        "content_strategy": ["近景人设先行"],
+        "hooks": ["第一眼给脸和眼神"],
+        "templates": [{"text": "近景三拍公式"}],
+        "anti_patterns": [],
+        "idea_bank": [{"title": "粉色妆造回头杀"}],
+        "validation_rules": ["第一秒是否有人物亮点"],
+    }
+
+
+def test_ui_renderer_no_longer_contains_legacy_wizard_state_calculation() -> None:
+    script = Path("app/static/app.js").read_text(encoding="utf-8")
+
+    assert "function getWizardStep" not in script
+    assert "function getCreatorCloneWizardState" not in script
+    assert "function getCreatorCloneStage" not in script
+    assert "function workflowNextCommand" not in script
+    assert "wizardStateFromWorkflowState" not in script
+    assert "currentCreatorRuntimeState" in script
+    assert "function creatorRuntimeCurrentStep" in script
+    assert "function creatorRuntimePrimaryAction" in script
+    assert "runtime_state" in script

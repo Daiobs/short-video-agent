@@ -11,8 +11,9 @@ from app.services.creator_clone import (
     load_sample_set,
 )
 from app.services.creator_intelligence import BehaviorRepresentation
+from app.services.creator_intelligence import CreatorRuntimeEngine
 from app.services.creator_intelligence import project_from_clone_sample_set
-from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
+from app.services.creator_intelligence import WorkflowAction
 
 
 router = APIRouter(prefix="/api/creator-intelligence", tags=["creator-intelligence"])
@@ -33,12 +34,14 @@ def project_payload_for_sample_set(
     project = project_from_clone_sample_set(sample_set)
     intelligence = creator_intelligence_payload_for_sample_set(sample_set)
     behavior_payload = behavior_model.to_dict() if hasattr(behavior_model, "to_dict") else behavior_model
+    runtime_state = intelligence.get("runtime_state") if isinstance(intelligence.get("runtime_state"), dict) else {}
     return {
         "ok": True,
         "project": project.to_dict(),
         "workflow": workflow or intelligence.get("workflow") or {},
         "behavior_model": behavior_payload or intelligence.get("behavior_model") or None,
         "strategy_output": strategy_output or intelligence.get("strategy_output") or None,
+        "runtime_state": runtime_state or CreatorRuntimeEngine.from_sample_set(sample_set).state.to_dict(),
         "exports": export_paths(sample_set.set_id),
     }
 
@@ -55,9 +58,9 @@ def get_creator_intelligence_project(project_id: str):
 @router.post("/projects/{project_id}/workflow")
 def dispatch_creator_intelligence_workflow(project_id: str, payload: CreatorIntelligenceWorkflowDispatchRequest):
     try:
-        result = dispatch_creator_workflow(
+        result = CreatorRuntimeEngine.dispatch_sample_set(
             project_id,
-            payload.action,
+            WorkflowAction(payload.action),
             selected_sample_ids=payload.selected_sample_ids,
         )
         return project_payload_for_sample_set(

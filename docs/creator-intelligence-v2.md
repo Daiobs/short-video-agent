@@ -17,7 +17,41 @@ Engineering expression:
 Input -> Creator Behavior Model -> Strategy Output
 ```
 
+## P5 Runtime Simplification
+
+The current architecture target is no longer a stack of separate workflow,
+dispatch, cognition, memory, and LLM layers. P5 converges the platform into four
+runtime layers:
+
+```text
+UI Renderer -> CreatorRuntimeEngine -> ExecutionLayer -> Data Layer
+```
+
+Layer contracts:
+
+- **UI Renderer** renders `CreatorRuntimeState.current_step`,
+  `primary_action`, `state_summary`, and the folded advanced panel. It does not
+  compute wizard state and does not call `getWizardStep()`.
+- **Runtime Engine** is `CreatorRuntimeEngine`. It owns dispatch,
+  state transitions, job-facing runtime state, persistence, restore, and replay.
+  Existing `dispatch_creator_workflow()` is now a compatibility shell around
+  `CreatorRuntimeEngine.dispatch_sample_set()`.
+- **Execution Layer** is `ExecutionLayer`. It wraps ingestion normalization,
+  behavior-model extraction, and schema-validated LLM generation. Adapters,
+  cognition, and LLM execution are implementation details behind this facade.
+- **Data Layer** is `CreatorRuntimeState` plus `CreatorStateStore`. The store
+  keeps `runtime_state` beside legacy `workflow_state` so refresh/replay has a
+  single authoritative snapshot.
+
+P5 non-goals remain strict: no new crawler capability, no new data source, no
+prompt optimization, no new workflow node types, no UI expansion, and no product
+behavior change.
+
 ## System Layers
+
+This section preserves the v2 historical design language. In P5, the ingestion,
+cognition, and generation implementation modules are addressed through
+`ExecutionLayer` rather than exposed as independent runtime layers.
 
 ### 1. Ingestion Layer
 
@@ -72,7 +106,8 @@ The output must be schema-driven, not freeform prompt-driven:
 
 ### Workflow Engine
 
-The workflow engine is the single source of truth.
+The workflow engine is now internal to `CreatorRuntimeEngine`. Runtime engine
+state is the single source of truth.
 
 The UI must not own workflow progress. The UI renders state and dispatches actions.
 
@@ -99,7 +134,7 @@ transition(event)
 UI rule:
 
 ```text
-UI = render(workflow_state)
+UI = render(runtime_state)
 ```
 
 ### Unified Data Model
@@ -255,19 +290,25 @@ Initial integration:
 This section records the current branch state so the v2 refactor can be reviewed
 against the North Star instead of judged as a collection of unrelated patches.
 
-### Workflow Engine As Single State Contract
+### Runtime Engine As Single State Contract
 
 Implemented:
 
-- `app/services/creator_intelligence/workflow.py` defines `WorkflowState`,
-  `WorkflowAction`, `WorkflowSnapshot`, and `WorkflowEngine`.
-- `app/services/creator_intelligence/dispatch.py` centralizes workflow action
-  dispatch through `dispatch_creator_workflow()` for both new v2 routes and
-  legacy creator-clone routes.
+- `app/services/creator_intelligence/runtime.py` defines
+  `CreatorRuntimeState`, `CreatorRuntimeEngine`, and
+  `CreatorRuntimeDispatchResult`.
+- `app/services/creator_intelligence/workflow.py` still defines the internal
+  state enum and transition primitive, but external routes/jobs go through the
+  runtime engine.
+- `app/services/creator_intelligence/dispatch.py` is a thin compatibility shell
+  around `CreatorRuntimeEngine.dispatch_sample_set()`.
 - `POST /api/creator-intelligence/projects/{project_id}/workflow` supports
   `SELECT_SAMPLES`, `MARK_EVIDENCE_READY`, and `START_DISTILLATION`.
 - `POST /api/creator-clone/sets/{set_id}/workflow` remains available for legacy
-  callers but delegates to the same dispatch service.
+  callers but delegates to the runtime engine.
+- API responses expose `runtime_state.current_step`,
+  `runtime_state.primary_action`, `runtime_state.state_summary`, and
+  `runtime_state.advanced_panel`.
 
 Verification:
 
@@ -277,6 +318,9 @@ Verification:
   - `test_creator_intelligence_workflow_api_advances_evidence_and_distillation_state`
   - `test_creator_clone_legacy_workflow_endpoint_advances_distillation_state`
   - `test_shared_creator_workflow_dispatch_service_selects_samples`
+- `tests/test_creator_intelligence_runtime.py`
+  - `test_runtime_engine_is_unique_state_source_and_persists_runtime_state`
+  - `test_runtime_engine_restores_and_replays_pipeline`
 
 ### Unified Creator Project Model
 
@@ -307,13 +351,16 @@ Verification:
   - static frontend assertions for `creatorProjectFromCloneSet`,
     `activeCreatorSampleViewItems`, and `syncCreatorProjectSamplesFromViewItems`.
 
-### Cognitive Modeling Layer
+### Execution Layer
 
 Implemented:
 
-- `app/services/creator_intelligence/cognition.py` builds
-  `BehaviorRepresentation` from selected samples, media mix, evidence matrix,
-  performance segments, and evidence constraints.
+- `app/services/creator_intelligence/execution.py` defines `ExecutionLayer`.
+- The layer wraps adapter normalization, `BehaviorRepresentation` extraction,
+  and `LLMExecutionEngine` schema generation.
+- `app/services/creator_intelligence/cognition.py` still builds
+  `BehaviorRepresentation`, but runtime callers access it through
+  `ExecutionLayer.extract_behavior_model()`.
 - Creator clone prompt builders include the compact behavior representation so
   the LLM path is no longer only raw UI data -> LLM.
 - Enrichment jobs now return `creator_intelligence.behavior_model` when a
@@ -363,19 +410,22 @@ Verification:
 Implemented:
 
 - The creator distillation wizard renders from
-  `creator_intelligence.workflow.ui.stage`, `ui.step_label`, and
-  `ui.next_action`; legacy helper names remain as read-only compatibility
-  aliases.
+  `creator_intelligence.runtime_state.current_step` and
+  `runtime_state.primary_action`.
+- Legacy UI state calculators such as `getWizardStep()`,
+  `getCreatorCloneWizardState()`, `getCreatorCloneStage()`,
+  `workflowNextCommand()`, and `wizardStateFromWorkflowState()` are removed.
 - `renderCreatorCloneNextAction()` and `handleWizardPrimaryAction()` now read
-  `next_action.command` as the action contract, so JS no longer decides whether
-  evidence, direct distillation, batch distillation, or export should be next.
+  `primary_action.command` as the action contract, so JS no longer decides
+  whether evidence, direct distillation, batch distillation, or export should be
+  next.
 - Old frontend-only action states such as `POOL_EMPTY`, `SELECT_TO_ENRICH`,
   `SELECT_TO_DISTILL`, `ENRICH_EMPTY`, `ENRICH_DONE`, and `EXPORT_EMPTY` are
   no longer present in the main script.
 - Selection, enrichment, single distillation, and batch distillation paths
   dispatch workflow actions before changing major UI stages.
 - Recent project restore reads `/api/creator-intelligence/projects/{project_id}`
-  and reconstructs table/report state from v2 payloads.
+  and reconstructs table/report state from runtime payloads.
 - Completed strategy reports restore without rerunning the LLM.
 
 Verification:
@@ -383,9 +433,12 @@ Verification:
 - `tests/test_p0_workflow.py`
   - static assertions for `dispatchCreatorIntelligenceWorkflowAction`,
     `markCreatorCloneDistillationStarted`, `profilePayloadFromCreatorIntelligenceProject`,
-    retired v1 action states, and restored `DONE` report rendering.
+    retired v1 action states, runtime renderer helpers, and restored `DONE`
+    report rendering.
 - `tests/test_creator_intelligence_v2.py`
   - `test_cookie_runtime_settings_do_not_change_creator_workflow`
+- `tests/test_creator_intelligence_runtime.py`
+  - `test_ui_renderer_no_longer_contains_legacy_wizard_state_calculation`
 
 ### Async Job Contract Alignment
 
@@ -412,10 +465,10 @@ Preserved:
 - Existing creator-clone endpoints remain callable.
 - `app/services/creator_clone.py` is now documented as the legacy persistence
   and compatibility layer for existing sample-set files.
-- `app/services/creator_intelligence/{models,adapters,cognition,workflow}.py`
+- `app/services/creator_intelligence/{models,adapters,cognition,workflow,dispatch}.py`
   do not import the legacy creator-clone DTO module; only
-  `creator_intelligence.dispatch` crosses the boundary to coordinate persisted
-  sample-set state.
+  `CreatorRuntimeEngine.dispatch_sample_set()` uses localized compatibility
+  imports to coordinate persisted sample-set state.
 - Existing single-work parsing and case analysis flows are not changed by this
   branch.
 - No new crawler/provider capability is introduced.
@@ -426,12 +479,12 @@ Preserved:
 Implemented:
 
 - `CreatorStateStore` persists `CreatorSession` JSON under
-  `outputs/creator_state/sessions/` and records workflow state, action log,
-  sample-set history, distill history, profile evolution, and debug trace.
-- `WorkflowEngine` exposes `persist_state(session_id)`,
-  `restore_state(session_id)`, and `replay_actions(session_id)`, so a workflow
-  can be recovered or replayed from the runtime store instead of being only an
-  in-memory object.
+- `outputs/creator_state/sessions/` and records runtime state, workflow state,
+  action log, sample-set history, distill history, profile evolution, and debug
+  trace.
+- `CreatorRuntimeEngine` exposes `persist()`, `restore_state(session_id)`, and
+  `replay_actions(session_id)`, so a pipeline can be recovered or replayed from
+  the runtime store instead of being only an in-memory object.
 - `LLMExecutionEngine` wraps final creator distillation calls with retry,
   legacy-output repair, and deterministic `CreatorCloneSchema` validation.
 - `CreatorMemoryGraph` stores historical sample sets and distill results per
@@ -444,11 +497,13 @@ Verification:
 
 - `tests/test_creator_intelligence_runtime.py`
   - state restore
-  - workflow replay
+  - runtime replay
+  - execution layer schema consistency
   - LLM schema validation and retry
   - memory graph persistence and reusable patterns
   - pipeline debug trace persistence
-- Full local regression: `308 passed, 1 warning`.
+- Current branch targeted regression: creator-intelligence and runtime renderer
+  tests pass locally.
 
 Remaining cleanup after this branch:
 

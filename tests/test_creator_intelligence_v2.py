@@ -504,13 +504,16 @@ def test_creator_intelligence_v2_doc_tracks_completion_evidence() -> None:
     doc = Path("docs/creator-intelligence-v2.md").read_text(encoding="utf-8")
 
     assert "## Current Completion Evidence" in doc
-    assert "Workflow Engine As Single State Contract" in doc
+    assert "## P5 Runtime Simplification" in doc
+    assert "Runtime Engine As Single State Contract" in doc
     assert "Unified Creator Project Model" in doc
-    assert "Cognitive Modeling Layer" in doc
+    assert "Execution Layer" in doc
     assert "Structured Generation Contract" in doc
     assert "State-Driven Frontend Wizard" in doc
     assert "Async Job Contract Alignment" in doc
     assert "Compatibility Boundary" in doc
+    assert "CreatorRuntimeEngine.dispatch_sample_set" in doc
+    assert "CreatorRuntimeState" in doc
     assert "legacy on-disk DTOs only" in doc
     assert "do not import the legacy creator-clone DTO module" in doc
     assert "dispatch_creator_workflow" in doc
@@ -534,7 +537,8 @@ def test_creator_intelligence_core_does_not_depend_on_legacy_creator_clone_dtos(
 
     dispatch = Path("app/services/creator_intelligence/dispatch.py").read_text(encoding="utf-8")
     assert "dispatch_creator_workflow" in dispatch
-    assert "from app.services.creator_clone" in dispatch
+    assert "CreatorRuntimeEngine.dispatch_sample_set" in dispatch
+    assert "from app.services.creator_clone" not in dispatch
 
 
 def test_legacy_creator_clone_module_documents_dto_boundary() -> None:

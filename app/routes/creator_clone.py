@@ -25,7 +25,7 @@ from app.services.creator_clone import (
     sample_from_dict,
     save_sample_set,
 )
-from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
+from app.services.creator_intelligence import CreatorRuntimeEngine, WorkflowAction
 from app.services.local_chrome import load_capture_audit, load_handoff_manifest, local_helper_security_contract
 
 
@@ -114,7 +114,12 @@ def import_creator_clone_samples(payload: CreatorCloneImportRequest, db: Session
             max_pages=payload.max_pages,
             sort_by=payload.sort_by,
         )
-        return {"ok": True, "set": sample_set.to_dict(), "exports": export_paths(sample_set.set_id)}
+        return {
+            "ok": True,
+            "set": sample_set.to_dict(),
+            "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
+            "exports": export_paths(sample_set.set_id),
+        }
     except AppError as error:
         return error_response(error)
 
@@ -142,6 +147,7 @@ def import_creator_clone_handoff(payload: CreatorCloneHandoffImportRequest):
         return {
             "ok": True,
             "set": sample_set.to_dict(),
+            "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
             "exports": export_paths(sample_set.set_id),
             "security_contract": local_helper_security_contract(),
         }
@@ -172,7 +178,11 @@ def get_creator_clone_set(set_id: str):
 @router.post("/sets/{set_id}/workflow")
 def dispatch_creator_clone_workflow(set_id: str, payload: CreatorCloneWorkflowDispatchRequest):
     try:
-        result = dispatch_creator_workflow(set_id, payload.action, selected_sample_ids=payload.selected_sample_ids)
+        result = CreatorRuntimeEngine.dispatch_sample_set(
+            set_id,
+            WorkflowAction(payload.action),
+            selected_sample_ids=payload.selected_sample_ids,
+        )
         return {
             "ok": True,
             "set": result.sample_set.to_dict(),

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
-from app.services.creator_intelligence.cognition import build_behavior_representation
+from app.services.creator_intelligence.execution import ExecutionLayer
 from app.services.creator_intelligence.models import (
     BehaviorRepresentation,
     CreatorProject,
@@ -75,6 +75,7 @@ class WorkflowEngine:
     behavior_model: BehaviorRepresentation | None = None
     strategy_output: dict[str, Any] | None = None
     message: str = ""
+    execution_layer: ExecutionLayer = field(default_factory=ExecutionLayer)
 
     @classmethod
     def from_project(cls, project: CreatorProject, strategy_output: dict[str, Any] | None = None) -> "WorkflowEngine":
@@ -103,12 +104,22 @@ class WorkflowEngine:
         store = store or _default_state_store()
         return store.replay_actions(session_id)
 
-    def persist_state(self, session_id: str, store=None, *, action: WorkflowAction | str | None = None, action_payload: dict[str, Any] | None = None, debug: dict[str, Any] | None = None):
+    def persist_state(
+        self,
+        session_id: str,
+        store=None,
+        *,
+        action: WorkflowAction | str | None = None,
+        action_payload: dict[str, Any] | None = None,
+        runtime_state: dict[str, Any] | None = None,
+        debug: dict[str, Any] | None = None,
+    ):
         store = store or _default_state_store()
         return store.persist_workflow_state(
             session_id,
             self.project,
             self.get_state().to_dict(),
+            runtime_state=runtime_state or {},
             behavior_model=self.behavior_model,
             strategy_output=self.strategy_output or {},
             action=str(action.value if isinstance(action, WorkflowAction) else action or ""),
@@ -243,13 +254,13 @@ class WorkflowEngine:
             selected = self.project.selected_samples
             if not selected:
                 raise ValueError("Cannot mark evidence ready without selected samples.")
-            self.behavior_model = build_behavior_representation(self.project)
+            self.behavior_model = self.execution_layer.extract_behavior_model(self.project)
             self.state = WorkflowState.EVIDENCE_READY
             self.message = "Evidence model ready."
             return
         if action == WorkflowAction.START_DISTILLATION:
             self._require({WorkflowState.EVIDENCE_READY, WorkflowState.DISTILLING}, action)
-            self.behavior_model = self.behavior_model or build_behavior_representation(self.project)
+            self.behavior_model = self.behavior_model or self.execution_layer.extract_behavior_model(self.project)
             self.state = WorkflowState.DISTILLING
             self.message = "Distillation started."
             return
