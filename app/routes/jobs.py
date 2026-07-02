@@ -27,6 +27,7 @@ from app.services.creator_clone import (
     CloneSampleSet,
     MAX_DISTILL_SAMPLES,
     batch_distill_creator_clone,
+    build_distill_execution_plan,
     creator_intelligence_payload_for_sample_set,
     dedupe_samples,
     distill_creator_clone,
@@ -1262,6 +1263,47 @@ def _load_creator_clone_distill_set(payload: dict) -> CloneSampleSet:
     return sample_set
 
 
+def _selected_clone_samples(sample_set: CloneSampleSet, selected_sample_ids: list[str]) -> list:
+    requested = {str(value) for value in (selected_sample_ids or sample_set.selected_sample_ids or []) if str(value)}
+    if requested:
+        return [
+            sample
+            for sample in sample_set.samples
+            if sample.sample_id in requested or sample.aweme_id in requested or sample.case_id in requested
+        ]
+    return list(sample_set.samples)
+
+
+def _distill_phase_payload(phase: dict | None, *, execution_plan: dict | None = None, message: str = "") -> dict:
+    phase = dict(phase or {})
+    plan = phase.get("execution_plan") if isinstance(phase.get("execution_plan"), dict) else execution_plan or {}
+    current_phase = str(phase.get("current_phase") or "running")
+    labels = {
+        "planning": "规划分批蒸馏",
+        "batch_reduce": "分批大模型蒸馏",
+        "final_reduce": "最终账号级汇总",
+        "parse_persist": "解析并写入报告",
+        "local_fallback": "本地降级汇总",
+        "complete": "完成",
+        "running": "运行中",
+    }
+    return {
+        "kind": "creator_clone_distill",
+        "current_phase": current_phase,
+        "current_phase_label": phase.get("current_phase_label") or labels.get(current_phase, "运行中"),
+        "message": message,
+        "status": phase.get("status") or "running",
+        "phase_index": phase.get("phase_index"),
+        "phase_count": phase.get("phase_count"),
+        "batch_id": phase.get("batch_id") or "",
+        "batch_count": phase.get("batch_count") or plan.get("batch_count") or 0,
+        "sample_count": phase.get("sample_count") or 0,
+        "timeout_seconds": phase.get("timeout_seconds"),
+        "diagnostic": phase.get("diagnostic") or "",
+        "execution_plan": plan,
+    }
+
+
 def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
     db = SessionLocal()
     try:
@@ -1279,6 +1321,8 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         selected_for_engine = selected_sample_ids or sample_set.selected_sample_ids or [sample.sample_id for sample in sample_set.samples]
         runner.select_samples(selected_for_engine)
         sample_set = runner.sample_set
+        selected_samples = _selected_clone_samples(sample_set, selected_for_engine)
+        execution_plan = build_distill_execution_plan(selected_samples, batch_size=max_samples, final_timeout_seconds=settings.llm_timeout_seconds)
 
         job = db.get(Job, job_id)
         if job:
@@ -1286,8 +1330,22 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                 job,
                 "running",
                 25,
-                f"已载入素材池，准备蒸馏 {len(selected_sample_ids) or len(sample_set.samples)} 条样本",
-                result={"set": sample_set.to_dict()},
+                f"已载入素材池，准备蒸馏 {len(selected_samples)} 条样本",
+                result={
+                    "set": sample_set.to_dict(),
+                    "execution_plan": execution_plan,
+                    "distill_phase": _distill_phase_payload(
+                        {
+                            "current_phase": "planning",
+                            "current_phase_label": "准备单批蒸馏",
+                            "phase_index": 1,
+                            "phase_count": 3,
+                            "execution_plan": execution_plan,
+                        },
+                        execution_plan=execution_plan,
+                        message=f"已载入素材池，准备蒸馏 {len(selected_samples)} 条样本",
+                    ),
+                },
             )
             db.commit()
 
@@ -1300,7 +1358,24 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                     "running",
                     45,
                     "调用大模型蒸馏创作者规则",
-                    result={"set": sample_set.to_dict(), "creator_intelligence": intelligence},
+                    result={
+                        "set": sample_set.to_dict(),
+                        "creator_intelligence": intelligence,
+                        "execution_plan": execution_plan,
+                        "distill_phase": _distill_phase_payload(
+                            {
+                                "current_phase": "final_reduce",
+                                "current_phase_label": "单批大模型蒸馏",
+                                "phase_index": 2,
+                                "phase_count": 3,
+                                "timeout_seconds": int(settings.llm_timeout_seconds),
+                                "execution_plan": execution_plan,
+                                "diagnostic": "如果长时间停留在这里，通常是网关排队、模型生成较慢或返回 JSON 过长。",
+                            },
+                            execution_plan=execution_plan,
+                            message="调用大模型蒸馏创作者规则",
+                        ),
+                    },
                 )
                 db.commit()
             result = distill_creator_clone(
@@ -1322,6 +1397,19 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                         "ok": True,
                         **result,
                         "creator_intelligence": intelligence,
+                        "execution_plan": execution_plan,
+                        "distill_phase": _distill_phase_payload(
+                            {
+                                "current_phase": "complete",
+                                "current_phase_label": "完成",
+                                "phase_index": 3,
+                                "phase_count": 3,
+                                "status": "success",
+                                "execution_plan": execution_plan,
+                            },
+                            execution_plan=execution_plan,
+                            message="创作者蒸馏完成",
+                        ),
                     },
                 )
                 db.commit()
@@ -1348,6 +1436,20 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                         "message": error.message,
                         **prompt_payload,
                         "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
+                        "execution_plan": execution_plan,
+                        "distill_phase": _distill_phase_payload(
+                            {
+                                "current_phase": "local_fallback",
+                                "current_phase_label": "降级为 Prompt",
+                                "phase_index": 3,
+                                "phase_count": 3,
+                                "status": "fallback",
+                                "error_code": error.code,
+                                "execution_plan": execution_plan,
+                            },
+                            execution_plan=execution_plan,
+                            message="大模型暂不可用，已生成蒸馏 Prompt",
+                        ),
                     },
                 )
                 db.commit()
@@ -1382,8 +1484,10 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         selected_for_engine = selected_sample_ids or sample_set.selected_sample_ids or [sample.sample_id for sample in sample_set.samples]
         runner.select_samples(selected_for_engine)
         sample_set = runner.sample_set
+        selected_samples = _selected_clone_samples(sample_set, selected_for_engine)
+        execution_plan = build_distill_execution_plan(selected_samples, batch_size=batch_size, final_timeout_seconds=settings.llm_final_reduce_timeout_seconds)
 
-        def progress(value: int, message: str) -> None:
+        def progress(value: int, message: str, phase: dict | None = None) -> None:
             current = db.get(Job, job_id)
             if current:
                 _set_job(
@@ -1391,11 +1495,26 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
                     "running",
                     max(1, min(98, int(value))),
                     message,
-                    result={"set": sample_set.to_dict()},
+                    result={
+                        "set": sample_set.to_dict(),
+                        "execution_plan": execution_plan,
+                        "distill_phase": _distill_phase_payload(phase, execution_plan=execution_plan, message=message),
+                    },
                 )
                 db.commit()
 
-        progress(8, f"已载入素材池，准备分批蒸馏 {len(selected_sample_ids) or len(sample_set.samples)} 条样本")
+        progress(
+            8,
+            f"已载入素材池，准备分批蒸馏 {len(selected_samples)} 条样本",
+            {
+                "current_phase": "planning",
+                "current_phase_label": "准备分批蒸馏",
+                "phase_index": 0,
+                "phase_count": execution_plan.get("batch_count", 0) + 2,
+                "batch_count": execution_plan.get("batch_count", 0),
+                "execution_plan": execution_plan,
+            },
+        )
         runner.start_distillation()
         result = batch_distill_creator_clone(
             sample_set,
@@ -1418,6 +1537,17 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
                     "ok": bool(result.get("result")),
                     **result,
                     "creator_intelligence": intelligence,
+                    "execution_plan": result.get("execution_plan") or execution_plan,
+                    "distill_phase": _distill_phase_payload(
+                        {
+                            "current_phase": "complete" if result.get("result") else "local_fallback",
+                            "current_phase_label": "完成" if result.get("result") else "降级为 Prompt",
+                            "status": "success" if result.get("result") else "fallback",
+                            "execution_plan": result.get("execution_plan") or execution_plan,
+                        },
+                        execution_plan=result.get("execution_plan") or execution_plan,
+                        message=message,
+                    ),
                 },
             )
             db.commit()

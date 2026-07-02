@@ -388,6 +388,12 @@ button:disabled {
     opacity: .88;
 }
 
+.profile-main-flow button.locked,
+.profile-main-flow button:disabled {
+    cursor: not-allowed;
+    opacity: .42;
+}
+
 .creator-clone-next-bar {
     display: flex;
     align-items: center;
@@ -2631,6 +2637,11 @@ pre {
     background: #f8fbff;
 }
 
+.public-report-card.wide {
+    display: block;
+    column-span: all;
+}
+
 .public-report-card h4 {
     margin: 0 0 12px;
     font-size: 17px;
@@ -2674,8 +2685,84 @@ pre {
     gap: 14px;
 }
 
+.creator-report-hero-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr);
+    gap: 18px;
+    padding: 18px;
+    border: 1px solid rgba(37, 99, 235, .18);
+    border-radius: 12px;
+    background: linear-gradient(135deg, #eff6ff 0%, #ffffff 62%);
+}
+
+.creator-report-hero-card span {
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 950;
+    letter-spacing: .04em;
+}
+
+.creator-report-hero-card h3 {
+    margin: 8px 0;
+    color: #0f172a;
+    font-size: 24px;
+    line-height: 1.35;
+}
+
+.creator-report-hero-card p {
+    margin: 0;
+    max-width: 760px;
+    color: #334155;
+    font-size: 15px;
+    line-height: 1.75;
+}
+
+.creator-report-hero-card dl {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 8px 10px;
+    align-content: start;
+    margin: 0;
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, .22);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .72);
+}
+
+.creator-report-hero-card dt {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.creator-report-hero-card dd {
+    margin: 0;
+    color: #111827;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.45;
+}
+
 .creator-distillation-grid .public-report-card h4 {
     font-size: 18px;
+}
+
+.creator-decision-grid .public-report-card {
+    border-radius: 12px;
+}
+
+.creator-segment-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.creator-segment-grid section {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, .24);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .72);
 }
 
 .creator-report-evidence-details {
@@ -2695,6 +2782,27 @@ pre {
 .creator-report-evidence-details > .creator-clone-evidence-strip,
 .creator-report-evidence-details > .creator-clone-segment-disclosure {
     margin: 0 14px 14px;
+}
+
+.creator-report-evidence-inner {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 0 14px 14px;
+}
+
+.creator-report-evidence-inner section {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, .24);
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.creator-report-evidence-inner section h5 {
+    margin: 0 0 8px;
+    color: #334155;
+    font-size: 14px;
 }
 
 .result-subsection {
@@ -4514,6 +4622,69 @@ pre {
 
 .job-message.success {
     color: var(--ok);
+}
+
+.job-phase {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid rgba(37, 99, 235, .12);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .72);
+}
+
+.job-phase-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.job-phase-header strong {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.job-phase-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.job-phase-chips span {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, .08);
+    color: #1d4ed8;
+    font-size: 12px;
+}
+
+.job-phase p {
+    margin: 8px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.job-phase-diagnostics {
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.job-phase-diagnostics summary {
+    cursor: pointer;
+    color: var(--text);
+    font-weight: 600;
+}
+
+.job-phase-diagnostics ul {
+    margin: 8px 0 0;
+    padding-left: 18px;
 }
 
 footer {

@@ -6,7 +6,11 @@ from enum import StrEnum
 from typing import Any
 
 from app.services.creator_intelligence.cognition import build_behavior_representation
-from app.services.creator_intelligence.models import BehaviorRepresentation, CreatorProject
+from app.services.creator_intelligence.models import (
+    BehaviorRepresentation,
+    CreatorProject,
+    behavior_representation_from_dict,
+)
 
 DIRECT_DISTILL_LIMIT = 20
 
@@ -79,6 +83,38 @@ class WorkflowEngine:
         if engine.strategy_output:
             engine.message = "Creator strategy output ready."
         return engine
+
+    @classmethod
+    def restore_state(cls, session_id: str, store=None) -> "WorkflowEngine":
+        store = store or _default_state_store()
+        session = store.load_session(session_id)
+        if not session:
+            raise ValueError(f"Creator session not found: {session_id}")
+        engine = cls.from_project(session.project, strategy_output=session.strategy_output or None)
+        saved_state = session.workflow_state.get("state")
+        if saved_state:
+            engine.state = WorkflowState(saved_state)
+        engine.behavior_model = behavior_representation_from_dict(session.behavior_model)
+        engine.message = str(session.workflow_state.get("message") or engine.message)
+        return engine
+
+    @classmethod
+    def replay_actions(cls, session_id: str, store=None) -> list[dict[str, Any]]:
+        store = store or _default_state_store()
+        return store.replay_actions(session_id)
+
+    def persist_state(self, session_id: str, store=None, *, action: WorkflowAction | str | None = None, action_payload: dict[str, Any] | None = None, debug: dict[str, Any] | None = None):
+        store = store or _default_state_store()
+        return store.persist_workflow_state(
+            session_id,
+            self.project,
+            self.get_state().to_dict(),
+            behavior_model=self.behavior_model,
+            strategy_output=self.strategy_output or {},
+            action=str(action.value if isinstance(action, WorkflowAction) else action or ""),
+            action_payload=action_payload or {},
+            debug=debug or {},
+        )
 
     def get_state(self) -> WorkflowSnapshot:
         selected = self.project.selected_samples
@@ -232,3 +268,9 @@ class WorkflowEngine:
         if self.state not in states:
             allowed = ", ".join(state.value for state in sorted(states, key=lambda item: item.value))
             raise ValueError(f"Cannot dispatch {action.value} from {self.state.value}; allowed states: {allowed}.")
+
+
+def _default_state_store():
+    from app.services.creator_intelligence.state_store import CreatorStateStore
+
+    return CreatorStateStore()

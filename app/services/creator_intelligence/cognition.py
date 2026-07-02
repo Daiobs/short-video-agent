@@ -8,6 +8,7 @@ from app.services.creator_intelligence.models import BehaviorRepresentation, Cre
 
 def build_behavior_representation(project: CreatorProject) -> BehaviorRepresentation:
     selected = project.selected_samples or project.samples
+    structures = content_structures(selected)
     return BehaviorRepresentation(
         project_id=project.project_id,
         profile=project.profile,
@@ -17,9 +18,11 @@ def build_behavior_representation(project: CreatorProject) -> BehaviorRepresenta
         performance_segments=performance_segments(selected),
         media_mix=media_mix(selected),
         behavior_patterns=behavior_patterns(selected),
-        content_structures=content_structures(selected),
+        content_structures=structures,
+        structure_patterns=structures,
         hook_patterns=hook_patterns(selected),
         risk_patterns=risk_patterns(selected),
+        evolution_signals=evolution_signals(project, selected),
         constraints=tuple(evidence_constraints(selected)),
     )
 
@@ -123,6 +126,25 @@ def risk_patterns(samples: tuple[CreatorSample, ...]) -> dict[str, Any]:
     }
 
 
+def evolution_signals(project: CreatorProject, samples: tuple[CreatorSample, ...]) -> dict[str, Any]:
+    """Local evolution signals before the memory graph adds historical context."""
+    selected_ids = {sample.sample_id for sample in samples}
+    project_sample_ids = {sample.sample_id for sample in project.samples}
+    selected_ratio = _ratio(len(selected_ids), len(project_sample_ids))
+    titles = [sample.title for sample in samples if sample.title]
+    return {
+        "creator_id": project.profile.creator_id,
+        "project_id": project.project_id,
+        "selected_ratio": selected_ratio,
+        "sample_count": len(project.samples),
+        "selected_count": len(samples),
+        "has_history": False,
+        "new_sample_ids": sorted(selected_ids),
+        "repeated_title_tokens": _repeated_tokens(titles),
+        "evidence_depth": _evidence_depth(samples),
+    }
+
+
 def _top(samples: list[CreatorSample], key: str, limit: int) -> list[CreatorSample]:
     return sorted(samples, key=lambda sample: _metric(sample, key), reverse=True)[:limit]
 
@@ -171,6 +193,16 @@ def _title_tokens(samples: tuple[CreatorSample, ...]) -> list[str]:
             if len(token) >= 2 and token not in tokens:
                 tokens.append(token)
     return tokens
+
+
+def _repeated_tokens(titles: list[str], limit: int = 10) -> list[str]:
+    counter: Counter[str] = Counter()
+    for title in titles:
+        for token in title.replace("#", " ").replace("/", " ").split():
+            token = token.strip("，。！？,.!?:：;；[]（）()")
+            if len(token) >= 2:
+                counter[token] += 1
+    return [token for token, count in counter.most_common(limit) if count >= 2]
 
 
 def _ratio(value: int, total: int) -> float:

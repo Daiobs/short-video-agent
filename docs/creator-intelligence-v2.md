@@ -421,11 +421,38 @@ Preserved:
 - No new crawler/provider capability is introduced.
 - No risk-control, captcha, signing, or login bypass behavior is added.
 
+### Runtime System Of Record
+
+Implemented:
+
+- `CreatorStateStore` persists `CreatorSession` JSON under
+  `outputs/creator_state/sessions/` and records workflow state, action log,
+  sample-set history, distill history, profile evolution, and debug trace.
+- `WorkflowEngine` exposes `persist_state(session_id)`,
+  `restore_state(session_id)`, and `replay_actions(session_id)`, so a workflow
+  can be recovered or replayed from the runtime store instead of being only an
+  in-memory object.
+- `LLMExecutionEngine` wraps final creator distillation calls with retry,
+  legacy-output repair, and deterministic `CreatorCloneSchema` validation.
+- `CreatorMemoryGraph` stores historical sample sets and distill results per
+  creator, accumulates behavior/hook/structure/anti-pattern signals, and
+  provides `distillation_prompt_context()` for future distillation prompts.
+- `cognition.py` now emits `behavior_patterns`, `hook_patterns`,
+  `structure_patterns`, `anti_patterns`, and `evolution_signals`.
+
+Verification:
+
+- `tests/test_creator_intelligence_runtime.py`
+  - state restore
+  - workflow replay
+  - LLM schema validation and retry
+  - memory graph persistence and reusable patterns
+  - pipeline debug trace persistence
+- Full local regression: `308 passed, 1 warning`.
+
 Remaining cleanup after this branch:
 
 - Collapse the remaining local sample view-model adapter once older
   creator-clone response shapes are no longer needed.
-- Persist all transient workflow transitions if a future product decision needs
-  resumable `DISTILLING` state across server restarts.
 - Move remaining compatibility prompt details out of `creator_clone.py` once
   older report fields are no longer needed.

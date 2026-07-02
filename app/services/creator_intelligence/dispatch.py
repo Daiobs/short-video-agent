@@ -11,7 +11,18 @@ from app.services.creator_clone import (
     update_sample_set_selection,
 )
 from app.services.creator_intelligence.adapters import project_from_clone_sample_set
+from app.services.creator_intelligence.memory import CreatorMemoryGraph
 from app.services.creator_intelligence.workflow import WorkflowAction, WorkflowEngine
+
+
+def _persist_engine(engine: WorkflowEngine, action: WorkflowAction, payload: dict[str, Any] | None = None) -> None:
+    session = engine.persist_state(
+        engine.project.project_id,
+        action=action,
+        action_payload=payload or {},
+        debug={"source": "dispatch_creator_workflow"},
+    )
+    CreatorMemoryGraph().record_session(session)
 
 
 @dataclass(frozen=True)
@@ -50,6 +61,8 @@ def dispatch_creator_workflow(
         selected = normalize_sample_set_selected_ids(sample_set, selected_sample_ids or [])
         engine.dispatch(workflow_action, {"selected_sample_ids": selected})
         sample_set = update_sample_set_selection(set_id, selected)
+        persisted_engine = WorkflowEngine.from_project(project_from_clone_sample_set(sample_set))
+        _persist_engine(persisted_engine, workflow_action, {"selected_sample_ids": selected})
         return CreatorWorkflowDispatchResult(
             sample_set=sample_set,
             creator_intelligence=creator_intelligence_payload_for_sample_set(sample_set),
@@ -61,6 +74,7 @@ def dispatch_creator_workflow(
         intelligence["workflow"] = workflow
         if engine.behavior_model:
             intelligence["behavior_model"] = engine.behavior_model.to_dict()
+        _persist_engine(engine, workflow_action)
         return CreatorWorkflowDispatchResult(sample_set=sample_set, creator_intelligence=intelligence)
 
     if workflow_action == WorkflowAction.START_DISTILLATION:
@@ -71,6 +85,7 @@ def dispatch_creator_workflow(
         intelligence["workflow"] = workflow
         if engine.behavior_model:
             intelligence["behavior_model"] = engine.behavior_model.to_dict()
+        _persist_engine(engine, workflow_action)
         return CreatorWorkflowDispatchResult(sample_set=sample_set, creator_intelligence=intelligence)
 
     if workflow_action == WorkflowAction.COMPLETE_DISTILLATION:
@@ -83,6 +98,7 @@ def dispatch_creator_workflow(
         intelligence["workflow"] = workflow
         if engine.behavior_model:
             intelligence["behavior_model"] = engine.behavior_model.to_dict()
+        _persist_engine(engine, workflow_action, {"strategy_output": strategy_output or {}})
         return CreatorWorkflowDispatchResult(sample_set=sample_set, creator_intelligence=intelligence)
 
     raise AppError(

@@ -30,7 +30,13 @@ from app.services.creator_intelligence.models import (
     Sample,
     SampleSet,
     SampleMetrics,
+    behavior_representation_from_dict,
+    creator_project_from_dict,
+    validate_creator_clone_schema,
 )
+from app.services.creator_intelligence.llm_execution import LLMExecutionEngine
+from app.services.creator_intelligence.memory import CreatorMemoryGraph
+from app.services.creator_intelligence.state_store import CreatorSession, CreatorStateStore
 from app.services.creator_intelligence.workflow import (
     WorkflowAction,
     WorkflowEngine,
@@ -53,11 +59,17 @@ __all__ = [
     "Sample",
     "SampleSet",
     "SampleMetrics",
+    "CreatorMemoryGraph",
+    "CreatorSession",
+    "CreatorStateStore",
+    "LLMExecutionEngine",
     "WorkflowAction",
     "WorkflowEngine",
     "WorkflowSnapshot",
     "WorkflowState",
+    "behavior_representation_from_dict",
     "build_behavior_representation",
+    "creator_project_from_dict",
     "project_from_clone_sample_set",
     "project_from_clone_selection",
     "samples_from_browser_dom",
@@ -65,4 +77,5 @@ __all__ = [
     "samples_from_cookie_api",
     "samples_from_json_csv",
     "samples_from_manual_links",
+    "validate_creator_clone_schema",
 ]
