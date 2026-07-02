@@ -1456,6 +1456,17 @@ function activeProfileStage() {
   return normalizeProfileStage(profileStageView || creatorRuntimeStage());
 }
 
+function creatorWorkflowProgressStage() {
+  if (hasPendingQuickImportInput()) {
+    return "import";
+  }
+  const runtimeStage = creatorRuntimeCurrentStep().stage;
+  if (runtimeStage) {
+    return normalizeProfileStage(runtimeStage);
+  }
+  return activeProfileStage();
+}
+
 function lockedProfileNavigationStage() {
   if (creatorCloneEnrichmentRunning) {
     return "enrich";
@@ -1543,7 +1554,8 @@ function renderWizardPrimaryAction(state = creatorCloneActionStateForCurrentView
 function renderCreatorCloneStageChrome() {
   const state = creatorCloneActionStateForCurrentView();
   const meta = creatorCloneStateMeta(state);
-  const activeStage = activeProfileStage();
+  const activeStage = creatorWorkflowProgressStage();
+  const viewedStage = activeProfileStage();
   const activeStageIndex = stageIndexFromName(activeStage);
   const lockedStage = lockedProfileNavigationStage();
   creatorCloneFlowSteps.forEach((step) => {
@@ -1552,6 +1564,7 @@ function renderCreatorCloneStageChrome() {
     const locked = Boolean(lockedStage && stage !== lockedStage);
     step.classList.toggle("active", index === activeStageIndex);
     step.classList.toggle("completed", index < activeStageIndex);
+    step.classList.toggle("viewing", stage === viewedStage && index !== activeStageIndex);
     step.classList.toggle("locked", locked);
     step.disabled = locked;
     step.title = locked ? "当前任务正在运行，完成后会自动进入下一步。" : "";

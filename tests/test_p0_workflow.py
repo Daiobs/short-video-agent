@@ -578,6 +578,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "creator_intelligence" in script
     assert "creatorCloneExportActions.open = true" in script
     assert "function activeProfileStage" in script
+    assert "function creatorWorkflowProgressStage" in script
+    assert "const activeStage = creatorWorkflowProgressStage();" in script
+    assert "const viewedStage = activeProfileStage();" in script
+    assert 'step.classList.toggle("viewing", stage === viewedStage && index !== activeStageIndex);' in script
     assert "function creatorCloneStageMeta" in script
     assert 'command === "show_select"' in script
     assert 'command === "show_distill"' in script
@@ -926,6 +930,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".creator-distillation-report" in stylesheet
     assert ".creator-segment-grid" in stylesheet
     assert ".profile-main-flow button.locked" in stylesheet
+    assert ".profile-main-flow button.viewing" in stylesheet
     assert ".creator-report-evidence-details" in stylesheet
     assert ".profile-template-select" in stylesheet
     assert "column-count: 2" in stylesheet
