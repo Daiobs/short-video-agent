@@ -521,6 +521,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function mergeProfileQueueItems" in script
     assert "function rememberRecentCreatorCloneSetId" in script
     assert "function forgetRecentCreatorCloneSetId" in script
+    assert "function enterCreatorCloneFreshImport" in script
+    assert "currentCreatorRuntimeState = null;" in script
+    assert 'profileResultsBody.innerHTML = "";' in script
+    assert 'creatorCloneSelectionStatus.textContent = "已选 0 条。";' in script
+    assert "resetCreatorClonePoolForNewProfile({clearInput: false});" in script
+    assert 'targetStage === "import" && (currentCloneSetId || activeCreatorSampleViewItems().length || currentCreatorRuntimeState)' in script
+    assert "已回到导入素材。可直接替换上方链接并重新开始。" in script
     assert "isSafeCreatorCloneSetId" in script
     assert "/api/creator-clone/sets/" in script
     assert "/api/creator-intelligence/projects/" in script
@@ -583,6 +590,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "const viewedStage = activeProfileStage();" in script
     assert 'step.classList.toggle("viewing", stage === viewedStage && index !== activeStageIndex);' in script
     assert "function creatorCloneStageMeta" in script
+    assert 'if (normalizeProfileStage(stage) === "import")' in script
     assert 'command === "show_select"' in script
     assert 'command === "show_distill"' in script
     assert "runtime_state" in script
