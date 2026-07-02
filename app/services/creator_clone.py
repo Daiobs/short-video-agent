@@ -664,8 +664,9 @@ def clear_creator_strategy_outputs(set_id: str) -> None:
 def creator_intelligence_payload_for_sample_set(sample_set: CloneSampleSet, strategy_output: dict | None = None) -> dict:
     strategy = strategy_output if isinstance(strategy_output, dict) else load_creator_strategy_output(sample_set.set_id)
     engine = CreatorRuntimeEngine.from_sample_set(sample_set, strategy_output=strategy or None)
-    if engine.project.selected_samples and not engine.workflow_engine.behavior_model:
-        engine.workflow_engine.behavior_model = engine.execution_layer.extract_behavior_model(engine.project)
+    if engine.project.selected_samples and engine.behavior_model is None:
+        engine.behavior_model = engine.execution_layer.extract_behavior_model(engine.project)
+        engine.workflow_engine.has_behavior_model = True
     payload = engine.to_payload()
     payload["runtime_state"] = engine.state.to_dict()
     return payload
@@ -932,10 +933,11 @@ def build_sample_map_summaries(selected_samples: list[CloneSample]) -> list[dict
 
 def build_llm_map_summaries(llm, selected_samples: list[CloneSample]) -> list[dict]:
     summaries: list[dict] = []
+    execution_layer = ExecutionLayer()
     for sample in selected_samples:
         fallback = sample_map_summary(sample)
         try:
-            result = llm.analyze(build_sample_map_prompt(sample, fallback), [])
+            result = execution_layer.analyze_json(llm, build_sample_map_prompt(sample, fallback), [])
         except AppError as error:
             degraded = dict(fallback)
             degraded["map_source"] = fallback.get("map_source") or "local_evidence"

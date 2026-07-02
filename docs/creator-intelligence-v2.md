@@ -47,6 +47,43 @@ P5 non-goals remain strict: no new crawler capability, no new data source, no
 prompt optimization, no new workflow node types, no UI expansion, and no product
 behavior change.
 
+## P5.1 Control / Execution Split
+
+P5.1 separates the runtime into a pure control plane and an execution plane
+without changing the existing creator-distillation user flow.
+
+Control plane:
+
+- `WorkflowEngine` owns state management, transition rules, allowed action
+  validation, and `WorkflowIntent`.
+- `WorkflowSnapshot` exposes `state`, `allowed_actions`, `next_intent`, counts,
+  and result flags only.
+- `WorkflowEngine` does not import `ExecutionLayer`, does not build
+  `BehaviorRepresentation`, does not call LLM providers, and does not generate
+  UI `next_action` labels or commands.
+
+Execution plane:
+
+- `ExecutionLayer` owns ingestion normalization, behavior-model extraction,
+  distillation execution helpers, and schema-validated LLM generation.
+- Direct provider calls such as `provider.analyze(...)` are routed through
+  `ExecutionLayer` / `LLMExecutionEngine`.
+- `CreatorRuntimeEngine` maps workflow intent to runtime-facing
+  `current_step` / `primary_action`, persists runtime state, and passes explicit
+  execution requests to `ExecutionLayer`.
+
+Protocol:
+
+```json
+{
+  "action": "MARK_EVIDENCE_READY",
+  "payload": {}
+}
+```
+
+The UI remains a renderer of `CreatorRuntimeState`; it should not infer the
+workflow state machine on its own.
+
 ## System Layers
 
 This section preserves the v2 historical design language. In P5, the ingestion,

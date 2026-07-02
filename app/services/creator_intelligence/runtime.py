@@ -17,6 +17,7 @@ from app.services.creator_intelligence.workflow import (
     DIRECT_DISTILL_LIMIT,
     WorkflowAction,
     WorkflowEngine,
+    WorkflowIntent,
     WorkflowSnapshot,
     WorkflowState,
 )
@@ -24,6 +25,119 @@ from app.services.creator_intelligence.workflow import (
 
 def _snapshot_dict(snapshot: WorkflowSnapshot | dict[str, Any]) -> dict[str, Any]:
     return snapshot.to_dict() if hasattr(snapshot, "to_dict") else dict(snapshot or {})
+
+
+_RUNTIME_STEP_META = {
+    WorkflowState.IMPORT.value: ("import", 0, "当前步骤：导入素材"),
+    WorkflowState.INGESTED.value: ("pool", 1, "当前步骤：构建素材池"),
+    WorkflowState.SAMPLE_READY.value: ("select", 2, "当前步骤：选择 N 条样本"),
+    WorkflowState.SAMPLE_SELECTED.value: ("enrich", 3, "当前步骤：富化证据"),
+    WorkflowState.EVIDENCE_READY.value: ("distill", 4, "当前步骤：大模型蒸馏"),
+    WorkflowState.DISTILLING.value: ("distill", 4, "当前步骤：大模型蒸馏"),
+    WorkflowState.DONE.value: ("export", 5, "当前步骤：可视化输出"),
+}
+
+
+def _runtime_next_action(workflow: dict[str, Any]) -> dict[str, Any]:
+    state = str(workflow.get("state") or WorkflowState.IMPORT.value)
+    intent = workflow.get("next_intent") if isinstance(workflow.get("next_intent"), dict) else {}
+    intent_action = str(intent.get("action") or "")
+    intent_payload = intent.get("payload") if isinstance(intent.get("payload"), dict) else {}
+    sample_count = int(workflow.get("sample_count") or 0)
+    selected_count = int(workflow.get("selected_count") or 0)
+    evidence_ready_count = int(workflow.get("evidence_ready_count") or 0)
+    if state == WorkflowState.IMPORT.value:
+        return {
+            "state": "IMPORT_READY",
+            "command": "import_input",
+            "label": "下一步：开始导入素材",
+            "summary": "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。",
+            "disabled": False,
+        }
+    if state == WorkflowState.INGESTED.value:
+        return {
+            "state": "POOL_READY",
+            "command": "select_recommended_samples",
+            "label": "下一步：构建素材池",
+            "summary": "已接收输入，准备构建素材池。",
+            "disabled": False,
+        }
+    if state == WorkflowState.SAMPLE_READY.value:
+        return {
+            "state": "RECOMMENDED_READY",
+            "command": "select_recommended_samples",
+            "label": "下一步：使用推荐样本继续",
+            "summary": f"已导入 {sample_count} 条素材，请选择代表样本继续。",
+            "disabled": False,
+        }
+    if state == WorkflowState.SAMPLE_SELECTED.value:
+        if not selected_count:
+            return {
+                "state": "SELECT_EMPTY",
+                "command": "select_samples",
+                "label": "请先选择样本",
+                "summary": "在素材列表中勾选代表样本，或使用快捷入口。",
+                "disabled": True,
+            }
+        pending = max(0, selected_count - evidence_ready_count)
+        if intent_action == WorkflowAction.MARK_EVIDENCE_READY.value or pending:
+            return {
+                "state": "ENRICH_READY",
+                "command": "build_evidence",
+                "label": "下一步：开始富化证据",
+                "summary": f"已选择 {selected_count} 条样本，其中 {pending} 条仍需补齐证据。",
+                "disabled": False,
+            }
+        return {
+            "state": "DISTILL_READY",
+            "command": runtime_action_command_for_selected_count(selected_count),
+            "label": "下一步：进入大模型蒸馏",
+            "summary": f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。",
+            "disabled": False,
+        }
+    if state == WorkflowState.EVIDENCE_READY.value:
+        if not selected_count:
+            return {
+                "state": "DISTILL_BLOCKED",
+                "command": "select_samples",
+                "label": "返回选择样本",
+                "summary": "还没有可蒸馏样本。请先选择代表样本。",
+                "disabled": False,
+            }
+        return {
+            "state": "BATCH_DISTILL_READY" if intent_payload.get("mode") == "batch" else "DISTILL_READY",
+            "command": runtime_action_command_for_selected_count(selected_count),
+            "label": "下一步：开始分批蒸馏" if selected_count > DIRECT_DISTILL_LIMIT else "下一步：开始大模型蒸馏",
+            "summary": (
+                f"已选择 {selected_count} 条样本，超过单次蒸馏上限，将按批次蒸馏后汇总。"
+                if selected_count > DIRECT_DISTILL_LIMIT
+                else f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。"
+            ),
+            "disabled": False,
+        }
+    if state == WorkflowState.DISTILLING.value:
+        return {
+            "state": "DISTILLING",
+            "command": "wait",
+            "label": "正在大模型蒸馏",
+            "summary": "当前任务由 Execution Layer 执行，完成后会展示创作者蒸馏报告。",
+            "disabled": True,
+        }
+    if state == WorkflowState.DONE.value:
+        return {
+            "state": "EXPORT_READY",
+            "command": "export_report",
+            "label": "下一步：下载报告",
+            "summary": "创作者蒸馏报告已生成，可下载报告或复制规则继续使用。",
+            "disabled": False,
+        }
+    return {
+        "state": "IMPORT_READY",
+        "command": "import_input",
+        "label": "下一步：开始导入素材",
+        "summary": "等待输入。",
+        "disabled": False,
+    }
 
 
 @dataclass(frozen=True)
@@ -50,28 +164,19 @@ class CreatorRuntimeState:
 
     def current_step(self) -> dict[str, Any]:
         workflow = self.workflow_dict()
-        ui = workflow.get("ui") if isinstance(workflow.get("ui"), dict) else {}
+        state = str(workflow.get("state") or WorkflowState.IMPORT.value)
+        stage, index, label = _RUNTIME_STEP_META.get(state, _RUNTIME_STEP_META[WorkflowState.IMPORT.value])
         return {
-            "state": workflow.get("state") or WorkflowState.IMPORT.value,
-            "stage": ui.get("stage") or "import",
-            "index": int(ui.get("step_index") or 0),
-            "label": ui.get("step_label") or "当前步骤：导入素材",
-            "progress_percent": int(ui.get("progress_percent") or 0),
+            "state": state,
+            "stage": stage,
+            "index": index,
+            "label": label,
+            "progress_percent": int((index / 5) * 100),
         }
 
     def primary_action(self) -> dict[str, Any]:
         workflow = self.workflow_dict()
-        ui = workflow.get("ui") if isinstance(workflow.get("ui"), dict) else {}
-        action = ui.get("next_action") if isinstance(ui.get("next_action"), dict) else {}
-        if not action:
-            action = workflow.get("next_action") if isinstance(workflow.get("next_action"), dict) else {}
-        return {
-            "state": action.get("state") or "",
-            "command": action.get("command") or "wait",
-            "label": action.get("label") or "等待状态更新",
-            "summary": action.get("summary") or workflow.get("message") or "",
-            "disabled": bool(action.get("disabled")),
-        }
+        return _runtime_next_action(workflow)
 
     def state_summary(self) -> dict[str, Any]:
         workflow = self.workflow_dict()
@@ -173,13 +278,17 @@ class CreatorRuntimeEngine:
         self.store = store or CreatorStateStore()
         self.session_id = session_id or project.project_id
         self.job_state = dict(job_state or {})
-        self.workflow_engine = WorkflowEngine.from_project(project, strategy_output=strategy_output or None)
-        if behavior_model is not None:
-            self.workflow_engine.behavior_model = (
-                behavior_model
-                if isinstance(behavior_model, BehaviorRepresentation)
-                else behavior_representation_from_dict(behavior_model)
-            )
+        self.behavior_model = (
+            behavior_model
+            if isinstance(behavior_model, BehaviorRepresentation)
+            else behavior_representation_from_dict(behavior_model)
+        )
+        self.strategy_output = dict(strategy_output or {})
+        self.workflow_engine = WorkflowEngine.from_project(
+            project,
+            strategy_output=self.strategy_output or None,
+            behavior_model=self.behavior_model.to_dict() if self.behavior_model else None,
+        )
 
     @classmethod
     def from_project(
@@ -241,6 +350,8 @@ class CreatorRuntimeEngine:
         if saved_state:
             engine.workflow_engine.state = WorkflowState(saved_state)
         engine.workflow_engine.message = str(session.workflow_state.get("message") or engine.workflow_engine.message)
+        engine.workflow_engine.has_behavior_model = bool(session.workflow_state.get("has_behavior_model") or engine.behavior_model)
+        engine.workflow_engine.has_strategy_output = bool(session.workflow_state.get("has_strategy_output") or engine.strategy_output)
         return engine
 
     @classmethod
@@ -277,13 +388,11 @@ class CreatorRuntimeEngine:
 
     @property
     def state(self) -> CreatorRuntimeState:
-        if self.workflow_engine.behavior_model is None and self.workflow_engine.project.selected_samples:
-            self.workflow_engine.behavior_model = self.execution_layer.extract_behavior_model(self.workflow_engine.project)
         return CreatorRuntimeState(
             project=self.workflow_engine.project,
             workflow=self.workflow_engine.get_state(),
-            behavior_model=self.workflow_engine.behavior_model,
-            strategy_output=dict(self.workflow_engine.strategy_output or {}),
+            behavior_model=self.behavior_model,
+            strategy_output=dict(self.strategy_output or {}),
             job_state=self.job_state,
         )
 
@@ -297,11 +406,23 @@ class CreatorRuntimeEngine:
     ) -> CreatorRuntimeState:
         workflow_action = WorkflowAction(action)
         payload = dict(payload or {})
+        intent = WorkflowIntent.from_action(workflow_action, payload)
         if workflow_action == WorkflowAction.MARK_EVIDENCE_READY:
-            self.workflow_engine.behavior_model = self.execution_layer.extract_behavior_model(self.workflow_engine.project)
+            self.behavior_model = self.execution_layer.extract_behavior_model(
+                self.workflow_engine.project,
+                intent=intent,
+            )
+            payload["has_behavior_model"] = True
+        if workflow_action == WorkflowAction.START_DISTILLATION and self.behavior_model is None:
+            self.behavior_model = self.execution_layer.extract_behavior_model(
+                self.workflow_engine.project,
+                intent=intent,
+            )
+            self.workflow_engine.has_behavior_model = True
+        if workflow_action == WorkflowAction.COMPLETE_DISTILLATION:
+            self.strategy_output = dict(payload.get("strategy_output") or self.strategy_output or {})
+            payload["has_strategy_output"] = bool(self.strategy_output)
         self.workflow_engine.dispatch(workflow_action, payload)
-        if workflow_action == WorkflowAction.MARK_EVIDENCE_READY and not self.workflow_engine.behavior_model:
-            self.workflow_engine.behavior_model = self.execution_layer.extract_behavior_model(self.workflow_engine.project)
         if persist:
             self.persist(workflow_action, payload, debug=debug)
         return self.state
@@ -320,6 +441,8 @@ class CreatorRuntimeEngine:
             action=workflow_action,
             action_payload=action_payload or {},
             runtime_state=self.state.to_dict(),
+            behavior_model=self.behavior_model,
+            strategy_output=self.strategy_output,
             debug={
                 "source": "CreatorRuntimeEngine",
                 **dict(debug or {}),
@@ -355,6 +478,12 @@ class CreatorRuntimeEngine:
             engine.dispatch(workflow_action, {"selected_sample_ids": selected})
             sample_set = update_sample_set_selection(set_id, selected)
             engine = cls.from_sample_set(sample_set, strategy_output={})
+            if engine.workflow_engine.state == WorkflowState.EVIDENCE_READY and engine.behavior_model is None:
+                engine.behavior_model = engine.execution_layer.extract_behavior_model(
+                    engine.project,
+                    intent=WorkflowIntent.from_action(WorkflowAction.MARK_EVIDENCE_READY),
+                )
+                engine.workflow_engine.has_behavior_model = True
             engine.persist(workflow_action, {"selected_sample_ids": selected}, debug={"source": "dispatch_sample_set"})
             return CreatorRuntimeDispatchResult(sample_set=sample_set, state=engine.state)
 
@@ -373,10 +502,11 @@ class CreatorRuntimeEngine:
         if workflow_action == WorkflowAction.COMPLETE_DISTILLATION:
             if engine.workflow_engine.state == WorkflowState.DONE:
                 if strategy_output:
-                    engine.workflow_engine.strategy_output = dict(strategy_output or {})
+                    engine.strategy_output = dict(strategy_output or {})
+                    engine.workflow_engine.has_strategy_output = True
                 engine.persist(
                     workflow_action,
-                    {"strategy_output": strategy_output or engine.workflow_engine.strategy_output or {}},
+                    {"strategy_output": strategy_output or engine.strategy_output or {}},
                     debug={"source": "dispatch_sample_set", "idempotent": True},
                 )
                 return CreatorRuntimeDispatchResult(sample_set=sample_set, state=engine.state)

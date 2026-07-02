@@ -76,7 +76,7 @@ def test_creator_state_store_restores_workflow_state(tmp_path: Path) -> None:
     restored = WorkflowEngine.restore_state("session_restore", store)
 
     assert restored.state == WorkflowState.DONE
-    assert restored.strategy_output == strategy
+    assert not hasattr(restored, "strategy_output")
     assert restored.project.project_id == project.project_id
     assert restored.get_state().has_strategy_output is True
 

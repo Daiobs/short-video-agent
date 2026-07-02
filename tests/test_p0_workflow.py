@@ -10513,7 +10513,7 @@ def test_creator_clone_distill_accepts_schema_first_llm_output(monkeypatch) -> N
     assert set(strategy) == {"positioning", "content_strategy", "hooks", "templates", "anti_patterns", "idea_bank", "validation_rules"}
     assert strategy["positioning"] == "甜美 COS 视觉账号"
     assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
-    assert payload["creator_intelligence"]["workflow"]["next_action"]["command"] == "export_report"
+    assert payload["creator_intelligence"]["runtime_state"]["primary_action"]["command"] == "export_report"
 
 
 def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> None:

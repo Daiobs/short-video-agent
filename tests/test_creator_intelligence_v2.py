@@ -163,37 +163,33 @@ def test_workflow_engine_controls_creator_distillation_state() -> None:
     engine = WorkflowEngine(project=project)
 
     assert engine.get_state().state == WorkflowState.IMPORT
-    assert engine.get_state().to_dict()["ui"]["stage"] == "import"
-    assert engine.get_state().to_dict()["next_action"]["state"] == "IMPORT_READY"
-    assert engine.get_state().to_dict()["next_action"]["command"] == "import_input"
+    assert "ui" not in engine.get_state().to_dict()
+    assert "next_action" not in engine.get_state().to_dict()
+    assert engine.get_state().to_dict()["next_intent"]["action"] == WorkflowAction.INGEST
+    assert WorkflowAction.INGEST in engine.get_state().to_dict()["allowed_actions"]
     assert engine.dispatch(WorkflowAction.INGEST).state == WorkflowState.INGESTED
     ready = engine.dispatch(WorkflowAction.BUILD_SAMPLE_POOL)
     assert ready.state == WorkflowState.SAMPLE_READY
-    assert ready.to_dict()["next_action"]["command"] == "select_recommended_samples"
+    assert ready.to_dict()["next_intent"]["action"] == WorkflowAction.SELECT_SAMPLES
     selected = engine.dispatch(WorkflowAction.SELECT_SAMPLES, {"selected_sample_ids": ["sample_ready"]})
     assert selected.state == WorkflowState.SAMPLE_SELECTED
     assert selected.selected_count == 1
-    assert selected.to_dict()["ui"]["stage"] == "enrich"
-    assert selected.to_dict()["next_action"]["state"] == "DISTILL_READY"
-    assert selected.to_dict()["next_action"]["command"] == "start_distillation"
-    evidence = engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY)
+    assert selected.to_dict()["next_intent"]["action"] == WorkflowAction.START_DISTILLATION
+    assert selected.has_behavior_model is False
+    evidence = engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY, {"has_behavior_model": True})
     assert evidence.state == WorkflowState.EVIDENCE_READY
     assert evidence.has_behavior_model is True
-    assert evidence.to_dict()["ui"]["stage"] == "distill"
-    assert evidence.to_dict()["next_action"]["state"] == "DISTILL_READY"
-    assert evidence.to_dict()["next_action"]["command"] == "start_distillation"
-    assert engine.behavior_model is not None
+    assert evidence.to_dict()["next_intent"]["action"] == WorkflowAction.START_DISTILLATION
     distilling = engine.dispatch(WorkflowAction.START_DISTILLATION)
     assert distilling.state == WorkflowState.DISTILLING
-    assert distilling.to_dict()["next_action"]["command"] == "wait"
+    assert distilling.to_dict()["next_intent"]["action"] == WorkflowAction.COMPLETE_DISTILLATION
     done = engine.dispatch(
         WorkflowAction.COMPLETE_DISTILLATION,
         {"strategy_output": CreatorCloneStrategy(positioning="甜美 COS 视觉吸引").to_dict()},
     )
     assert done.state == WorkflowState.DONE
     assert done.has_strategy_output is True
-    assert done.to_dict()["ui"]["stage"] == "export"
-    assert done.to_dict()["next_action"]["command"] == "export_report"
+    assert done.to_dict()["next_intent"] is None
 
 
 def test_workflow_engine_restores_done_state_from_strategy_output() -> None:
@@ -205,7 +201,7 @@ def test_workflow_engine_restores_done_state_from_strategy_output() -> None:
     snapshot = engine.get_state().to_dict()
     assert snapshot["state"] == WorkflowState.DONE
     assert snapshot["has_strategy_output"] is True
-    assert snapshot["next_action"]["command"] == "export_report"
+    assert snapshot["next_intent"] is None
 
 
 def test_workflow_engine_rejects_ui_driven_state_skips() -> None:
@@ -389,7 +385,7 @@ def test_cookie_runtime_settings_do_not_change_creator_workflow(monkeypatch, tmp
     assert response.json()["data_sources"]["has_cookie"] is True
     assert "workflow-secret" not in json.dumps(response.json(), ensure_ascii=False)
     assert before["state"] == after["state"] == WorkflowState.EVIDENCE_READY
-    assert before["next_action"] == after["next_action"]
+    assert before["next_intent"] == after["next_intent"]
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 
@@ -440,7 +436,7 @@ def test_creator_intelligence_selection_after_done_resets_report_state() -> None
 
     before = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()
     assert before["workflow"]["state"] == WorkflowState.DONE
-    assert before["workflow"]["next_action"]["command"] == "export_report"
+    assert before["runtime_state"]["primary_action"]["command"] == "export_report"
 
     response = client.post(
         f"/api/creator-intelligence/projects/{sample_set.set_id}/workflow",
@@ -451,14 +447,14 @@ def test_creator_intelligence_selection_after_done_resets_report_state() -> None
     payload = response.json()
     assert payload["project"]["selected_sample_ids"] == ["sample_meta"]
     assert payload["workflow"]["state"] == WorkflowState.SAMPLE_SELECTED
-    assert payload["workflow"]["next_action"]["command"] == "build_evidence"
+    assert payload["runtime_state"]["primary_action"]["command"] == "build_evidence"
     assert payload["strategy_output"] == {}
     assert not (output_dir / "creator_clone_result.json").exists()
     assert not (output_dir / "creator_clone.md").exists()
 
     reloaded = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()
     assert reloaded["workflow"]["state"] == WorkflowState.SAMPLE_SELECTED
-    assert reloaded["workflow"]["next_action"]["command"] == "build_evidence"
+    assert reloaded["runtime_state"]["primary_action"]["command"] == "build_evidence"
     assert reloaded["strategy_output"] == {}
     shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -551,6 +547,10 @@ def test_creator_intelligence_v2_doc_tracks_completion_evidence() -> None:
 
     assert "## Current Completion Evidence" in doc
     assert "## P5 Runtime Simplification" in doc
+    assert "## P5.1 Control / Execution Split" in doc
+    assert "WorkflowIntent" in doc
+    assert "Control plane" in doc
+    assert "Execution plane" in doc
     assert "Runtime Engine As Single State Contract" in doc
     assert "Unified Creator Project Model" in doc
     assert "Execution Layer" in doc
@@ -588,6 +588,55 @@ def test_creator_intelligence_core_does_not_depend_on_legacy_creator_clone_dtos(
     assert "dispatch_creator_workflow" in dispatch
     assert "CreatorRuntimeEngine.dispatch_sample_set" in dispatch
     assert "from app.services.creator_clone" not in dispatch
+
+
+def test_workflow_engine_is_control_plane_only() -> None:
+    source = Path("app/services/creator_intelligence/workflow.py").read_text(encoding="utf-8")
+
+    assert "ExecutionLayer" not in source
+    assert "LLMExecutionEngine" not in source
+    assert ".analyze(" not in source
+    assert "generate_creator_clone" not in source
+    assert "build_behavior_representation" not in source
+    assert "ui_state" not in source
+    assert '"next_action"' not in source
+    assert "WorkflowIntent" in source
+    assert "allowed_actions" in source
+    assert "next_intent" in source
+
+
+def test_execution_layer_owns_behavior_and_llm_execution() -> None:
+    source = Path("app/services/creator_intelligence/execution.py").read_text(encoding="utf-8")
+
+    assert "def extract_behavior_model" in source
+    assert "def run_distillation" in source
+    assert "def generate_creator_clone" in source
+    assert "def analyze_json" in source
+    assert "build_behavior_representation" in source
+    assert "LLMExecutionEngine" in source
+
+
+def test_llm_calls_are_routed_through_execution_layer_for_creator_distillation() -> None:
+    creator_clone_source = Path("app/services/creator_clone.py").read_text(encoding="utf-8")
+    execution_source = Path("app/services/creator_intelligence/execution.py").read_text(encoding="utf-8")
+
+    assert ".analyze(" not in creator_clone_source
+    assert ".analyze(" in execution_source
+    assert "ExecutionLayer().generate_creator_clone" in creator_clone_source
+    assert "execution_layer.analyze_json" in creator_clone_source
+
+
+def test_runtime_layer_maps_intent_to_ui_action() -> None:
+    workflow_source = Path("app/services/creator_intelligence/workflow.py").read_text(encoding="utf-8")
+    runtime_source = Path("app/services/creator_intelligence/runtime.py").read_text(encoding="utf-8")
+
+    assert "_runtime_next_action" in runtime_source
+    assert "primary_action" in runtime_source
+    assert "current_step" in runtime_source
+    assert '"import_input"' in runtime_source
+    assert '"export_report"' in runtime_source
+    assert '"import_input"' not in workflow_source
+    assert '"export_report"' not in workflow_source
 
 
 def test_legacy_creator_clone_module_documents_dto_boundary() -> None:

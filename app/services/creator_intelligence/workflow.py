@@ -5,12 +5,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
-from app.services.creator_intelligence.execution import ExecutionLayer
-from app.services.creator_intelligence.models import (
-    BehaviorRepresentation,
-    CreatorProject,
-    behavior_representation_from_dict,
-)
+from app.services.creator_intelligence.models import CreatorProject
 
 DIRECT_DISTILL_LIMIT = 20
 
@@ -40,6 +35,29 @@ class WorkflowAction(StrEnum):
 
 
 @dataclass(frozen=True)
+class WorkflowIntent:
+    """Pure Control -> Execution protocol.
+
+    The workflow engine only declares the next intended action. It never
+    extracts evidence, builds behavior models, calls LLMs, or renders UI copy.
+    """
+
+    action: str
+    payload: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_action(cls, action: WorkflowAction | str, payload: dict[str, Any] | None = None) -> "WorkflowIntent":
+        value = action.value if isinstance(action, WorkflowAction) else str(action)
+        return cls(action=value, payload=dict(payload or {}))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action": self.action,
+            "payload": dict(self.payload),
+        }
+
+
+@dataclass(frozen=True)
 class WorkflowSnapshot:
     project_id: str
     state: WorkflowState = WorkflowState.IMPORT
@@ -48,8 +66,9 @@ class WorkflowSnapshot:
     evidence_ready_count: int = 0
     has_behavior_model: bool = False
     has_strategy_output: bool = False
+    allowed_actions: tuple[str, ...] = ()
+    next_intent: WorkflowIntent | None = None
     message: str = ""
-    ui: dict[str, Any] = field(default_factory=dict)
     updated_at: str = field(default_factory=_now)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,27 +80,42 @@ class WorkflowSnapshot:
             "evidence_ready_count": self.evidence_ready_count,
             "has_behavior_model": self.has_behavior_model,
             "has_strategy_output": self.has_strategy_output,
+            "allowed_actions": list(self.allowed_actions),
+            "next_intent": self.next_intent.to_dict() if self.next_intent else None,
             "message": self.message,
-            "ui": dict(self.ui),
-            "next_action": dict(self.ui.get("next_action") or {}),
             "updated_at": self.updated_at,
         }
 
 
 @dataclass
 class WorkflowEngine:
+    """Creator Intelligence Control Plane.
+
+    This engine is intentionally side-effect free. It validates transitions and
+    exposes intent; the runtime/execution layer performs all computation.
+    """
+
     project: CreatorProject
     state: WorkflowState = WorkflowState.IMPORT
-    behavior_model: BehaviorRepresentation | None = None
-    strategy_output: dict[str, Any] | None = None
+    has_behavior_model: bool = False
+    has_strategy_output: bool = False
     message: str = ""
-    execution_layer: ExecutionLayer = field(default_factory=ExecutionLayer)
 
     @classmethod
-    def from_project(cls, project: CreatorProject, strategy_output: dict[str, Any] | None = None) -> "WorkflowEngine":
-        engine = cls(project=project, strategy_output=strategy_output or None)
+    def from_project(
+        cls,
+        project: CreatorProject,
+        strategy_output: dict[str, Any] | None = None,
+        *,
+        behavior_model: dict[str, Any] | None = None,
+    ) -> "WorkflowEngine":
+        engine = cls(
+            project=project,
+            has_behavior_model=bool(behavior_model),
+            has_strategy_output=bool(strategy_output),
+        )
         engine.state = engine.infer_state()
-        if engine.strategy_output:
+        if engine.has_strategy_output:
             engine.message = "Creator strategy output ready."
         return engine
 
@@ -91,11 +125,16 @@ class WorkflowEngine:
         session = store.load_session(session_id)
         if not session:
             raise ValueError(f"Creator session not found: {session_id}")
-        engine = cls.from_project(session.project, strategy_output=session.strategy_output or None)
+        engine = cls.from_project(
+            session.project,
+            strategy_output=session.strategy_output or None,
+            behavior_model=session.behavior_model or None,
+        )
         saved_state = session.workflow_state.get("state")
         if saved_state:
             engine.state = WorkflowState(saved_state)
-        engine.behavior_model = behavior_representation_from_dict(session.behavior_model)
+        engine.has_behavior_model = bool(session.workflow_state.get("has_behavior_model") or session.behavior_model)
+        engine.has_strategy_output = bool(session.workflow_state.get("has_strategy_output") or session.strategy_output)
         engine.message = str(session.workflow_state.get("message") or engine.message)
         return engine
 
@@ -112,6 +151,8 @@ class WorkflowEngine:
         action: WorkflowAction | str | None = None,
         action_payload: dict[str, Any] | None = None,
         runtime_state: dict[str, Any] | None = None,
+        behavior_model: dict[str, Any] | None = None,
+        strategy_output: dict[str, Any] | None = None,
         debug: dict[str, Any] | None = None,
     ):
         store = store or _default_state_store()
@@ -120,8 +161,8 @@ class WorkflowEngine:
             self.project,
             self.get_state().to_dict(),
             runtime_state=runtime_state or {},
-            behavior_model=self.behavior_model,
-            strategy_output=self.strategy_output or {},
+            behavior_model=behavior_model or {},
+            strategy_output=strategy_output or {},
             action=str(action.value if isinstance(action, WorkflowAction) else action or ""),
             action_payload=action_payload or {},
             debug=debug or {},
@@ -138,81 +179,82 @@ class WorkflowEngine:
             sample_count=sample_count,
             selected_count=selected_count,
             evidence_ready_count=evidence_ready_count,
-            has_behavior_model=self.behavior_model is not None,
-            has_strategy_output=bool(self.strategy_output),
+            has_behavior_model=self.has_behavior_model,
+            has_strategy_output=self.has_strategy_output,
+            allowed_actions=self.allowed_actions(),
+            next_intent=self.next_intent(
+                sample_count=sample_count,
+                selected_count=selected_count,
+                evidence_ready_count=evidence_ready_count,
+            ),
             message=self.message,
-            ui=self.ui_state(sample_count=sample_count, selected_count=selected_count, evidence_ready_count=evidence_ready_count),
         )
 
-    def ui_state(self, *, sample_count: int, selected_count: int, evidence_ready_count: int) -> dict[str, Any]:
-        step = {
-            WorkflowState.IMPORT: ("import", 0, "当前步骤：导入素材"),
-            WorkflowState.INGESTED: ("pool", 1, "当前步骤：构建素材池"),
-            WorkflowState.SAMPLE_READY: ("select", 2, "当前步骤：选择 N 条样本"),
-            WorkflowState.SAMPLE_SELECTED: ("enrich", 3, "当前步骤：富化证据"),
-            WorkflowState.EVIDENCE_READY: ("distill", 4, "当前步骤：大模型蒸馏"),
-            WorkflowState.DISTILLING: ("distill", 4, "当前步骤：大模型蒸馏"),
-            WorkflowState.DONE: ("export", 5, "当前步骤：可视化输出"),
-        }[self.state]
-        action_state, label, summary, disabled, command = self._next_action_for_state(
-            sample_count=sample_count,
-            selected_count=selected_count,
-            evidence_ready_count=evidence_ready_count,
-        )
-        return {
-            "stage": step[0],
-            "step_index": step[1],
-            "step_label": step[2],
-            "progress_percent": int((step[1] / 5) * 100),
-            "next_action": {
-                "state": action_state,
-                "command": command,
-                "label": label,
-                "summary": summary,
-                "disabled": disabled,
-            },
-        }
-
-    def _next_action_for_state(self, *, sample_count: int, selected_count: int, evidence_ready_count: int) -> tuple[str, str, str, bool, str]:
+    def allowed_actions(self) -> tuple[str, ...]:
+        actions: set[WorkflowAction] = {WorkflowAction.RESET}
         if self.state == WorkflowState.IMPORT:
-            return ("IMPORT_READY", "下一步：开始导入素材", "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。", False, "import_input")
+            actions.add(WorkflowAction.INGEST)
+            if self.project.samples:
+                actions.add(WorkflowAction.BUILD_SAMPLE_POOL)
+        elif self.state == WorkflowState.INGESTED:
+            actions.add(WorkflowAction.BUILD_SAMPLE_POOL)
+        elif self.state == WorkflowState.SAMPLE_READY:
+            actions.add(WorkflowAction.SELECT_SAMPLES)
+        elif self.state == WorkflowState.SAMPLE_SELECTED:
+            actions.update({WorkflowAction.SELECT_SAMPLES, WorkflowAction.MARK_EVIDENCE_READY})
+            if self.project.selected_samples and not self._selected_has_pending_evidence():
+                actions.add(WorkflowAction.START_DISTILLATION)
+        elif self.state == WorkflowState.EVIDENCE_READY:
+            actions.update({WorkflowAction.SELECT_SAMPLES, WorkflowAction.START_DISTILLATION})
+        elif self.state == WorkflowState.DISTILLING:
+            actions.add(WorkflowAction.COMPLETE_DISTILLATION)
+        elif self.state == WorkflowState.DONE:
+            actions.add(WorkflowAction.SELECT_SAMPLES)
+        return tuple(action.value for action in sorted(actions, key=lambda item: item.value))
+
+    def next_intent(
+        self,
+        *,
+        sample_count: int | None = None,
+        selected_count: int | None = None,
+        evidence_ready_count: int | None = None,
+    ) -> WorkflowIntent | None:
+        sample_count = self.project.sample_count if sample_count is None else sample_count
+        selected_count = self.project.selected_count if selected_count is None else selected_count
+        evidence_ready_count = 0 if evidence_ready_count is None else evidence_ready_count
+        if self.state == WorkflowState.IMPORT:
+            return WorkflowIntent.from_action(WorkflowAction.INGEST)
         if self.state == WorkflowState.INGESTED:
-            return ("POOL_READY", "下一步：构建素材池", f"已接收输入，准备构建素材池。", False, "select_recommended_samples")
+            return WorkflowIntent.from_action(WorkflowAction.BUILD_SAMPLE_POOL)
         if self.state == WorkflowState.SAMPLE_READY:
-            return ("RECOMMENDED_READY", "下一步：使用推荐样本继续", f"已导入 {sample_count} 条素材，请选择代表样本继续。", False, "select_recommended_samples")
+            return WorkflowIntent.from_action(WorkflowAction.SELECT_SAMPLES, {"sample_count": sample_count})
         if self.state == WorkflowState.SAMPLE_SELECTED:
-            if not selected_count:
-                return ("SELECT_EMPTY", "请先选择样本", "在素材列表中勾选代表样本，或使用快捷入口。", True, "select_samples")
             pending = max(0, selected_count - evidence_ready_count)
             if pending:
-                return ("ENRICH_READY", "下一步：开始富化证据", f"已选择 {selected_count} 条样本，其中 {pending} 条仍需补齐证据。", False, "build_evidence")
-            return ("DISTILL_READY", "下一步：进入大模型蒸馏", f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。", False, "start_distillation")
+                return WorkflowIntent.from_action(WorkflowAction.MARK_EVIDENCE_READY, {"pending_count": pending})
+            return WorkflowIntent.from_action(self._distill_intent_action(selected_count), self._distill_intent_payload(selected_count))
         if self.state == WorkflowState.EVIDENCE_READY:
             if not selected_count:
-                return ("DISTILL_BLOCKED", "返回选择样本", "还没有可蒸馏样本。请先选择代表样本。", False, "select_samples")
-            if selected_count > DIRECT_DISTILL_LIMIT:
-                return ("BATCH_DISTILL_READY", "下一步：开始分批蒸馏", f"已选择 {selected_count} 条样本，超过单次蒸馏上限，将按批次蒸馏后汇总。", False, "start_batch_distillation")
-            return ("DISTILL_READY", "下一步：开始大模型蒸馏", f"已选择 {selected_count} 条样本，当前证据可进入蒸馏。", False, "start_distillation")
+                return WorkflowIntent.from_action(WorkflowAction.SELECT_SAMPLES)
+            return WorkflowIntent.from_action(self._distill_intent_action(selected_count), self._distill_intent_payload(selected_count))
         if self.state == WorkflowState.DISTILLING:
-            return ("DISTILLING", "正在大模型蒸馏", "当前任务由 Workflow Engine 接管，完成后会展示创作者蒸馏报告。", True, "wait")
-        if self.state == WorkflowState.DONE:
-            return ("EXPORT_READY", "下一步：下载报告", "创作者蒸馏报告已生成，可下载报告或复制规则继续使用。", False, "export_report")
-        return ("IMPORT_READY", "下一步：开始导入素材", "等待输入。", False, "import_input")
+            return WorkflowIntent.from_action(WorkflowAction.COMPLETE_DISTILLATION)
+        return None
 
     def dispatch(self, action: WorkflowAction | str, payload: dict[str, Any] | None = None) -> WorkflowSnapshot:
         action = WorkflowAction(action)
         payload = payload or {}
         if action == WorkflowAction.RESET:
             self.state = WorkflowState.IMPORT
-            self.behavior_model = None
-            self.strategy_output = None
+            self.has_behavior_model = False
+            self.has_strategy_output = False
             self.message = "Workflow reset."
             return self.get_state()
         self._transition(action, payload)
         return self.get_state()
 
     def infer_state(self) -> WorkflowState:
-        if self.strategy_output:
+        if self.has_strategy_output:
             return WorkflowState.DONE
         selected = self.project.selected_samples
         if selected and all(sample.evidence.ready_for_distillation for sample in selected):
@@ -249,31 +291,28 @@ class WorkflowEngine:
                 raise ValueError("SELECT_SAMPLES did not match any project samples.")
             self.project = replace(self.project, selected_sample_ids=selected_ids, updated_at=_now())
             self.state = WorkflowState.SAMPLE_SELECTED
-            self.behavior_model = None
-            self.strategy_output = None
+            self.has_behavior_model = False
+            self.has_strategy_output = False
             self.message = "Samples selected."
             return
         if action == WorkflowAction.MARK_EVIDENCE_READY:
             self._require({WorkflowState.SAMPLE_SELECTED, WorkflowState.EVIDENCE_READY}, action)
-            selected = self.project.selected_samples
-            if not selected:
+            if not self.project.selected_samples:
                 raise ValueError("Cannot mark evidence ready without selected samples.")
-            self.behavior_model = self.execution_layer.extract_behavior_model(self.project)
+            self.has_behavior_model = bool(payload.get("has_behavior_model") or self.has_behavior_model)
             self.state = WorkflowState.EVIDENCE_READY
-            self.message = "Evidence model ready."
+            self.message = "Evidence ready."
             return
         if action == WorkflowAction.START_DISTILLATION:
             self._require({WorkflowState.EVIDENCE_READY, WorkflowState.DISTILLING}, action)
-            self.behavior_model = self.behavior_model or self.execution_layer.extract_behavior_model(self.project)
             self.state = WorkflowState.DISTILLING
             self.message = "Distillation started."
             return
         if action == WorkflowAction.COMPLETE_DISTILLATION:
             self._require({WorkflowState.DISTILLING}, action)
-            strategy = payload.get("strategy_output")
-            if not isinstance(strategy, dict):
-                raise ValueError("COMPLETE_DISTILLATION requires strategy_output.")
-            self.strategy_output = strategy
+            if not payload.get("has_strategy_output") and not isinstance(payload.get("strategy_output"), dict):
+                raise ValueError("COMPLETE_DISTILLATION requires strategy output metadata.")
+            self.has_strategy_output = True
             self.state = WorkflowState.DONE
             self.message = "Creator strategy output ready."
             return
@@ -283,6 +322,21 @@ class WorkflowEngine:
         if self.state not in states:
             allowed = ", ".join(state.value for state in sorted(states, key=lambda item: item.value))
             raise ValueError(f"Cannot dispatch {action.value} from {self.state.value}; allowed states: {allowed}.")
+
+    def _selected_has_pending_evidence(self) -> bool:
+        return any(not sample.evidence.ready_for_distillation for sample in self.project.selected_samples)
+
+    def _distill_intent_action(self, selected_count: int) -> WorkflowAction:
+        # The workflow action remains START_DISTILLATION; execution chooses
+        # direct vs batch from payload without changing state-machine topology.
+        _ = selected_count
+        return WorkflowAction.START_DISTILLATION
+
+    def _distill_intent_payload(self, selected_count: int) -> dict[str, Any]:
+        return {
+            "selected_count": int(selected_count or 0),
+            "mode": "batch" if int(selected_count or 0) > DIRECT_DISTILL_LIMIT else "direct",
+        }
 
 
 def _default_state_store():

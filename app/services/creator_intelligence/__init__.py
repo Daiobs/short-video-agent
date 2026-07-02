@@ -46,6 +46,7 @@ from app.services.creator_intelligence.state_store import CreatorSession, Creato
 from app.services.creator_intelligence.workflow import (
     WorkflowAction,
     WorkflowEngine,
+    WorkflowIntent,
     WorkflowSnapshot,
     WorkflowState,
 )
@@ -75,6 +76,7 @@ __all__ = [
     "LLMExecutionEngine",
     "WorkflowAction",
     "WorkflowEngine",
+    "WorkflowIntent",
     "WorkflowSnapshot",
     "WorkflowState",
     "behavior_representation_from_dict",
