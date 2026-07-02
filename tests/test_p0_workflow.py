@@ -532,8 +532,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "currentCreatorRuntimeState" in script
     assert "function creatorRuntimeCurrentStep" in script
     assert "function creatorRuntimePrimaryAction" in script
-    assert "currentCreatorIntelligenceWorkflow" in script
-    assert "currentCreatorIntelligenceBehavior" in script
+    assert "currentCreatorIntelligenceWorkflow" not in script
+    assert "currentCreatorIntelligenceBehavior" not in script
     assert "currentCreatorIntelligenceProject" in script
     assert "currentCreatorIntelligenceStrategy" in script
     assert "function applyCreatorIntelligencePayload" in script
@@ -543,7 +543,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function creatorProjectFromCloneSet" in script
     assert "function creatorWorkflowFromProject" not in script
     assert "function syncCreatorProjectSamplesFromViewItems" in script
-    assert "syncCreatorProjectSamplesFromViewItems(profileSampleViewItems);" in script
+    assert "profileSampleViewItems" not in script
+    assert "syncCreatorProjectSamplesFromViewItems(runtimeSampleRows);" in script
     assert "creatorProjectFromCloneSet(payload?.set)" in script
     assert "creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy)" not in script
     assert "const projectChanged = previousProjectId && nextProjectId && previousProjectId !== nextProjectId;" in script
@@ -557,7 +558,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "strategy_output" in script
     assert 'workflowState === "DONE"' in script
     assert "{scroll: false}" in script
-    assert "const strategy = creatorStrategyFromResult(currentCreatorCloneResult || {})" in script
+    assert "currentCreatorCloneResult" not in script
+    assert "const strategy = creatorStrategyFromResult(currentCreatorRuntimeReport || {})" in script
     assert "function workflowStateFromCreatorIntelligence" not in script
     assert "function wizardStateFromWorkflowState" not in script
     assert "function getCreatorCloneWizardStateFromWorkflow" not in script
@@ -9135,7 +9137,7 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "recommendedProfileSampleMix" in script
     assert "dedupeCreatorSampleViewItems" in script
     assert "function getCreatorCloneWizardState()" not in script
-    assert "currentCreatorIntelligenceWorkflow" in script
+    assert "currentCreatorIntelligenceWorkflow" not in script
     assert "currentCreatorRuntimeState" in script
     assert "function applyCreatorIntelligencePayload" in script
     assert "function getCreatorCloneWizardStateFromWorkflow" not in script

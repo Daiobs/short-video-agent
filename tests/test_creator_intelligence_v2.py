@@ -519,7 +519,10 @@ def test_creator_intelligence_v2_doc_tracks_completion_evidence() -> None:
     assert "dispatch_creator_workflow" in doc
     assert "profile-build-cases" in doc
     assert "prompt-only recovery" in doc
-    assert "Collapse the remaining local sample view-model adapter" in doc
+    assert "profileSampleViewItems" in doc
+    assert "currentCreatorCloneResult" in doc
+    assert "CreatorIntelligenceJobRunner" in doc
+    assert "Queue completion, direct distillation" in doc
 
 
 def test_creator_intelligence_core_does_not_depend_on_legacy_creator_clone_dtos() -> None:
@@ -547,3 +550,14 @@ def test_legacy_creator_clone_module_documents_dto_boundary() -> None:
     assert "Legacy creator-clone persistence and compatibility helpers." in source
     assert "on-disk DTOs" in source
     assert "convert to ``CreatorProject`` for v2 logic" in source
+
+
+def test_creator_jobs_dispatch_through_runtime_engine_without_runner_bridge() -> None:
+    source = Path("app/routes/jobs.py").read_text(encoding="utf-8")
+
+    assert "class CreatorIntelligenceJobRunner" not in source
+    assert "CreatorIntelligenceJobRunner(" not in source
+    assert "CreatorRuntimeEngine.dispatch_sample_set" in source
+    assert "WorkflowAction.SELECT_SAMPLES" in source
+    assert "WorkflowAction.START_DISTILLATION" in source
+    assert "WorkflowAction.COMPLETE_DISTILLATION" in source

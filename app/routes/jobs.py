@@ -44,42 +44,6 @@ from app.services.creator_intelligence import CreatorRuntimeEngine, WorkflowActi
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
-class CreatorIntelligenceJobRunner:
-    """Small bridge that keeps creator jobs registered with the v2 engine."""
-
-    def __init__(self, sample_set: CloneSampleSet):
-        self.sample_set = sample_set
-        self.engine = CreatorRuntimeEngine.from_sample_set(sample_set)
-
-    def select_samples(self, selected_sample_ids: list[str]) -> dict:
-        if not selected_sample_ids:
-            return creator_intelligence_payload_for_sample_set(self.sample_set)
-        result = CreatorRuntimeEngine.dispatch_sample_set(
-            self.sample_set.set_id,
-            WorkflowAction.SELECT_SAMPLES,
-            selected_sample_ids=selected_sample_ids,
-        )
-        self.sample_set = result.sample_set
-        return result.creator_intelligence
-
-    def start_distillation(self) -> dict:
-        try:
-            CreatorRuntimeEngine.dispatch_sample_set(self.sample_set.set_id, WorkflowAction.MARK_EVIDENCE_READY)
-        except AppError:
-            pass
-        result = CreatorRuntimeEngine.dispatch_sample_set(self.sample_set.set_id, WorkflowAction.START_DISTILLATION)
-        return result.creator_intelligence
-
-    def complete_distillation(self, strategy_output: dict) -> dict:
-        result = CreatorRuntimeEngine.dispatch_sample_set(
-            self.sample_set.set_id,
-            WorkflowAction.COMPLETE_DISTILLATION,
-            strategy_output=strategy_output,
-        )
-        self.sample_set = result.sample_set
-        return result.creator_intelligence
-
-
 class BuildCaseJobRequest(BaseModel):
     local_video_id: str
 
@@ -1185,17 +1149,26 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
         creator_intelligence = None
         if sample_set_id and selected_sample_ids:
             try:
-                runner = CreatorIntelligenceJobRunner(load_sample_set(sample_set_id))
-                creator_intelligence = runner.select_samples(selected_sample_ids)
-                updated_sample_set = runner.sample_set
+                runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                    sample_set_id,
+                    WorkflowAction.SELECT_SAMPLES,
+                    selected_sample_ids=selected_sample_ids,
+                )
+                creator_intelligence = runtime_result.creator_intelligence
+                updated_sample_set = runtime_result.sample_set
             except AppError as error:
                 final_result["set_selection_error"] = error.as_dict()
         if sample_set_id and completed_artifacts:
             try:
                 updated_sample_set = update_sample_set_with_case_artifacts(sample_set_id, completed_artifacts)
                 if updated_sample_set.selected_sample_ids:
-                    runner = CreatorIntelligenceJobRunner(updated_sample_set)
-                    creator_intelligence = runner.select_samples(updated_sample_set.selected_sample_ids)
+                    runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                        updated_sample_set.set_id,
+                        WorkflowAction.SELECT_SAMPLES,
+                        selected_sample_ids=updated_sample_set.selected_sample_ids,
+                    )
+                    creator_intelligence = runtime_result.creator_intelligence
+                    updated_sample_set = runtime_result.sample_set
                 else:
                     creator_intelligence = None
             except AppError as error:
@@ -1317,10 +1290,13 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         distill_mode = str(payload.get("distill_mode") or "quick")
         include_case_reports = bool(payload.get("include_case_reports", True))
         max_samples = int(payload.get("max_samples") or MAX_DISTILL_SAMPLES)
-        runner = CreatorIntelligenceJobRunner(sample_set)
         selected_for_engine = selected_sample_ids or sample_set.selected_sample_ids or [sample.sample_id for sample in sample_set.samples]
-        runner.select_samples(selected_for_engine)
-        sample_set = runner.sample_set
+        runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+            sample_set.set_id,
+            WorkflowAction.SELECT_SAMPLES,
+            selected_sample_ids=selected_for_engine,
+        )
+        sample_set = runtime_result.sample_set or sample_set
         selected_samples = _selected_clone_samples(sample_set, selected_for_engine)
         execution_plan = build_distill_execution_plan(selected_samples, batch_size=max_samples, final_timeout_seconds=settings.llm_timeout_seconds)
 
@@ -1352,7 +1328,10 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         try:
             job = db.get(Job, job_id)
             if job:
-                intelligence = runner.start_distillation()
+                intelligence = CreatorRuntimeEngine.dispatch_sample_set(
+                    sample_set.set_id,
+                    WorkflowAction.START_DISTILLATION,
+                ).creator_intelligence
                 _set_job(
                     job,
                     "running",
@@ -1387,7 +1366,11 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
             )
             job = db.get(Job, job_id)
             if job:
-                intelligence = runner.complete_distillation((result.get("result") or {}).get("creator_clone_strategy") or {})
+                intelligence = CreatorRuntimeEngine.dispatch_sample_set(
+                    sample_set.set_id,
+                    WorkflowAction.COMPLETE_DISTILLATION,
+                    strategy_output=(result.get("result") or {}).get("creator_clone_strategy") or {},
+                ).creator_intelligence
                 _set_job(
                     job,
                     "success",
@@ -1480,10 +1463,13 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         distill_mode = str(payload.get("distill_mode") or "quick")
         batch_size = int(payload.get("batch_size") or MAX_DISTILL_SAMPLES)
         max_samples = int(payload.get("max_samples") or BATCH_DISTILL_MAX_SAMPLES)
-        runner = CreatorIntelligenceJobRunner(sample_set)
         selected_for_engine = selected_sample_ids or sample_set.selected_sample_ids or [sample.sample_id for sample in sample_set.samples]
-        runner.select_samples(selected_for_engine)
-        sample_set = runner.sample_set
+        runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+            sample_set.set_id,
+            WorkflowAction.SELECT_SAMPLES,
+            selected_sample_ids=selected_for_engine,
+        )
+        sample_set = runtime_result.sample_set or sample_set
         selected_samples = _selected_clone_samples(sample_set, selected_for_engine)
         execution_plan = build_distill_execution_plan(selected_samples, batch_size=batch_size, final_timeout_seconds=settings.llm_final_reduce_timeout_seconds)
 
@@ -1515,7 +1501,7 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
                 "execution_plan": execution_plan,
             },
         )
-        runner.start_distillation()
+        CreatorRuntimeEngine.dispatch_sample_set(sample_set.set_id, WorkflowAction.START_DISTILLATION)
         result = batch_distill_creator_clone(
             sample_set,
             selected_sample_ids,
@@ -1527,7 +1513,15 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         job = db.get(Job, job_id)
         if job:
             message = "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型"
-            intelligence = runner.complete_distillation((result.get("result") or {}).get("creator_clone_strategy") or {}) if result.get("result") else creator_intelligence_payload_for_sample_set(sample_set)
+            intelligence = (
+                CreatorRuntimeEngine.dispatch_sample_set(
+                    sample_set.set_id,
+                    WorkflowAction.COMPLETE_DISTILLATION,
+                    strategy_output=(result.get("result") or {}).get("creator_clone_strategy") or {},
+                ).creator_intelligence
+                if result.get("result")
+                else creator_intelligence_payload_for_sample_set(sample_set)
+            )
             _set_job(
                 job,
                 "success",

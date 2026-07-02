@@ -152,15 +152,13 @@ let currentLocalVideoId = "";
 let currentAwemeId = "";
 let selectedCandidate = null;
 let loadedHomeCase = null;
-let profileSampleViewItems = [];
+let runtimeSampleRows = [];
 let profileSelectedKeys = new Set();
 let profileScanPayload = null;
 let currentCloneSetId = "";
 let currentDistillPrompt = "";
-let currentCreatorCloneResult = null;
+let currentCreatorRuntimeReport = null;
 let currentCreatorIntelligenceProject = null;
-let currentCreatorIntelligenceWorkflow = null;
-let currentCreatorIntelligenceBehavior = null;
 let currentCreatorIntelligenceStrategy = null;
 let currentCreatorRuntimeState = null;
 let chromeHelperStatusLoaded = false;
@@ -505,14 +503,12 @@ function creatorCloneSourceInputFromPayload(payload = {}) {
 function resetCreatorClonePoolForNewProfile() {
   currentCloneSetId = "";
   currentCloneProfileFingerprint = "";
-  profileSampleViewItems = [];
+  runtimeSampleRows = [];
   profileSelectedKeys = new Set();
   profileScanPayload = null;
-  currentCreatorCloneResult = null;
+  currentCreatorRuntimeReport = null;
   currentDistillPrompt = "";
   currentCreatorIntelligenceProject = null;
-  currentCreatorIntelligenceWorkflow = null;
-  currentCreatorIntelligenceBehavior = null;
   currentCreatorIntelligenceStrategy = null;
   profileLastChromeProfileValue = "";
   clearCreatorCloneUnifiedInput();
@@ -805,7 +801,7 @@ function creatorProjectSampleViewItems() {
 
 function activeCreatorSampleViewItems() {
   const projectItems = creatorProjectSampleViewItems();
-  const localItems = normalizeItems(profileSampleViewItems);
+  const localItems = normalizeItems(runtimeSampleRows);
   if (!projectItems.length) {
     return localItems;
   }
@@ -831,7 +827,7 @@ function activeCreatorSampleViewItems() {
   return merged;
 }
 
-function syncCreatorProjectSamplesFromViewItems(items = profileSampleViewItems) {
+function syncCreatorProjectSamplesFromViewItems(items = runtimeSampleRows) {
   if (!currentCreatorIntelligenceProject?.project_id) {
     return;
   }
@@ -856,6 +852,12 @@ function syncCreatorProjectSamplesFromViewItems(items = profileSampleViewItems) 
     selected_count: selectedSampleIds.length || samples.filter((sample) => sample.selected).length,
     updated_at: new Date().toISOString(),
   };
+  if (currentCreatorRuntimeState) {
+    currentCreatorRuntimeState = {
+      ...currentCreatorRuntimeState,
+      project: currentCreatorIntelligenceProject,
+    };
+  }
 }
 
 function cloneSetFromCreatorIntelligenceProject(payload = {}) {
@@ -1356,9 +1358,16 @@ function applyCreatorIntelligencePayload(payload = {}) {
   currentCreatorIntelligenceProject = nextProject;
   const incomingStrategy = intelligence?.strategy_output || payload?.strategy_output || null;
   currentCreatorIntelligenceStrategy = incomingStrategy || (projectChanged ? null : currentCreatorIntelligenceStrategy);
+  const legacyWorkflow = intelligence?.workflow || payload?.workflow || null;
+  const legacyBehavior = intelligence?.behavior_model || payload?.behavior_model || null;
   currentCreatorRuntimeState = runtimeState || (projectChanged ? null : currentCreatorRuntimeState);
-  currentCreatorIntelligenceWorkflow = currentCreatorRuntimeState?.workflow || intelligence?.workflow || payload?.workflow || null;
-  currentCreatorIntelligenceBehavior = currentCreatorRuntimeState?.behavior_model || intelligence?.behavior_model || payload?.behavior_model || null;
+  if (!runtimeState && (legacyWorkflow || legacyBehavior)) {
+    currentCreatorRuntimeState = {
+      ...(currentCreatorRuntimeState || {}),
+      workflow: legacyWorkflow || currentCreatorRuntimeState?.workflow || null,
+      behavior_model: legacyBehavior || currentCreatorRuntimeState?.behavior_model || null,
+    };
+  }
 }
 
 function creatorRuntimeCurrentStep() {
@@ -1370,8 +1379,9 @@ function creatorRuntimePrimaryAction() {
   if (action.command || action.label || action.summary) {
     return action;
   }
-  const ui = currentCreatorIntelligenceWorkflow?.ui || {};
-  return ui.next_action || currentCreatorIntelligenceWorkflow?.next_action || {};
+  const workflow = currentCreatorRuntimeState?.workflow || {};
+  const ui = workflow?.ui || {};
+  return ui.next_action || workflow?.next_action || {};
 }
 
 function creatorRuntimeStage() {
@@ -1459,7 +1469,7 @@ function renderProfileStageView() {
     }
   });
   if (profileResultsCard) {
-    const shouldShowResultContainer = activeStage !== "import" && (activeCreatorSampleViewItems().length || currentCloneSetId || currentCreatorCloneResult);
+    const shouldShowResultContainer = activeStage !== "import" && (activeCreatorSampleViewItems().length || currentCloneSetId || currentCreatorRuntimeReport);
     profileResultsCard.classList.toggle("hidden", !shouldShowResultContainer);
   }
 }
@@ -2045,7 +2055,7 @@ function renderProfileSegmentColumn(title, metricKey, items, preset) {
 
 function renderProfileResults(payload) {
   profileScanPayload = payload;
-  currentCreatorCloneResult = null;
+  currentCreatorRuntimeReport = null;
   currentDistillPrompt = "";
   currentCreatorIntelligenceStrategy = null;
   applyCreatorIntelligencePayload(payload);
@@ -2059,11 +2069,11 @@ function renderProfileResults(payload) {
   if (currentCloneSetId) {
     rememberRecentCreatorCloneSetId(currentCloneSetId);
   }
-  profileSampleViewItems = normalizeItems(payload.items || cloneSet?.samples);
+  runtimeSampleRows = normalizeItems(payload.items || cloneSet?.samples);
   const persistedSelected = normalizeItems(cloneSet?.selected_sample_ids);
   profileSelectedKeys = persistedSelected.length
     ? new Set(persistedSelected)
-    : new Set([...profileSelectedKeys].filter((key) => profileSampleViewItems.some((item) => sampleViewItemKey(item) === key)));
+    : new Set([...profileSelectedKeys].filter((key) => runtimeSampleRows.some((item) => sampleViewItemKey(item) === key)));
   profileResultsCard.classList.remove("hidden");
   profileQueueCard.classList.add("hidden");
   profileProviderBadge.textContent = cloneSet ? "creator clone lab" : (payload.provider || "profile");
@@ -3001,7 +3011,7 @@ function mergeProfileQueueItems(items) {
   if (!queueItems.length || !baseItems.length) {
     return;
   }
-  profileSampleViewItems = baseItems.map((item) => {
+  runtimeSampleRows = baseItems.map((item) => {
     const itemKeys = new Set([
       item.sample_id,
       item.aweme_id,
@@ -3032,7 +3042,7 @@ function mergeProfileQueueItems(items) {
       understanding_level: caseId ? "partial" : (item.understanding_level || "metadata_only"),
     };
   });
-  syncCreatorProjectSamplesFromViewItems(profileSampleViewItems);
+  syncCreatorProjectSamplesFromViewItems(runtimeSampleRows);
   renderProfileTable();
 }
 
@@ -3159,8 +3169,8 @@ function refreshProfilePoolFromSet(set) {
     profileContentProfile.value = set.content_profile;
   }
   profileScanPayload = {set};
-  profileSampleViewItems = normalizeItems(set.samples);
-  syncCreatorProjectSamplesFromViewItems(profileSampleViewItems);
+  runtimeSampleRows = normalizeItems(set.samples);
+  syncCreatorProjectSamplesFromViewItems(runtimeSampleRows);
   renderProfileSummary(cloneSummaryFromSet(set) || {});
   renderProfileDecisionBoard({set});
   renderProfileTable();
@@ -4259,7 +4269,7 @@ function creatorCloneOverviewFromSet(set) {
 
 // Creator Clone: export
 function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {}) {
-  currentCreatorCloneResult = result || null;
+  currentCreatorRuntimeReport = result || null;
   currentDistillPrompt = prompt || currentDistillPrompt || "";
   setProfileStageView("export");
   creatorCloneResultCard.classList.remove("hidden");
@@ -5109,8 +5119,8 @@ creatorCloneBatchDistillButton?.addEventListener("click", async () => {
 });
 
 copyCreatorCloneSpecButton.addEventListener("click", async () => {
-  const strategy = creatorStrategyFromResult(currentCreatorCloneResult || {}) || null;
-  const payload = strategy || currentCreatorCloneResult?.creator_clone_spec || null;
+  const strategy = creatorStrategyFromResult(currentCreatorRuntimeReport || {}) || null;
+  const payload = strategy || currentCreatorRuntimeReport?.creator_clone_spec || null;
   if (!payload) {
     return;
   }

@@ -427,6 +427,11 @@ Implemented:
 - Recent project restore reads `/api/creator-intelligence/projects/{project_id}`
   and reconstructs table/report state from runtime payloads.
 - Completed strategy reports restore without rerunning the LLM.
+- The former `profileSampleViewItems` and `currentCreatorCloneResult` globals
+  have been retired. The UI keeps temporary table rows as `runtimeSampleRows`
+  and report state as `currentCreatorRuntimeReport`, then synchronizes those
+  views back into `currentCreatorRuntimeState.project` instead of treating them
+  as independent workflow state.
 
 Verification:
 
@@ -451,6 +456,11 @@ Implemented:
 - `creator-clone-distill` prompt-only recovery results include
   `creator_intelligence` with the selected sample workflow state.
 - `creator-clone-batch-distill` results include the same v2 payload contract.
+- Creator distillation jobs no longer use a separate
+  `CreatorIntelligenceJobRunner` bridge. Queue completion, direct distillation,
+  and batch distillation call `CreatorRuntimeEngine.dispatch_sample_set()`
+  directly, so async jobs share the same transition path as API workflow
+  dispatch.
 
 Verification:
 
@@ -507,7 +517,7 @@ Verification:
 
 Remaining cleanup after this branch:
 
-- Collapse the remaining local sample view-model adapter once older
-  creator-clone response shapes are no longer needed.
 - Move remaining compatibility prompt details out of `creator_clone.py` once
   older report fields are no longer needed.
+- Keep reducing legacy response aliases once older creator-clone response
+  shapes are no longer needed by the UI or saved sample-set files.
