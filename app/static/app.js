@@ -1511,9 +1511,35 @@ function lockedProfileNavigationStage() {
   return "";
 }
 
+function hasCreatorCloneActiveSession() {
+  return Boolean(currentCloneSetId || activeCreatorSampleViewItems().length || currentCreatorRuntimeState);
+}
+
+function profileStageNavigationLockMessage(stage) {
+  const normalizedStage = normalizeProfileStage(stage);
+  const runningLockedStage = lockedProfileNavigationStage();
+  if (runningLockedStage) {
+    return creatorCloneEnrichmentRunning
+      ? "证据富化正在运行，完成后会自动进入大模型蒸馏；当前先保持队列视图。"
+      : "大模型蒸馏正在运行，完成后会自动进入报告页；当前先保持任务视图。";
+  }
+  if (normalizedStage !== "import" && !hasCreatorCloneActiveSession()) {
+    return "请先完成导入素材，再进入后续步骤。";
+  }
+  return "";
+}
+
+function isProfileStageNavigationLocked(stage) {
+  const normalizedStage = normalizeProfileStage(stage);
+  const runningLockedStage = lockedProfileNavigationStage();
+  if (runningLockedStage) {
+    return normalizedStage !== runningLockedStage;
+  }
+  return normalizedStage !== "import" && !hasCreatorCloneActiveSession();
+}
+
 function canNavigateProfileStage(stage) {
-  const lockedStage = lockedProfileNavigationStage();
-  return !lockedStage || normalizeProfileStage(stage) === lockedStage;
+  return !isProfileStageNavigationLocked(stage);
 }
 
 function renderProfileStageView() {
@@ -1593,17 +1619,16 @@ function renderCreatorCloneStageChrome() {
   const activeStage = creatorWorkflowProgressStage();
   const viewedStage = activeProfileStage();
   const activeStageIndex = stageIndexFromName(activeStage);
-  const lockedStage = lockedProfileNavigationStage();
   creatorCloneFlowSteps.forEach((step) => {
     const stage = normalizeProfileStage(step.dataset.profileStageNav || "");
     const index = stageIndexFromName(stage);
-    const locked = Boolean(lockedStage && stage !== lockedStage);
+    const locked = isProfileStageNavigationLocked(stage);
     step.classList.toggle("active", index === activeStageIndex);
     step.classList.toggle("completed", index < activeStageIndex);
     step.classList.toggle("viewing", stage === viewedStage && index !== activeStageIndex);
     step.classList.toggle("locked", locked);
     step.disabled = locked;
-    step.title = locked ? "当前任务正在运行，完成后会自动进入下一步。" : "";
+    step.title = locked ? profileStageNavigationLockMessage(stage) : "";
     step.setAttribute("aria-current", index === activeStageIndex ? "step" : "false");
   });
   if (creatorCloneCurrentStep) {
@@ -5051,9 +5076,7 @@ creatorCloneFlowSteps.forEach((button) => {
       return;
     }
     if (!canNavigateProfileStage(targetStage)) {
-      profileScanStatus.textContent = creatorCloneEnrichmentRunning
-        ? "证据富化正在运行，完成后会自动进入大模型蒸馏；当前先保持队列视图。"
-        : "大模型蒸馏正在运行，完成后会自动进入报告页；当前先保持任务视图。";
+      profileScanStatus.textContent = profileStageNavigationLockMessage(targetStage);
       renderCreatorCloneNextAction();
       return;
     }

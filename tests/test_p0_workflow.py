@@ -522,6 +522,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function rememberRecentCreatorCloneSetId" in script
     assert "function forgetRecentCreatorCloneSetId" in script
     assert "function enterCreatorCloneFreshImport" in script
+    assert "function hasCreatorCloneActiveSession" in script
+    assert "function isProfileStageNavigationLocked" in script
+    assert 'normalizedStage !== "import" && !hasCreatorCloneActiveSession()' in script
+    assert "请先完成导入素材，再进入后续步骤。" in script
+    assert "step.disabled = locked;" in script
     assert "currentCreatorRuntimeState = null;" in script
     assert 'profileResultsBody.innerHTML = "";' in script
     assert 'creatorCloneSelectionStatus.textContent = "已选 0 条。";' in script
@@ -925,7 +930,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "可复刻创作公式" in script
     assert "不要照搬 / 风险边界" in script
     assert "lockedProfileNavigationStage" in script
-    assert "当前任务正在运行，完成后会自动进入下一步" in script
+    assert "证据富化正在运行，完成后会自动进入大模型蒸馏" in script
+    assert "大模型蒸馏正在运行，完成后会自动进入报告页" in script
     assert "creatorCloneOverviewFromSet" in script
     assert "创作者蒸馏证据完整度" in script
     assert "creator-report-evidence-details" in script
