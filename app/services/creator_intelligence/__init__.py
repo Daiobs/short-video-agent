@@ -15,6 +15,7 @@ from app.services.creator_intelligence.adapters import (
     samples_from_manual_links,
 )
 from app.services.creator_intelligence.cognition import build_behavior_representation
+from app.services.creator_intelligence.execution import ExecutionLayer
 from app.services.creator_intelligence.models import (
     BehaviorRepresentation,
     CreatorCloneStrategy,
@@ -36,6 +37,11 @@ from app.services.creator_intelligence.models import (
 )
 from app.services.creator_intelligence.llm_execution import LLMExecutionEngine
 from app.services.creator_intelligence.memory import CreatorMemoryGraph
+from app.services.creator_intelligence.runtime import (
+    CreatorRuntimeDispatchResult,
+    CreatorRuntimeEngine,
+    CreatorRuntimeState,
+)
 from app.services.creator_intelligence.state_store import CreatorSession, CreatorStateStore
 from app.services.creator_intelligence.workflow import (
     WorkflowAction,
@@ -60,8 +66,12 @@ __all__ = [
     "SampleSet",
     "SampleMetrics",
     "CreatorMemoryGraph",
+    "CreatorRuntimeDispatchResult",
+    "CreatorRuntimeEngine",
+    "CreatorRuntimeState",
     "CreatorSession",
     "CreatorStateStore",
+    "ExecutionLayer",
     "LLMExecutionEngine",
     "WorkflowAction",
     "WorkflowEngine",

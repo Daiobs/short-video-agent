@@ -38,8 +38,7 @@ from app.services.creator_clone import (
     save_sample_set,
     update_sample_set_with_case_artifacts,
 )
-from app.services.creator_intelligence import WorkflowAction
-from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
+from app.services.creator_intelligence import CreatorRuntimeEngine, WorkflowAction
 
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -50,11 +49,12 @@ class CreatorIntelligenceJobRunner:
 
     def __init__(self, sample_set: CloneSampleSet):
         self.sample_set = sample_set
+        self.engine = CreatorRuntimeEngine.from_sample_set(sample_set)
 
     def select_samples(self, selected_sample_ids: list[str]) -> dict:
         if not selected_sample_ids:
             return creator_intelligence_payload_for_sample_set(self.sample_set)
-        result = dispatch_creator_workflow(
+        result = CreatorRuntimeEngine.dispatch_sample_set(
             self.sample_set.set_id,
             WorkflowAction.SELECT_SAMPLES,
             selected_sample_ids=selected_sample_ids,
@@ -64,14 +64,14 @@ class CreatorIntelligenceJobRunner:
 
     def start_distillation(self) -> dict:
         try:
-            dispatch_creator_workflow(self.sample_set.set_id, WorkflowAction.MARK_EVIDENCE_READY)
+            CreatorRuntimeEngine.dispatch_sample_set(self.sample_set.set_id, WorkflowAction.MARK_EVIDENCE_READY)
         except AppError:
             pass
-        result = dispatch_creator_workflow(self.sample_set.set_id, WorkflowAction.START_DISTILLATION)
+        result = CreatorRuntimeEngine.dispatch_sample_set(self.sample_set.set_id, WorkflowAction.START_DISTILLATION)
         return result.creator_intelligence
 
     def complete_distillation(self, strategy_output: dict) -> dict:
-        result = dispatch_creator_workflow(
+        result = CreatorRuntimeEngine.dispatch_sample_set(
             self.sample_set.set_id,
             WorkflowAction.COMPLETE_DISTILLATION,
             strategy_output=strategy_output,

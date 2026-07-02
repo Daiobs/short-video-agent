@@ -44,6 +44,7 @@ class CreatorSession:
     project_id: str
     project: CreatorProject
     workflow_state: dict[str, Any] = field(default_factory=dict)
+    runtime_state: dict[str, Any] = field(default_factory=dict)
     behavior_model: dict[str, Any] = field(default_factory=dict)
     strategy_output: dict[str, Any] = field(default_factory=dict)
     actions: list[dict[str, Any]] = field(default_factory=list)
@@ -61,6 +62,7 @@ class CreatorSession:
             "project_id": self.project_id,
             "project": self.project.to_dict(),
             "workflow_state": dict(self.workflow_state),
+            "runtime_state": dict(self.runtime_state),
             "behavior_model": dict(self.behavior_model),
             "strategy_output": dict(self.strategy_output),
             "actions": list(self.actions),
@@ -85,6 +87,7 @@ class CreatorSession:
             project_id=project_id,
             project=project,
             workflow_state=dict(payload.get("workflow_state") or {}),
+            runtime_state=dict(payload.get("runtime_state") or {}),
             behavior_model=dict(payload.get("behavior_model") or {}),
             strategy_output=dict(payload.get("strategy_output") or {}),
             actions=list(payload.get("actions") or []),
@@ -126,6 +129,7 @@ class CreatorStateStore:
         project: CreatorProject,
         workflow_state: dict[str, Any],
         *,
+        runtime_state: dict[str, Any] | None = None,
         behavior_model: BehaviorRepresentation | dict[str, Any] | None = None,
         strategy_output: dict[str, Any] | None = None,
         action: str | None = None,
@@ -187,6 +191,7 @@ class CreatorStateStore:
             project_id=project.project_id,
             project=project,
             workflow_state=dict(workflow_state),
+            runtime_state=dict(runtime_state or (existing.runtime_state if existing else {})),
             behavior_model=behavior_payload,
             strategy_output=dict(strategy_output or (existing.strategy_output if existing else {})),
             actions=actions,
@@ -203,19 +208,24 @@ class CreatorStateStore:
         session = self.load_session(session_id)
         if not session:
             return []
-        from app.services.creator_intelligence.workflow import WorkflowAction, WorkflowEngine
+        from app.services.creator_intelligence.runtime import CreatorRuntimeEngine
+        from app.services.creator_intelligence.workflow import WorkflowAction
 
-        engine = WorkflowEngine.from_project(session.project)
+        engine = CreatorRuntimeEngine.from_project(session.project, store=self, session_id=session_id)
         snapshots: list[dict[str, Any]] = []
         for entry in session.actions:
             try:
                 action = WorkflowAction(entry.get("action"))
-                snapshot = engine.dispatch(action, entry.get("payload") if isinstance(entry.get("payload"), dict) else {})
+                snapshot = engine.dispatch(
+                    action,
+                    entry.get("payload") if isinstance(entry.get("payload"), dict) else {},
+                    persist=False,
+                )
                 snapshots.append(snapshot.to_dict())
             except Exception as error:
                 snapshots.append(
                     {
-                        "state": engine.state.value,
+                        "state": engine.state.workflow_dict().get("state"),
                         "error": type(error).__name__,
                         "message": str(error),
                         "action": entry.get("action"),

@@ -35,13 +35,11 @@ from app.services.profile_scan import scan_profile
 from app.providers.profile_base import ProfileScanRequest
 from app.services.creator_intelligence import (
     CreatorCloneStrategy,
+    CreatorRuntimeEngine,
+    ExecutionLayer,
     WorkflowAction,
-    WorkflowEngine,
-    build_behavior_representation,
-    project_from_clone_sample_set,
     project_from_clone_selection,
 )
-from app.services.creator_intelligence.llm_execution import LLMExecutionEngine
 from app.services.creator_intelligence.memory import CreatorMemoryGraph
 from app.services.creator_intelligence.models import validate_creator_clone_schema as validate_creator_clone_strategy_schema
 
@@ -647,17 +645,12 @@ def load_creator_strategy_output(set_id: str) -> dict:
 
 
 def creator_intelligence_payload_for_sample_set(sample_set: CloneSampleSet, strategy_output: dict | None = None) -> dict:
-    project = project_from_clone_sample_set(sample_set)
     strategy = strategy_output if isinstance(strategy_output, dict) else load_creator_strategy_output(sample_set.set_id)
-    engine = WorkflowEngine.from_project(project, strategy_output=strategy or None)
-    payload = {
-        "project": project.to_dict(),
-        "workflow": engine.get_state().to_dict(),
-    }
-    if project.selected_samples:
-        payload["behavior_model"] = build_behavior_representation(project).to_dict()
-    if strategy:
-        payload["strategy_output"] = strategy
+    engine = CreatorRuntimeEngine.from_sample_set(sample_set, strategy_output=strategy or None)
+    if engine.project.selected_samples and not engine.workflow_engine.behavior_model:
+        engine.workflow_engine.behavior_model = engine.execution_layer.extract_behavior_model(engine.project)
+    payload = engine.to_payload()
+    payload["runtime_state"] = engine.state.to_dict()
     return payload
 
 
@@ -1408,7 +1401,7 @@ def selected_evidence_constraints(samples: list[CloneSample]) -> list[str]:
 
 def behavior_representation_prompt_payload(sample_set: CloneSampleSet, selected_samples: list[CloneSample], compact: bool = False) -> dict:
     project = project_from_clone_selection(sample_set, selected_samples)
-    representation = build_behavior_representation(project)
+    representation = ExecutionLayer().extract_behavior_model(project)
     payload = representation.to_dict()
     profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
     evidence_matrix = payload.get("evidence_matrix") or {}
@@ -1667,25 +1660,20 @@ def _drop_empty_prompt_values(value):
 
 def _record_creator_runtime_state(sample_set: CloneSampleSet, strategy_output: dict[str, Any] | None, *, source: str) -> None:
     try:
-        project = project_from_clone_sample_set(sample_set)
-        engine = WorkflowEngine.from_project(project)
-        if engine.state.value == "SAMPLE_SELECTED":
-            engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY)
-            engine.persist_state(project.project_id, action=WorkflowAction.MARK_EVIDENCE_READY, action_payload={"source": source}, debug={"source": source})
+        engine = CreatorRuntimeEngine.from_sample_set(sample_set)
+        if engine.workflow_engine.state.value == "SAMPLE_SELECTED":
+            engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY, persist=True, debug={"source": source})
         if strategy_output:
-            if engine.state.value == "EVIDENCE_READY":
-                engine.dispatch(WorkflowAction.START_DISTILLATION)
-                engine.persist_state(project.project_id, action=WorkflowAction.START_DISTILLATION, action_payload={"source": source}, debug={"source": source})
-            engine.dispatch(WorkflowAction.COMPLETE_DISTILLATION, {"strategy_output": strategy_output})
-            session = engine.persist_state(
-                project.project_id,
-                action=WorkflowAction.COMPLETE_DISTILLATION,
-                action_payload={"source": source, "strategy_output": strategy_output},
+            if engine.workflow_engine.state.value == "EVIDENCE_READY":
+                engine.dispatch(WorkflowAction.START_DISTILLATION, persist=True, debug={"source": source})
+            engine.dispatch(
+                WorkflowAction.COMPLETE_DISTILLATION,
+                {"strategy_output": strategy_output},
+                persist=True,
                 debug={"source": source},
             )
         else:
-            session = engine.persist_state(project.project_id, action=WorkflowAction.MARK_EVIDENCE_READY, action_payload={"source": source}, debug={"source": source})
-        CreatorMemoryGraph().record_session(session)
+            engine.persist(WorkflowAction.MARK_EVIDENCE_READY, {"source": source}, debug={"source": source})
     except Exception:
         # Runtime state recording must never make a finished distillation fail.
         return
@@ -1712,7 +1700,7 @@ def distill_creator_clone(
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
 
     llm = get_llm_provider()
-    llm_engine = LLMExecutionEngine(llm)
+    execution_layer = ExecutionLayer()
     # Keep the web path to one external LLM call. Per-sample LLM Map calls are
     # useful for future deep mode, but current providers often timeout when a
     # three-sample distill fans out into 3 Map calls plus 1 Reduce call.
@@ -1732,7 +1720,7 @@ def distill_creator_clone(
         (output_dir / "distill_prompt_micro.md").write_text(prompt, encoding="utf-8")
         warnings.append("三条及以上样本默认使用 micro reduce，以提高当前大模型网关的成功率。")
     try:
-        result = llm_engine.execute_creator_clone(prompt, []).to_dict()
+        result = execution_layer.generate_creator_clone(llm, prompt, []).to_dict()
     except AppError as error:
         if use_map_reduce and error.code in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID}:
             micro_prompt = build_micro_reduce_distill_prompt(
@@ -1743,7 +1731,7 @@ def distill_creator_clone(
             )
             (output_dir / "distill_prompt_micro.md").write_text(micro_prompt, encoding="utf-8")
             try:
-                result = llm_engine.execute_creator_clone(micro_prompt, []).to_dict()
+                result = execution_layer.generate_creator_clone(llm, micro_prompt, []).to_dict()
             except AppError:
                 raise error
             warnings.append("常规 Reduce 蒸馏失败，已使用 micro reduce 短提示重试成功。")
@@ -1758,7 +1746,7 @@ def distill_creator_clone(
             )
             (output_dir / "distill_prompt_compact.md").write_text(compact_prompt, encoding="utf-8")
             try:
-                result = llm_engine.execute_creator_clone(compact_prompt, []).to_dict()
+                result = execution_layer.generate_creator_clone(llm, compact_prompt, []).to_dict()
             except AppError:
                 raise error
             warnings.append("首次蒸馏失败，已使用精简证据包重试成功。")
@@ -2473,7 +2461,7 @@ def batch_distill_creator_clone(
         }
         if llm:
             try:
-                raw_result = LLMExecutionEngine(llm).execute_creator_clone(prompt, []).to_dict()
+                raw_result = ExecutionLayer().generate_creator_clone(llm, prompt, []).to_dict()
                 normalized = normalize_creator_clone_result(raw_result, sample_set, chunk, warnings=[])
                 _write_json(result_path, normalized)
                 markdown_path.write_text(render_creator_clone_markdown(normalized), encoding="utf-8")
@@ -2553,7 +2541,7 @@ def batch_distill_creator_clone(
                 timeout_seconds=final_timeout,
                 max_output_tokens=max(int(effective_llm.get("max_output_tokens") or settings.llm_max_output_tokens), final_max_output_tokens),
             )
-            raw_final = LLMExecutionEngine(final_llm).execute_creator_clone(final_prompt, []).to_dict()
+            raw_final = ExecutionLayer().generate_creator_clone(final_llm, final_prompt, []).to_dict()
             final_result = normalize_creator_clone_result(raw_final, sample_set, selected_samples, warnings=warnings)
             final_result["batch_distill"] = {
                 "batch_count": len(batch_results),

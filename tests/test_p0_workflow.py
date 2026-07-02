@@ -502,8 +502,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "大模型蒸馏" in response.text
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     script = Path("app/static/app.js").read_text(encoding="utf-8")
-    assert "function getWizardStep" in script
-    assert "function getCreatorCloneStage" in script
+    assert "function getWizardStep" not in script
+    assert "function getCreatorCloneStage" not in script
     assert "function renderCreatorCloneNextAction" in script
     assert "function runCreatorCloneNextAction" in script
     assert "function runCreatorCloneImportStep" in script
@@ -529,6 +529,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function profileScanMaxPagesForCount" in script
     assert "max_pages: profilePayload.max_pages" in script
     assert "function useRecommendedProfileSamples" in script
+    assert "currentCreatorRuntimeState" in script
+    assert "function creatorRuntimeCurrentStep" in script
+    assert "function creatorRuntimePrimaryAction" in script
     assert "currentCreatorIntelligenceWorkflow" in script
     assert "currentCreatorIntelligenceBehavior" in script
     assert "currentCreatorIntelligenceProject" in script
@@ -555,10 +558,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'workflowState === "DONE"' in script
     assert "{scroll: false}" in script
     assert "const strategy = creatorStrategyFromResult(currentCreatorCloneResult || {})" in script
-    assert "function workflowStateFromCreatorIntelligence" in script
-    assert "function wizardStateFromWorkflowState" in script
-    assert "function getCreatorCloneWizardStateFromWorkflow" in script
+    assert "function workflowStateFromCreatorIntelligence" not in script
+    assert "function wizardStateFromWorkflowState" not in script
+    assert "function getCreatorCloneWizardStateFromWorkflow" not in script
     assert "function syncCreatorCloneWorkflowSelection" in script
+    assert "function scheduleCreatorCloneSelectionSync" in script
     assert "function dispatchCreatorIntelligenceWorkflowAction" in script
     assert "function markCreatorCloneDistillationStarted" in script
     assert 'dispatchCreatorIntelligenceWorkflowAction("MARK_EVIDENCE_READY")' in script
@@ -571,11 +575,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "creatorCloneExportActions.open = true" in script
     assert "function activeProfileStage" in script
     assert "function creatorCloneStageMeta" in script
-    assert 'command: "show_select"' in script
-    assert 'command: "show_distill"' in script
-    assert "下一步：选择代表样本" in script
-    assert "workflowNextAction()" in script
-    assert "function workflowNextCommand" in script
+    assert 'command === "show_select"' in script
+    assert 'command === "show_distill"' in script
+    assert "runtime_state" in script
+    assert "workflowNextAction()" not in script
+    assert "function workflowNextCommand" not in script
     assert 'command === "select_recommended_samples"' in script
     assert 'command === "build_evidence"' in script
     assert 'command === "start_distillation"' in script
@@ -9130,21 +9134,22 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert script.count("resetProfileChromeConfirmation();") >= 4
     assert "recommendedProfileSampleMix" in script
     assert "dedupeCreatorSampleViewItems" in script
-    assert "function getCreatorCloneWizardState()" in script
+    assert "function getCreatorCloneWizardState()" not in script
     assert "currentCreatorIntelligenceWorkflow" in script
+    assert "currentCreatorRuntimeState" in script
     assert "function applyCreatorIntelligencePayload" in script
-    assert "function getCreatorCloneWizardStateFromWorkflow" in script
+    assert "function getCreatorCloneWizardStateFromWorkflow" not in script
     assert "function syncCreatorCloneWorkflowSelection" in script
-    assert "wizardStateFromWorkflowState(workflowStateFromCreatorIntelligence())" in script
+    assert "wizardStateFromWorkflowState(workflowStateFromCreatorIntelligence())" not in script
     assert "selectedHasFrontendDelta" not in script
-    assert "workflowNextAction()?.state" in script
-    assert "workflowUiState().stage" in script
+    assert "creatorRuntimePrimaryAction().state" in script
+    assert "creatorRuntimeCurrentStep().stage" in script
     assert "creator_intelligence" in script
     assert "function renderWizardPrimaryAction" in script
     assert "function handleWizardPrimaryAction" in script
     assert "function creatorCloneActionStateForCurrentView" in script
-    assert "IMPORT_EMPTY" in script
-    assert "function workflowNextCommand" in script
+    assert "IMPORT_EMPTY" not in script
+    assert "function workflowNextCommand" not in script
     assert 'command === "import_input"' in script
     assert 'command === "select_recommended_samples"' in script
     assert 'command === "select_samples"' in script
@@ -9169,10 +9174,10 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "下一步：开始导入素材" in script
     assert "function activeProfileStage" in script
     assert "function creatorCloneStageMeta" in script
-    assert 'command: "show_select"' in script
-    assert 'command: "show_distill"' in script
-    assert "下一步：选择代表样本" in script
-    assert "workflowNextAction()" in script
+    assert 'command === "show_select"' in script
+    assert 'command === "show_distill"' in script
+    assert "runtime_state" in script
+    assert "workflowNextAction()" not in script
 
 
 def test_creator_clone_import_manual_links_generates_sample_set() -> None:
