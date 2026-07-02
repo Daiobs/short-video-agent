@@ -417,6 +417,52 @@ def test_creator_intelligence_workflow_api_dispatches_selection() -> None:
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 
+def test_creator_intelligence_selection_after_done_resets_report_state() -> None:
+    sample_set = sample_set_for_v2()
+    output_dir = settings.creator_clones_dir / sample_set.set_id
+    shutil.rmtree(output_dir, ignore_errors=True)
+    save_sample_set(sample_set)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    strategy = {
+        "positioning": "旧报告",
+        "content_strategy": ["旧样本策略"],
+        "hooks": ["旧钩子"],
+        "templates": [],
+        "anti_patterns": [],
+        "idea_bank": [],
+        "validation_rules": [],
+    }
+    (output_dir / "creator_clone_result.json").write_text(
+        json.dumps({"summary": "旧报告", "creator_clone_strategy": strategy}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (output_dir / "creator_clone.md").write_text("# 旧报告\n", encoding="utf-8")
+
+    before = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()
+    assert before["workflow"]["state"] == WorkflowState.DONE
+    assert before["workflow"]["next_action"]["command"] == "export_report"
+
+    response = client.post(
+        f"/api/creator-intelligence/projects/{sample_set.set_id}/workflow",
+        json={"action": WorkflowAction.SELECT_SAMPLES.value, "selected_sample_ids": ["sample_meta"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["project"]["selected_sample_ids"] == ["sample_meta"]
+    assert payload["workflow"]["state"] == WorkflowState.SAMPLE_SELECTED
+    assert payload["workflow"]["next_action"]["command"] == "build_evidence"
+    assert payload["strategy_output"] == {}
+    assert not (output_dir / "creator_clone_result.json").exists()
+    assert not (output_dir / "creator_clone.md").exists()
+
+    reloaded = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()
+    assert reloaded["workflow"]["state"] == WorkflowState.SAMPLE_SELECTED
+    assert reloaded["workflow"]["next_action"]["command"] == "build_evidence"
+    assert reloaded["strategy_output"] == {}
+    shutil.rmtree(output_dir, ignore_errors=True)
+
+
 def test_creator_intelligence_workflow_api_advances_evidence_and_distillation_state() -> None:
     sample_set = sample_set_for_v2()
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)

@@ -34,13 +34,14 @@ def project_payload_for_sample_set(
     project = project_from_clone_sample_set(sample_set)
     intelligence = creator_intelligence_payload_for_sample_set(sample_set)
     behavior_payload = behavior_model.to_dict() if hasattr(behavior_model, "to_dict") else behavior_model
+    strategy_payload = strategy_output if strategy_output is not None else intelligence.get("strategy_output")
     runtime_state = intelligence.get("runtime_state") if isinstance(intelligence.get("runtime_state"), dict) else {}
     return {
         "ok": True,
         "project": project.to_dict(),
         "workflow": workflow or intelligence.get("workflow") or {},
         "behavior_model": behavior_payload or intelligence.get("behavior_model") or None,
-        "strategy_output": strategy_output or intelligence.get("strategy_output") or None,
+        "strategy_output": strategy_payload if strategy_payload is not None else {},
         "runtime_state": runtime_state or CreatorRuntimeEngine.from_sample_set(sample_set).state.to_dict(),
         "exports": export_paths(sample_set.set_id),
     }

@@ -521,6 +521,18 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function mergeProfileQueueItems" in script
     assert "function rememberRecentCreatorCloneSetId" in script
     assert "function forgetRecentCreatorCloneSetId" in script
+    assert "function enterCreatorCloneFreshImport" in script
+    assert "function hasCreatorCloneActiveSession" in script
+    assert "function isProfileStageNavigationLocked" in script
+    assert 'normalizedStage !== "import" && !hasCreatorCloneActiveSession()' in script
+    assert "请先完成导入素材，再进入后续步骤。" in script
+    assert "step.disabled = locked;" in script
+    assert "currentCreatorRuntimeState = null;" in script
+    assert 'profileResultsBody.innerHTML = "";' in script
+    assert 'creatorCloneSelectionStatus.textContent = "已选 0 条。";' in script
+    assert "resetCreatorClonePoolForNewProfile({clearInput: false});" in script
+    assert 'targetStage === "import" && (currentCloneSetId || activeCreatorSampleViewItems().length || currentCreatorRuntimeState)' in script
+    assert "已回到导入素材。可直接替换上方链接并重新开始。" in script
     assert "isSafeCreatorCloneSetId" in script
     assert "/api/creator-clone/sets/" in script
     assert "/api/creator-intelligence/projects/" in script
@@ -554,6 +566,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function creatorStrategyFromResult" in script
     assert "function creatorCloneResultFromStrategyOutput" in script
     assert "function renderCreatorStrategyOutput" in script
+    assert "function invalidateCreatorRuntimeReportForSelectionChange" in script
+    assert "invalidateCreatorRuntimeReportForSelectionChange();" in script
     assert "creator-strategy-grid" in script
     assert "strategy_output" in script
     assert 'workflowState === "DONE"' in script
@@ -576,7 +590,12 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "creator_intelligence" in script
     assert "creatorCloneExportActions.open = true" in script
     assert "function activeProfileStage" in script
+    assert "function creatorWorkflowProgressStage" in script
+    assert "const activeStage = creatorWorkflowProgressStage();" in script
+    assert "const viewedStage = activeProfileStage();" in script
+    assert 'step.classList.toggle("viewing", stage === viewedStage && index !== activeStageIndex);' in script
     assert "function creatorCloneStageMeta" in script
+    assert 'if (normalizeProfileStage(stage) === "import")' in script
     assert 'command === "show_select"' in script
     assert 'command === "show_distill"' in script
     assert "runtime_state" in script
@@ -911,7 +930,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "可复刻创作公式" in script
     assert "不要照搬 / 风险边界" in script
     assert "lockedProfileNavigationStage" in script
-    assert "当前任务正在运行，完成后会自动进入下一步" in script
+    assert "证据富化正在运行，完成后会自动进入大模型蒸馏" in script
+    assert "大模型蒸馏正在运行，完成后会自动进入报告页" in script
     assert "creatorCloneOverviewFromSet" in script
     assert "创作者蒸馏证据完整度" in script
     assert "creator-report-evidence-details" in script
@@ -924,6 +944,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".creator-distillation-report" in stylesheet
     assert ".creator-segment-grid" in stylesheet
     assert ".profile-main-flow button.locked" in stylesheet
+    assert ".profile-main-flow button.viewing" in stylesheet
     assert ".creator-report-evidence-details" in stylesheet
     assert ".profile-template-select" in stylesheet
     assert "column-count: 2" in stylesheet

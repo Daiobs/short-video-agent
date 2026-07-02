@@ -500,7 +500,7 @@ function creatorCloneSourceInputFromPayload(payload = {}) {
   return sourceUrls.slice(0, 150).join("\n");
 }
 
-function resetCreatorClonePoolForNewProfile() {
+function resetCreatorClonePoolForNewProfile({clearInput = true} = {}) {
   currentCloneSetId = "";
   currentCloneProfileFingerprint = "";
   runtimeSampleRows = [];
@@ -510,12 +510,46 @@ function resetCreatorClonePoolForNewProfile() {
   currentDistillPrompt = "";
   currentCreatorIntelligenceProject = null;
   currentCreatorIntelligenceStrategy = null;
+  currentCreatorRuntimeState = null;
   profileLastChromeProfileValue = "";
-  clearCreatorCloneUnifiedInput();
+  if (clearInput) {
+    clearCreatorCloneUnifiedInput();
+  } else {
+    profileQuickInputRestoredValue = "";
+  }
   forgetRecentCreatorCloneSetId();
+  if (profileResultsBody) {
+    profileResultsBody.innerHTML = "";
+  }
+  if (profileSummary) {
+    profileSummary.innerHTML = "";
+  }
+  if (profileQueueSummary) {
+    profileQueueSummary.innerHTML = "";
+  }
+  if (profileQueueItems) {
+    profileQueueItems.innerHTML = "";
+  }
+  if (creatorCloneSelectionStatus) {
+    creatorCloneSelectionStatus.textContent = "已选 0 条。";
+  }
+  if (profileProviderBadge) {
+    profileProviderBadge.textContent = "未导入";
+  }
+  if (profileWarnings) {
+    profileWarnings.textContent = "";
+    profileWarnings.classList.add("hidden");
+  }
   profileQueueCard?.classList.add("hidden");
   profileResultsCard?.classList.add("hidden");
   creatorCloneResultCard?.classList.add("hidden");
+}
+
+function enterCreatorCloneFreshImport({preserveInput = true, scroll = true} = {}) {
+  resetCreatorClonePoolForNewProfile({clearInput: !preserveInput});
+  setProfileStageView("import", {scroll});
+  profileQuickInput?.focus();
+  renderCreatorCloneNextAction();
 }
 
 function resetCreatorClonePoolIfProfileChanged(profileValue) {
@@ -858,6 +892,19 @@ function syncCreatorProjectSamplesFromViewItems(items = runtimeSampleRows) {
       project: currentCreatorIntelligenceProject,
     };
   }
+}
+
+function invalidateCreatorRuntimeReportForSelectionChange() {
+  currentCreatorRuntimeReport = null;
+  currentCreatorIntelligenceStrategy = null;
+  currentDistillPrompt = "";
+  if (currentCreatorRuntimeState?.strategy_output) {
+    currentCreatorRuntimeState = {
+      ...currentCreatorRuntimeState,
+      strategy_output: {},
+    };
+  }
+  creatorCloneResultCard?.classList.add("hidden");
 }
 
 function cloneSetFromCreatorIntelligenceProject(payload = {}) {
@@ -1443,6 +1490,17 @@ function activeProfileStage() {
   return normalizeProfileStage(profileStageView || creatorRuntimeStage());
 }
 
+function creatorWorkflowProgressStage() {
+  if (hasPendingQuickImportInput()) {
+    return "import";
+  }
+  const runtimeStage = creatorRuntimeCurrentStep().stage;
+  if (runtimeStage) {
+    return normalizeProfileStage(runtimeStage);
+  }
+  return activeProfileStage();
+}
+
 function lockedProfileNavigationStage() {
   if (creatorCloneEnrichmentRunning) {
     return "enrich";
@@ -1453,9 +1511,35 @@ function lockedProfileNavigationStage() {
   return "";
 }
 
+function hasCreatorCloneActiveSession() {
+  return Boolean(currentCloneSetId || activeCreatorSampleViewItems().length || currentCreatorRuntimeState);
+}
+
+function profileStageNavigationLockMessage(stage) {
+  const normalizedStage = normalizeProfileStage(stage);
+  const runningLockedStage = lockedProfileNavigationStage();
+  if (runningLockedStage) {
+    return creatorCloneEnrichmentRunning
+      ? "证据富化正在运行，完成后会自动进入大模型蒸馏；当前先保持队列视图。"
+      : "大模型蒸馏正在运行，完成后会自动进入报告页；当前先保持任务视图。";
+  }
+  if (normalizedStage !== "import" && !hasCreatorCloneActiveSession()) {
+    return "请先完成导入素材，再进入后续步骤。";
+  }
+  return "";
+}
+
+function isProfileStageNavigationLocked(stage) {
+  const normalizedStage = normalizeProfileStage(stage);
+  const runningLockedStage = lockedProfileNavigationStage();
+  if (runningLockedStage) {
+    return normalizedStage !== runningLockedStage;
+  }
+  return normalizedStage !== "import" && !hasCreatorCloneActiveSession();
+}
+
 function canNavigateProfileStage(stage) {
-  const lockedStage = lockedProfileNavigationStage();
-  return !lockedStage || normalizeProfileStage(stage) === lockedStage;
+  return !isProfileStageNavigationLocked(stage);
 }
 
 function renderProfileStageView() {
@@ -1485,7 +1569,9 @@ function syncProfileStageToWizard({scroll = false} = {}) {
 }
 
 function creatorCloneStageMeta(stage = activeProfileStage()) {
-  void stage;
+  if (normalizeProfileStage(stage) === "import") {
+    return creatorRuntimeMetaFallback();
+  }
   const step = creatorRuntimeCurrentStep();
   const action = creatorRuntimePrimaryAction();
   if (step.label || action.command || action.label) {
@@ -1530,18 +1616,19 @@ function renderWizardPrimaryAction(state = creatorCloneActionStateForCurrentView
 function renderCreatorCloneStageChrome() {
   const state = creatorCloneActionStateForCurrentView();
   const meta = creatorCloneStateMeta(state);
-  const activeStage = activeProfileStage();
+  const activeStage = creatorWorkflowProgressStage();
+  const viewedStage = activeProfileStage();
   const activeStageIndex = stageIndexFromName(activeStage);
-  const lockedStage = lockedProfileNavigationStage();
   creatorCloneFlowSteps.forEach((step) => {
     const stage = normalizeProfileStage(step.dataset.profileStageNav || "");
     const index = stageIndexFromName(stage);
-    const locked = Boolean(lockedStage && stage !== lockedStage);
+    const locked = isProfileStageNavigationLocked(stage);
     step.classList.toggle("active", index === activeStageIndex);
     step.classList.toggle("completed", index < activeStageIndex);
+    step.classList.toggle("viewing", stage === viewedStage && index !== activeStageIndex);
     step.classList.toggle("locked", locked);
     step.disabled = locked;
-    step.title = locked ? "当前任务正在运行，完成后会自动进入下一步。" : "";
+    step.title = locked ? profileStageNavigationLockMessage(stage) : "";
     step.setAttribute("aria-current", index === activeStageIndex ? "step" : "false");
   });
   if (creatorCloneCurrentStep) {
@@ -2980,6 +3067,7 @@ async function runCreatorCloneNextAction() {
 function setProfileSelection(items) {
   const selectedIds = new Set(items.map(sampleViewItemKey));
   profileSelectedKeys = selectedIds;
+  invalidateCreatorRuntimeReportForSelectionChange();
   document.querySelectorAll("[data-profile-select]").forEach((input) => {
     input.checked = selectedIds.has(input.value) && !input.disabled;
   });
@@ -4982,10 +5070,13 @@ profileImportModeButtons.forEach((button) => {
 creatorCloneFlowSteps.forEach((button) => {
   button.addEventListener("click", () => {
     const targetStage = normalizeProfileStage(button.dataset.profileStageNav || "import");
+    if (targetStage === "import" && (currentCloneSetId || activeCreatorSampleViewItems().length || currentCreatorRuntimeState)) {
+      enterCreatorCloneFreshImport({preserveInput: true, scroll: true});
+      profileScanStatus.textContent = "已回到导入素材。可直接替换上方链接并重新开始。";
+      return;
+    }
     if (!canNavigateProfileStage(targetStage)) {
-      profileScanStatus.textContent = creatorCloneEnrichmentRunning
-        ? "证据富化正在运行，完成后会自动进入大模型蒸馏；当前先保持队列视图。"
-        : "大模型蒸馏正在运行，完成后会自动进入报告页；当前先保持任务视图。";
+      profileScanStatus.textContent = profileStageNavigationLockMessage(targetStage);
       renderCreatorCloneNextAction();
       return;
     }
@@ -4995,6 +5086,10 @@ creatorCloneFlowSteps.forEach((button) => {
 });
 
 profileQuickInput?.addEventListener("input", () => {
+  if (currentCloneSetId || activeCreatorSampleViewItems().length || currentCreatorRuntimeState) {
+    resetCreatorClonePoolForNewProfile({clearInput: false});
+    setProfileStageView("import", {scroll: false});
+  }
   profileQuickInputRestoredValue = "";
   renderCreatorCloneNextAction();
 });
@@ -5045,6 +5140,7 @@ profileResultsBody.addEventListener("change", (event) => {
     } else {
       profileSelectedKeys.delete(event.target.value);
     }
+    invalidateCreatorRuntimeReportForSelectionChange();
     updateCreatorCloneSelectionStatus();
     scheduleCreatorCloneSelectionSync();
   }
@@ -5060,6 +5156,7 @@ profileResultsBody.addEventListener("click", (event) => {
     return;
   }
   profileSelectedKeys.add(key);
+  invalidateCreatorRuntimeReportForSelectionChange();
   document.querySelectorAll("[data-profile-select]").forEach((input) => {
     if (input.value === key) {
       input.checked = true;

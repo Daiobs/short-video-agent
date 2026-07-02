@@ -237,7 +237,10 @@ class WorkflowEngine:
             self.message = "Sample pool ready."
             return
         if action == WorkflowAction.SELECT_SAMPLES:
-            self._require({WorkflowState.SAMPLE_READY, WorkflowState.SAMPLE_SELECTED, WorkflowState.EVIDENCE_READY}, action)
+            self._require(
+                {WorkflowState.SAMPLE_READY, WorkflowState.SAMPLE_SELECTED, WorkflowState.EVIDENCE_READY, WorkflowState.DONE},
+                action,
+            )
             selected_ids = tuple(str(item) for item in (payload.get("selected_sample_ids") or []) if str(item))
             if not selected_ids:
                 raise ValueError("SELECT_SAMPLES requires selected_sample_ids.")
@@ -247,6 +250,7 @@ class WorkflowEngine:
             self.project = replace(self.project, selected_sample_ids=selected_ids, updated_at=_now())
             self.state = WorkflowState.SAMPLE_SELECTED
             self.behavior_model = None
+            self.strategy_output = None
             self.message = "Samples selected."
             return
         if action == WorkflowAction.MARK_EVIDENCE_READY:

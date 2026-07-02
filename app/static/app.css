@@ -388,6 +388,11 @@ button:disabled {
     opacity: .88;
 }
 
+.profile-main-flow button.viewing {
+    border-style: dashed;
+    opacity: .8;
+}
+
 .profile-main-flow button.locked,
 .profile-main-flow button:disabled {
     cursor: not-allowed;
