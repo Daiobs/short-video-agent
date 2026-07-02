@@ -12,6 +12,7 @@ outputs/cases/*
 outputs/downloads/*
 outputs/calibration/*
 outputs/creator_clones/*
+outputs/creator_state/*
 outputs/local_chrome_profile/*
 samples/
 !outputs/uploads/.gitkeep

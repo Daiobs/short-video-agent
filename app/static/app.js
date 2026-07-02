@@ -55,6 +55,7 @@ const buildCaseButton = document.getElementById("build-case-button");
 const jobCard = document.getElementById("job-card");
 const progressBar = document.getElementById("progress-bar");
 const jobMessage = document.getElementById("job-message");
+const jobPhase = document.getElementById("job-phase");
 const jobResult = document.getElementById("job-result");
 const homeRouteButtons = Array.from(document.querySelectorAll("[data-home-route]"));
 const homePanels = Array.from(document.querySelectorAll("[data-home-panel]"));
@@ -151,12 +152,16 @@ let currentLocalVideoId = "";
 let currentAwemeId = "";
 let selectedCandidate = null;
 let loadedHomeCase = null;
-let profileItems = [];
+let profileSampleViewItems = [];
 let profileSelectedKeys = new Set();
 let profileScanPayload = null;
 let currentCloneSetId = "";
 let currentDistillPrompt = "";
 let currentCreatorCloneResult = null;
+let currentCreatorIntelligenceProject = null;
+let currentCreatorIntelligenceWorkflow = null;
+let currentCreatorIntelligenceBehavior = null;
+let currentCreatorIntelligenceStrategy = null;
 let chromeHelperStatusLoaded = false;
 let profileLastChromeProfileValue = "";
 let profileChromeLaunchCommand = "";
@@ -166,6 +171,7 @@ let creatorCloneDistillRunning = false;
 let creatorCloneNextActionRunning = false;
 let profileStageView = "import";
 let currentCloneProfileFingerprint = "";
+let profileQuickInputRestoredValue = "";
 let preflightCopySnippets = [];
 let recentCreatorCloneRestoreAttempted = false;
 
@@ -311,7 +317,7 @@ function forgetRecentCreatorCloneSetId() {
 }
 
 async function restoreRecentCreatorCloneSet() {
-  if (recentCreatorCloneRestoreAttempted || currentCloneSetId || profileItems.length) {
+  if (recentCreatorCloneRestoreAttempted || currentCloneSetId || activeCreatorSampleViewItems().length) {
     return false;
   }
   recentCreatorCloneRestoreAttempted = true;
@@ -323,26 +329,24 @@ async function restoreRecentCreatorCloneSet() {
     profileScanStatus.textContent = "正在恢复上次素材池...";
   }
   try {
-    const response = await fetch(`/api/creator-clone/sets/${encodeURIComponent(setId)}`, {cache: "no-store"});
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}`, {cache: "no-store"});
     const payload = await readJsonResponse(response);
-    renderProfileResults({
-      set: payload.set,
-      capture_audit: payload.capture_audit,
-      handoff_manifest: payload.handoff_manifest,
-      provider: "recent creator clone set",
-    });
+    const profilePayload = profilePayloadFromCreatorIntelligenceProject(payload);
+    renderProfileResults(profilePayload);
+    setCreatorCloneRestoredInput(creatorCloneSourceInputFromPayload(profilePayload));
     const restoredQueue = await restoreRecentProfileBuildJob(setId);
     if (!restoredQueue) {
-      const selected = selectedProfileItems();
+      const selected = selectedCreatorSampleViewItems();
       const restoredStage = readRecentProfileStage();
       const fallbackStage = selected.length
         ? (["select", "enrich", "distill", "export"].includes(restoredStage) ? restoredStage : "select")
         : "pool";
       setProfileStageView(fallbackStage);
       if (profileScanStatus) {
+        const itemCount = activeCreatorSampleViewItems().length;
         profileScanStatus.textContent = selected.length
           ? `已恢复上次素材池和 ${formatNumber(selected.length)} 条已选样本。`
-          : `已恢复上次素材池：${formatNumber(profileItems.length)} 条素材。`;
+          : `已恢复上次素材池：${formatNumber(itemCount)} 条素材。`;
       }
     }
     return true;
@@ -360,7 +364,7 @@ async function restoreRecentProfileBuildJob(setId) {
   const shouldUseStoredJob = state && state.set_id === setId;
   const selectedKeys = new Set(shouldUseStoredJob ? state.selected_sample_ids : []);
   if (selectedKeys.size) {
-    setProfileSelection(profileItems.filter((item) => profileItemMatchesKeySet(item, selectedKeys)));
+    setProfileSelection(activeCreatorSampleViewItems().filter((item) => sampleViewItemMatchesKeySet(item, selectedKeys)));
   }
   try {
     const jobUrl = shouldUseStoredJob
@@ -375,22 +379,20 @@ async function restoreRecentProfileBuildJob(setId) {
     }
     const resultItems = normalizeItems(job.result_json?.items);
     if (!selectedKeys.size && resultItems.length) {
-      const queueKeys = new Set(resultItems.map(profileItemKey).filter(Boolean));
-      setProfileSelection(profileItems.filter((item) => profileItemMatchesKeySet(item, queueKeys)));
+      const queueKeys = new Set(resultItems.map(sampleViewItemKey).filter(Boolean));
+      setProfileSelection(activeCreatorSampleViewItems().filter((item) => sampleViewItemMatchesKeySet(item, queueKeys)));
     }
     rememberRecentProfileBuildState({
       setId,
       jobId: job.id,
-      selectedSampleIds: selectedProfileItems().map(profileItemKey),
+      selectedSampleIds: selectedCreatorSampleViewItems().map(sampleViewItemKey),
     });
     placeJobCard("profile");
-    progressBar.style.width = `${job.progress || 0}%`;
-    jobMessage.className = `job-message ${job.status === "failed" ? "failed" : job.status === "success" ? "success" : ""}`;
-    jobMessage.textContent = `${job.status} · ${job.progress || 0}% · ${job.message || "恢复素材包队列"}`;
+    renderJobStatus(job, "恢复素材包队列");
     if (job.result_json && Object.keys(job.result_json).length) {
       renderProfileQueue(job.result_json);
     } else {
-      renderProfileQueue({items: selectedProfileItems().map((item) => ({
+      renderProfileQueue({items: selectedCreatorSampleViewItems().map((item) => ({
         ...queueItemPayload(item),
         status: "pending",
         message: "等待后端写入队列状态",
@@ -476,17 +478,45 @@ function profileFingerprintFromPayload(payload) {
     || "";
 }
 
+function creatorCloneSourceInputFromPayload(payload = {}) {
+  const set = payload?.set || payload || {};
+  const meta = set.profile_metadata || payload?.summary?.profile_metadata || {};
+  const audit = payload?.capture_audit || set.capture_audit || {};
+  const profileValue = [
+    meta.profile_url,
+    audit.requested_profile,
+    meta.sec_user_id,
+  ].map((value) => String(value || "").trim()).find(Boolean);
+  if (profileValue) {
+    return profileValue;
+  }
+  const sourceUrls = [];
+  normalizeItems(payload.items || set.samples).forEach((item) => {
+    const sourceUrl = String(item?.source_url || item?.webpage_url || "").trim();
+    if (sourceUrl && !sourceUrls.includes(sourceUrl)) {
+      sourceUrls.push(sourceUrl);
+    }
+  });
+  return sourceUrls.slice(0, 150).join("\n");
+}
+
 function resetCreatorClonePoolForNewProfile() {
   currentCloneSetId = "";
   currentCloneProfileFingerprint = "";
-  profileItems = [];
+  profileSampleViewItems = [];
   profileSelectedKeys = new Set();
   profileScanPayload = null;
   currentCreatorCloneResult = null;
   currentDistillPrompt = "";
+  currentCreatorIntelligenceProject = null;
+  currentCreatorIntelligenceWorkflow = null;
+  currentCreatorIntelligenceBehavior = null;
+  currentCreatorIntelligenceStrategy = null;
   profileLastChromeProfileValue = "";
+  clearCreatorCloneUnifiedInput();
   forgetRecentCreatorCloneSetId();
   profileQueueCard?.classList.add("hidden");
+  profileResultsCard?.classList.add("hidden");
   creatorCloneResultCard?.classList.add("hidden");
 }
 
@@ -559,9 +589,72 @@ function resetJobCard(message = "") {
   progressBar.style.width = "0%";
   jobMessage.className = "job-message";
   jobMessage.textContent = message;
+  renderJobPhase(null);
   if (jobResult) {
     jobResult.textContent = "";
   }
+}
+
+function renderJobPhase(job) {
+  if (!jobPhase) {
+    return;
+  }
+  const result = job?.result_json || {};
+  const phase = result.distill_phase || null;
+  if (!phase) {
+    jobPhase.classList.add("hidden");
+    jobPhase.innerHTML = "";
+    return;
+  }
+  const plan = phase.execution_plan || result.execution_plan || {};
+  const timeout = phase.timeout_seconds || plan.timeout_policy?.configured_final_reduce_timeout_seconds || "";
+  const recommendedTimeout = plan.timeout_policy?.recommended_final_reduce_timeout_seconds || "";
+  const batchLine = Number(phase.batch_count || plan.batch_count || 0)
+    ? `批次 ${phase.phase_index ? `${formatNumber(phase.phase_index)} / ` : ""}${formatNumber(phase.batch_count || plan.batch_count)}`
+    : "";
+  const timeoutLine = timeout
+    ? `当前阶段最多等待 ${formatNumber(timeout)} 秒${recommendedTimeout && Number(recommendedTimeout) > Number(timeout) ? ` · 建议上限 ${formatNumber(recommendedTimeout)} 秒` : ""}`
+    : "";
+  const duration = plan.duration || {};
+  const durationLine = Number(duration.known_count || 0)
+    ? `已知视频时长 ${formatNumber(duration.known_count)} 条 · 总计 ${formatNumber(duration.total_seconds || 0)} 秒`
+    : "";
+  const diagnostics = normalizeItems(plan.timeout_policy?.phase_diagnostics)
+    .map((item) => item && typeof item === "object" ? `${item.phase}: ${item.meaning}` : formatReportValue(item))
+    .filter(isMeaningfulReportText)
+    .slice(0, 4);
+  const chips = [
+    plan.strategy_label || "",
+    phase.current_phase_label || "",
+    batchLine,
+    timeoutLine,
+    durationLine,
+  ].filter(isMeaningfulReportText);
+  jobPhase.classList.remove("hidden");
+  jobPhase.innerHTML = `
+    <div class="job-phase-header">
+      <span>${escapeHtml(phase.current_phase_label || "运行阶段")}</span>
+      ${phase.status ? `<strong>${escapeHtml(phase.status)}</strong>` : ""}
+    </div>
+    ${chips.length ? `<div class="job-phase-chips">${chips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join("")}</div>` : ""}
+    ${phase.diagnostic ? `<p>${escapeHtml(phase.diagnostic)}</p>` : ""}
+    ${diagnostics.length ? `
+      <details class="job-phase-diagnostics">
+        <summary>超时诊断阶段</summary>
+        <ul>${diagnostics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </details>
+    ` : ""}
+  `;
+}
+
+function renderJobStatus(job, fallbackMessage = "") {
+  if (!progressBar || !jobMessage || !job) {
+    return;
+  }
+  progressBar.style.width = `${job.progress || 0}%`;
+  jobMessage.className = `job-message ${job.status === "failed" ? "failed" : job.status === "success" ? "success" : ""}`;
+  jobMessage.textContent = `${job.status || "running"} · ${job.progress || 0}% · ${job.message || fallbackMessage || ""}`;
+  renderJobPhase(job);
 }
 
 function setCreatorCloneDistillButtonsLocked(locked) {
@@ -572,6 +665,7 @@ function setCreatorCloneDistillButtonsLocked(locked) {
   if (creatorCloneBatchDistillButton) {
     creatorCloneBatchDistillButton.disabled = Boolean(locked);
   }
+  renderCreatorCloneStageChrome();
 }
 
 function setCreatorCloneEnrichmentLocked(locked) {
@@ -579,6 +673,7 @@ function setCreatorCloneEnrichmentLocked(locked) {
   if (profileSelectedBuildButton) {
     profileSelectedBuildButton.disabled = Boolean(locked);
   }
+  renderCreatorCloneStageChrome();
 }
 
 function normalizeItems(value) {
@@ -591,24 +686,336 @@ function normalizeItems(value) {
   return [value];
 }
 
+function sampleViewItemFromCreatorSample(sample = {}) {
+  const metrics = sample.metrics || {};
+  const evidence = sample.evidence || {};
+  const raw = sample.raw || {};
+  return {
+    sample_id: sample.sample_id || raw.sample_id || "",
+    source_type: sample.source || raw.source_type || "unknown",
+    source_url: sample.source_url || raw.source_url || "",
+    webpage_url: sample.source_url || raw.webpage_url || raw.source_url || "",
+    aweme_id: sample.platform_item_id || raw.aweme_id || "",
+    title: sample.title || raw.title || "",
+    desc: sample.description || raw.desc || "",
+    author: sample.author || raw.author || "",
+    cover_url: sample.cover_url || raw.cover_url || "",
+    media_type: sample.media_kind || raw.media_type || "unknown",
+    like_count: Number(metrics.like_count || raw.like_count || 0),
+    comment_count: Number(metrics.comment_count || raw.comment_count || 0),
+    share_count: Number(metrics.share_count || raw.share_count || 0),
+    collect_count: Number(metrics.collect_count || raw.collect_count || 0),
+    view_count: Number(metrics.view_count || raw.view_count || 0),
+    engagement_score: Number(metrics.engagement_score || raw.engagement_score || 0),
+    create_time: sample.created_at || raw.create_time || "",
+    case_id: sample.case_id || raw.case_id || "",
+    understanding_level: evidence.level || raw.understanding_level || "metadata_only",
+    has_video: Boolean(evidence.has_video || raw.has_video),
+    has_frames: Boolean(evidence.has_frames || raw.has_frames),
+    has_asr: Boolean(evidence.has_asr || raw.has_asr),
+    has_ocr: Boolean(evidence.has_ocr || raw.has_ocr),
+    has_comments: Boolean(evidence.has_comments || raw.has_comments),
+    enrichment_status: evidence.enrichment_status || raw.enrichment_status || "pending",
+    asr_status: evidence.asr_status || raw.asr_status || "pending",
+    ocr_status: evidence.ocr_status || raw.ocr_status || "pending",
+    analysis_status: evidence.analysis_status || raw.analysis_status || "not_analyzed",
+    selected: Boolean(sample.selected || raw.selected),
+    tags: normalizeItems(sample.tags || raw.tags),
+    notes: raw.notes || "",
+  };
+}
+
+function creatorSampleFromViewItem(item = {}) {
+  const key = sampleViewItemKey(item);
+  const evidenceLevel = item.understanding_level || (item.has_frames || item.has_asr || item.has_ocr || item.has_comments ? "partial" : "metadata_only");
+  return {
+    sample_id: key,
+    source: item.source_type || "douyin",
+    source_url: item.source_url || item.webpage_url || "",
+    platform_item_id: item.aweme_id || "",
+    title: item.title || item.desc || "",
+    description: item.desc || "",
+    author: item.author || "",
+    cover_url: item.cover_url || "",
+    media_kind: item.media_type || "unknown",
+    metrics: {
+      like_count: Number(item.like_count || 0),
+      comment_count: Number(item.comment_count || 0),
+      share_count: Number(item.share_count || 0),
+      collect_count: Number(item.collect_count || 0),
+      view_count: Number(item.view_count || 0),
+      engagement_score: Number(item.engagement_score || 0),
+    },
+    evidence: {
+      level: evidenceLevel,
+      has_video: Boolean(item.has_video),
+      has_frames: Boolean(item.has_frames),
+      has_asr: Boolean(item.has_asr),
+      has_ocr: Boolean(item.has_ocr),
+      has_comments: Boolean(item.has_comments),
+      enrichment_status: item.enrichment_status || "pending",
+      asr_status: item.asr_status || "pending",
+      ocr_status: item.ocr_status || "pending",
+      analysis_status: item.analysis_status || "not_analyzed",
+    },
+    case_id: item.case_id || "",
+    tags: normalizeItems(item.tags),
+    created_at: item.create_time || "",
+    selected: Boolean(item.selected),
+    raw: {...item},
+  };
+}
+
+function creatorProjectFromCloneSet(set = {}) {
+  if (!set?.set_id) {
+    return null;
+  }
+  const profile = set.profile_metadata || {};
+  const samples = normalizeItems(set.samples).map(creatorSampleFromViewItem);
+  const selected = normalizeItems(set.selected_sample_ids);
+  return {
+    project_id: set.set_id,
+    title: set.title || "创作者蒸馏素材池",
+    profile: {
+      creator_id: profile.sec_user_id || set.creator_name || set.set_id,
+      display_name: set.creator_name || profile.nickname || "",
+      platform: set.source_platform || profile.source_platform || "unknown",
+      source_url: profile.profile_url || "",
+      bio: profile.bio || "",
+      audience: profile.audience || "",
+      content_direction: set.content_profile || profile.content_direction || "",
+      style_bias: profile.style_bias || "",
+      raw_profile: {...profile},
+    },
+    samples,
+    selected_sample_ids: selected,
+    warnings: normalizeItems(set.warnings),
+    sample_count: samples.length,
+    selected_count: selected.length || samples.filter((sample) => sample.selected).length,
+    created_at: set.created_at || "",
+    updated_at: set.updated_at || "",
+  };
+}
+
+function creatorProjectSampleViewItems() {
+  return normalizeItems(currentCreatorIntelligenceProject?.samples).map(sampleViewItemFromCreatorSample);
+}
+
+function activeCreatorSampleViewItems() {
+  const projectItems = creatorProjectSampleViewItems();
+  const localItems = normalizeItems(profileSampleViewItems);
+  if (!projectItems.length) {
+    return localItems;
+  }
+  if (!localItems.length) {
+    return projectItems;
+  }
+  const localByKey = new Map(
+    localItems
+      .map((item) => [sampleViewItemKey(item), item])
+      .filter(([key]) => Boolean(key)),
+  );
+  const merged = projectItems.map((item) => {
+    const local = localByKey.get(sampleViewItemKey(item));
+    return local ? {...item, ...local} : item;
+  });
+  const projectKeys = new Set(merged.map(sampleViewItemKey).filter(Boolean));
+  localItems.forEach((item) => {
+    const key = sampleViewItemKey(item);
+    if (key && !projectKeys.has(key)) {
+      merged.push(item);
+    }
+  });
+  return merged;
+}
+
+function syncCreatorProjectSamplesFromViewItems(items = profileSampleViewItems) {
+  if (!currentCreatorIntelligenceProject?.project_id) {
+    return;
+  }
+  const rows = normalizeItems(items);
+  const existingSelected = profileSelectedKeys.size
+    ? new Set(profileSelectedKeys)
+    : new Set(normalizeItems(currentCreatorIntelligenceProject.selected_sample_ids).map(String));
+  const samples = rows.map((item) => {
+    const key = sampleViewItemKey(item);
+    return creatorSampleFromViewItem({
+      ...item,
+      selected: Boolean(key && existingSelected.has(String(key))),
+    });
+  });
+  const availableKeys = new Set(samples.map((sample) => sample.sample_id).filter(Boolean));
+  const selectedSampleIds = [...existingSelected].filter((key) => availableKeys.has(String(key)));
+  currentCreatorIntelligenceProject = {
+    ...currentCreatorIntelligenceProject,
+    samples,
+    selected_sample_ids: selectedSampleIds,
+    sample_count: samples.length,
+    selected_count: selectedSampleIds.length || samples.filter((sample) => sample.selected).length,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function cloneSetFromCreatorIntelligenceProject(payload = {}) {
+  const project = payload.project || {};
+  if (!project.project_id) {
+    return null;
+  }
+  const profile = project.profile || {};
+  const rawProfile = profile.raw_profile || {};
+  return {
+    set_id: project.project_id,
+    title: project.title || "创作者蒸馏素材池",
+    creator_name: profile.display_name || "",
+    source_platform: profile.platform || "unknown",
+    content_profile: rawProfile.content_profile || "auto",
+    profile_metadata: {
+      ...rawProfile,
+      sec_user_id: rawProfile.sec_user_id || profile.creator_id || "",
+      profile_url: rawProfile.profile_url || profile.source_url || "",
+      bio: rawProfile.bio || profile.bio || "",
+      source_platform: rawProfile.source_platform || profile.platform || "unknown",
+    },
+    samples: normalizeItems(project.samples).map(sampleViewItemFromCreatorSample),
+    selected_sample_ids: normalizeItems(project.selected_sample_ids),
+    warnings: normalizeItems(project.warnings),
+    created_at: project.created_at || "",
+    sample_count: project.sample_count || normalizeItems(project.samples).length,
+    selected_count: project.selected_count || normalizeItems(project.selected_sample_ids).length,
+    performance_segments: payload.behavior_model?.performance_segments || {},
+  };
+}
+
+function profilePayloadFromCreatorIntelligenceProject(payload = {}) {
+  return {
+    set: cloneSetFromCreatorIntelligenceProject(payload),
+    creator_intelligence: {
+      project: payload.project || null,
+      workflow: payload.workflow || null,
+      behavior_model: payload.behavior_model || null,
+      strategy_output: payload.strategy_output || null,
+    },
+    exports: payload.exports || {},
+    provider: "creator intelligence project",
+  };
+}
+
+function creatorStrategyFromResult(result = {}) {
+  return result?.creator_clone_strategy || currentCreatorIntelligenceStrategy || null;
+}
+
+function creatorCloneResultFromStrategyOutput(strategy = {}) {
+  if (!strategy || typeof strategy !== "object") {
+    return null;
+  }
+  return {
+    summary: strategy.positioning || "创作者策略输出已恢复。",
+    creator_clone_strategy: strategy,
+    creator_positioning: {
+      what_the_creator_sells: strategy.positioning || "",
+    },
+    topic_buckets: normalizeItems(strategy.content_strategy).map((item) => ({name: formatReportValue(item)})),
+    expression_patterns: {
+      opening_hooks: normalizeItems(strategy.hooks),
+    },
+    transferable_formulas: normalizeItems(strategy.templates),
+    creator_clone_spec: {
+      anti_patterns: normalizeItems(strategy.anti_patterns),
+      self_check_rubric: normalizeItems(strategy.validation_rules),
+    },
+    candidate_ideas: normalizeItems(strategy.idea_bank),
+    evidence_gaps: [],
+    next_actions: normalizeItems(strategy.validation_rules),
+  };
+}
+
 function formatReportValue(value) {
   if (Array.isArray(value)) {
-    return value.map(formatReportValue).join(" / ");
+    return value.map(formatReportValue).filter(isMeaningfulReportText).join(" / ");
   }
   if (value && typeof value === "object") {
     return Object.entries(value)
+      .filter(([, item]) => publicValueHasContent(item))
       .map(([key, item]) => `${key}: ${formatReportValue(item)}`)
       .join("；");
   }
   return String(value ?? "");
 }
 
+function reportItemPrimaryText(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return formatReportValue(item);
+  }
+  return (
+    item.name
+    || item.title
+    || item.formula
+    || item.summary
+    || item.description
+    || item.point
+    || item.template
+    || item.idea
+    || item.why_it_works
+    || formatReportValue(item)
+  );
+}
+
+function isMeaningfulReportText(value) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return false;
+  }
+  if (/^(undefined|null|NaN)$/i.test(text)) {
+    return false;
+  }
+  if (/^暂无/.test(text)) {
+    return false;
+  }
+  const compact = text.replace(/[：:；;,，。、\s/·|｜\-—_]/g, "");
+  if (!compact) {
+    return false;
+  }
+  const placeholderPatterns = [
+    /^公式适用结构风险$/,
+    /^选题强度制作要求$/,
+    /^模板$/,
+    /^规则$/,
+    /^风险$/,
+    /^低置信度规则$/,
+  ];
+  return !placeholderPatterns.some((pattern) => pattern.test(compact));
+}
+
 function renderPublicList(items, emptyText = "暂无明确结论。") {
-  const values = normalizeItems(items).map(formatReportValue).filter(Boolean);
+  const seen = new Set();
+  const values = normalizeItems(items)
+    .map(formatReportValue)
+    .map((item) => item.replace(/\s+/g, " ").trim())
+    .filter(isMeaningfulReportText)
+    .filter((item) => {
+      if (seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      return true;
+    });
   if (!values.length) {
     return `<p class="muted compact-copy">${escapeHtml(emptyText)}</p>`;
   }
   return `<ul class="public-report-list">${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function publicValueHasContent(value) {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => publicValueHasContent(item));
+  }
+  if (typeof value === "object") {
+    return Object.values(value).some((item) => publicValueHasContent(item));
+  }
+  return isMeaningfulReportText(value);
 }
 
 function renderSegmentSampleList(items, metricKey, metricLabel, emptyText = "暂无样本。") {
@@ -769,7 +1176,7 @@ function renderLlmStatus(llm) {
   }
 }
 
-function sortProfileItems(items, sortBy) {
+function sortCreatorSampleViewItems(items, sortBy) {
   const key = ["like_count", "comment_count", "share_count", "collect_count", "engagement_score", "create_time"].includes(sortBy)
     ? sortBy
     : "like_count";
@@ -780,7 +1187,7 @@ function sortProfileItems(items, sortBy) {
   });
 }
 
-function filterProfileItems(items, filterBy) {
+function filterCreatorSampleViewItems(items, filterBy) {
   const filter = ["all", "buildable", "metadata_only", "has_frames", "ready_evidence"].includes(filterBy)
     ? filterBy
     : "all";
@@ -788,7 +1195,7 @@ function filterProfileItems(items, filterBy) {
     return [...items];
   }
   return items.filter((item) => {
-    if (filter === "buildable") return isProfileItemBuildable(item);
+    if (filter === "buildable") return isSampleViewItemBuildable(item);
     if (filter === "metadata_only") return !item.understanding_level || item.understanding_level === "metadata_only";
     if (filter === "has_frames") return Boolean(item.has_frames);
     if (filter === "ready_evidence") return profileEvidenceScore(item) >= 2;
@@ -796,7 +1203,7 @@ function filterProfileItems(items, filterBy) {
   });
 }
 
-function filterProfileItemsByMedia(items, mediaType) {
+function filterCreatorSampleViewItemsByMedia(items, mediaType) {
   const filter = ["all", "video", "image", "unknown"].includes(mediaType) ? mediaType : "all";
   if (filter === "all") {
     return [...items];
@@ -810,20 +1217,20 @@ function filterProfileItemsByMedia(items, mediaType) {
   });
 }
 
-function visibleProfileItems() {
-  const mediaFiltered = filterProfileItemsByMedia(profileItems, profileMediaFilter?.value || "all");
-  return sortProfileItems(filterProfileItems(mediaFiltered, profileEvidenceFilter?.value || "all"), profileSort?.value || "like_count");
+function visibleCreatorSampleViewItems() {
+  const mediaFiltered = filterCreatorSampleViewItemsByMedia(activeCreatorSampleViewItems(), profileMediaFilter?.value || "all");
+  return sortCreatorSampleViewItems(filterCreatorSampleViewItems(mediaFiltered, profileEvidenceFilter?.value || "all"), profileSort?.value || "like_count");
 }
 
-function selectedProfileItems() {
-  return profileItems.filter((item) => profileSelectedKeys.has(profileItemKey(item)));
+function selectedCreatorSampleViewItems() {
+  return activeCreatorSampleViewItems().filter((item) => profileSelectedKeys.has(sampleViewItemKey(item)));
 }
 
-function profileItemKey(item) {
+function sampleViewItemKey(item) {
   return item?.sample_id || item?.aweme_id || item?.case_id || item?.source_url || "";
 }
 
-function profileItemMatchesKeySet(item, keySet) {
+function sampleViewItemMatchesKeySet(item, keySet) {
   return [
     item?.sample_id,
     item?.aweme_id,
@@ -853,6 +1260,26 @@ function activeProfileImportMode() {
 
 function creatorCloneUnifiedInputValue() {
   return String(profileQuickInput?.value || "").trim();
+}
+
+function setCreatorCloneRestoredInput(value = "") {
+  const restoredValue = String(value || "").trim();
+  profileQuickInputRestoredValue = restoredValue;
+  if (profileQuickInput) {
+    profileQuickInput.value = restoredValue;
+  }
+}
+
+function clearCreatorCloneUnifiedInput() {
+  if (profileQuickInput) {
+    profileQuickInput.value = "";
+  }
+  profileQuickInputRestoredValue = "";
+}
+
+function hasPendingQuickImportInput() {
+  const value = creatorCloneUnifiedInputValue();
+  return Boolean(value && value !== profileQuickInputRestoredValue);
 }
 
 function hasCreatorCloneImportInput() {
@@ -908,35 +1335,63 @@ function syncUnifiedInputToImportFields(mode) {
   }
 }
 
-function isProfileItemBuildable(item) {
+function isSampleViewItemBuildable(item) {
   return Boolean(item?.aweme_id) && item?.can_build_case !== false && !["image", "text"].includes(item?.media_type || "");
 }
 
-function hasPendingEnrichment(items = selectedProfileItems()) {
-  return normalizeItems(items).some((item) => isProfileItemBuildable(item) && !item.case_id && !item.has_frames);
+function hasPendingEnrichment(items = selectedCreatorSampleViewItems()) {
+  return normalizeItems(items).some((item) => isSampleViewItemBuildable(item) && !item.case_id && !item.has_frames);
+}
+
+function applyCreatorIntelligencePayload(payload = {}) {
+  const intelligence = payload?.creator_intelligence || payload?.set?.creator_intelligence || null;
+  const nextProject = intelligence?.project || payload?.project || creatorProjectFromCloneSet(payload?.set) || currentCreatorIntelligenceProject;
+  const previousProjectId = currentCreatorIntelligenceProject?.project_id || "";
+  const nextProjectId = nextProject?.project_id || "";
+  const projectChanged = previousProjectId && nextProjectId && previousProjectId !== nextProjectId;
+  currentCreatorIntelligenceProject = nextProject;
+  const incomingStrategy = intelligence?.strategy_output || payload?.strategy_output || null;
+  currentCreatorIntelligenceStrategy = incomingStrategy || (projectChanged ? null : currentCreatorIntelligenceStrategy);
+  currentCreatorIntelligenceWorkflow = intelligence?.workflow || payload?.workflow || null;
+  currentCreatorIntelligenceBehavior = intelligence?.behavior_model || payload?.behavior_model || null;
+}
+
+function workflowStateFromCreatorIntelligence() {
+  return currentCreatorIntelligenceWorkflow?.state || "";
+}
+
+function numberFromWorkflow(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function workflowUiState() {
+  return currentCreatorIntelligenceWorkflow?.ui || {};
+}
+
+function workflowNextAction() {
+  return workflowUiState().next_action || currentCreatorIntelligenceWorkflow?.next_action || null;
+}
+
+function workflowNextCommand() {
+  return workflowNextAction()?.command || "";
+}
+
+function wizardStateFromWorkflowState(workflowState) {
+  void workflowState;
+  return workflowNextAction()?.state || "";
+}
+
+function getCreatorCloneWizardStateFromWorkflow() {
+  return wizardStateFromWorkflowState(workflowStateFromCreatorIntelligence());
 }
 
 function getCreatorCloneWizardState() {
-  if (currentCreatorCloneResult) {
-    return "EXPORT_READY";
+  const workflowState = getCreatorCloneWizardStateFromWorkflow();
+  if (workflowState) {
+    return workflowState;
   }
-  if (creatorCloneDistillRunning) {
-    return "DISTILLING";
-  }
-  if (creatorCloneEnrichmentRunning) {
-    return "ENRICHING";
-  }
-  if (!profileItems.length) {
-    return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
-  }
-  const selected = selectedProfileItems();
-  if (!selected.length) {
-    return recommendedProfileSampleMix().length ? "RECOMMENDED_READY" : "POOL_READY";
-  }
-  if (hasPendingEnrichment(selected)) {
-    return "ENRICH_READY";
-  }
-  return "DISTILL_READY";
+  return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
 }
 
 function getWizardStep() {
@@ -944,38 +1399,20 @@ function getWizardStep() {
 }
 
 function creatorCloneStateStepIndex(state = getCreatorCloneWizardState()) {
-  return {
-    IMPORT_EMPTY: 0,
-    IMPORT_READY: 0,
-    POOL_EMPTY: 1,
-    POOL_READY: 1,
-    RECOMMENDED_READY: 2,
-    SELECT_EMPTY: 2,
-    SELECT_TO_ENRICH: 2,
-    SELECT_TO_DISTILL: 2,
-    SAMPLE_SELECTED: 2,
-    ENRICH_EMPTY: 3,
-    ENRICH_READY: 3,
-    ENRICH_DONE: 3,
-    ENRICHING: 3,
-    DISTILL_BLOCKED: 4,
-    DISTILL_READY: 4,
-    BATCH_DISTILL_READY: 4,
-    DISTILLING: 4,
-    EXPORT_EMPTY: 5,
-    EXPORT_READY: 5,
-  }[state] ?? 0;
+  const uiStep = workflowUiState().step_index;
+  if (uiStep !== undefined && uiStep !== null) {
+    return Number(uiStep) || 0;
+  }
+  void state;
+  return 0;
 }
 
 function getCreatorCloneStage() {
-  return {
-    0: "import",
-    1: "pool",
-    2: "select",
-    3: "enrich",
-    4: "distill",
-    5: "export",
-  }[creatorCloneStateStepIndex()] || "import";
+  const engineStage = workflowUiState().stage;
+  if (engineStage) {
+    return normalizeProfileStage(engineStage);
+  }
+  return "import";
 }
 
 function stageIndexFromName(stage) {
@@ -997,13 +1434,36 @@ function setProfileStageView(stage, {scroll = false} = {}) {
   profileStageView = normalizeProfileStage(stage);
   rememberRecentProfileStage(profileStageView);
   renderProfileStageView();
+  renderCreatorCloneStageChrome();
   if (scroll) {
     document.querySelector(".profile-main-flow")?.scrollIntoView({behavior: "smooth", block: "start"});
   }
 }
 
+function activeProfileStage() {
+  if (hasPendingQuickImportInput()) {
+    return "import";
+  }
+  return normalizeProfileStage(profileStageView || workflowUiState().stage || getCreatorCloneStage());
+}
+
+function lockedProfileNavigationStage() {
+  if (creatorCloneEnrichmentRunning) {
+    return "enrich";
+  }
+  if (creatorCloneDistillRunning) {
+    return "distill";
+  }
+  return "";
+}
+
+function canNavigateProfileStage(stage) {
+  const lockedStage = lockedProfileNavigationStage();
+  return !lockedStage || normalizeProfileStage(stage) === lockedStage;
+}
+
 function renderProfileStageView() {
-  const activeStage = normalizeProfileStage(profileStageView || getCreatorCloneStage());
+  const activeStage = activeProfileStage();
   profileStageSections.forEach((section) => {
     const stages = String(section.dataset.profileStageSection || "").split(/\s+/).filter(Boolean);
     const isActive = stages.includes(activeStage);
@@ -1013,7 +1473,7 @@ function renderProfileStageView() {
     }
   });
   if (profileResultsCard) {
-    const shouldShowResultContainer = activeStage !== "import" && (profileItems.length || currentCloneSetId || currentCreatorCloneResult);
+    const shouldShowResultContainer = activeStage !== "import" && (activeCreatorSampleViewItems().length || currentCloneSetId || currentCreatorCloneResult);
     profileResultsCard.classList.toggle("hidden", !shouldShowResultContainer);
   }
 }
@@ -1028,143 +1488,121 @@ function syncProfileStageToWizard({scroll = false} = {}) {
   setProfileStageView(getCreatorCloneStage(), {scroll});
 }
 
-function creatorCloneStateMeta(state = getCreatorCloneWizardState()) {
-  const selected = selectedProfileItems();
-  const recommended = recommendedProfileSampleMix();
-  const buildable = selected.filter(isProfileItemBuildable);
-  const metas = {
-    IMPORT_EMPTY: {
+function creatorCloneStageMeta(stage = activeProfileStage()) {
+  const items = activeCreatorSampleViewItems();
+  const selected = selectedCreatorSampleViewItems();
+  const selectedCount = selected.length;
+  const pendingEvidence = hasPendingEnrichment(selected);
+  const hasStrategyOutput = Boolean(currentCreatorIntelligenceStrategy || currentCreatorCloneResult);
+  const actionDisabled = creatorCloneNextActionRunning;
+  if (stage === "import") {
+    return {
       step: "当前步骤：导入素材",
       button: "下一步：开始导入素材",
-      summary: "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。",
-    },
-    IMPORT_READY: {
-      step: "当前步骤：导入素材",
-      button: "下一步：开始导入素材",
-      summary: "已检测到导入内容，系统会自动选择主页扫描、作品链接、JSON/CSV 或 Case 导入。",
-    },
-    POOL_EMPTY: {
-      step: "当前步骤：构建素材池",
-      button: "返回导入素材",
-      summary: "还没有素材池。请先导入主页、作品链接、JSON/CSV 或已有 Case。",
+      command: "import_input",
+      summary: hasPendingQuickImportInput()
+        ? "检测到新的输入内容，点击主按钮会导入新的素材池。"
+        : "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。",
       disabled: false,
-    },
-    POOL_READY: {
+    };
+  }
+  if (stage === "pool") {
+    return {
       step: "当前步骤：构建素材池",
-      button: "下一步：使用推荐样本继续",
-      summary: `已导入 ${formatNumber(profileItems.length)} 条素材，可使用推荐组合继续，或展开手动调整样本。`,
-    },
-    RECOMMENDED_READY: {
-      step: "当前步骤：选择 N 条样本",
-      button: "下一步：使用推荐样本继续",
-      summary: `已导入 ${formatNumber(profileItems.length)} 条素材，推荐组合包含 ${formatNumber(recommended.length)} 条样本。`,
-    },
-    SELECT_EMPTY: {
-      step: "当前步骤：选择 N 条样本",
-      button: "请先选择样本",
-      summary: "在素材列表中勾选代表样本，或使用“推荐组合 / 高赞 5 条”等快捷入口。",
-      disabled: true,
-    },
-    SELECT_TO_ENRICH: {
-      step: "当前步骤：选择 N 条样本",
-      button: "下一步：开始富化证据",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
-    },
-    SELECT_TO_DISTILL: {
-      step: "当前步骤：选择 N 条样本",
-      button: selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES ? "下一步：进入分批蒸馏" : "下一步：进入大模型蒸馏",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，当前证据可进入蒸馏。`,
-    },
-    SAMPLE_SELECTED: {
+      button: "下一步：选择代表样本",
+      command: "show_select",
+      summary: items.length
+        ? `已整理 ${items.length} 条素材。下一步从素材池选择要富化和蒸馏的代表样本。`
+        : "素材池为空，请先导入主页、作品链接或素材清单。",
+      disabled: !items.length || actionDisabled,
+    };
+  }
+  if (stage === "select") {
+    return {
+      step: "当前步骤：选择代表样本",
+      button: selectedCount ? "下一步：开始富化证据" : "请先选择样本",
+      command: selectedCount ? "build_evidence" : "wait",
+      summary: selectedCount
+        ? `已选择 ${selectedCount} 条样本。下一步生成素材包、关键帧、OCR/ASR 等证据。`
+        : "从素材池勾选代表样本，或使用快捷入口选择高赞、高评、高收藏样本。",
+      disabled: !selectedCount || actionDisabled,
+    };
+  }
+  if (stage === "enrich") {
+    if (!selectedCount) {
+      return {
+        step: "当前步骤：富化证据",
+        button: "返回选择样本",
+        command: "show_select",
+        summary: "还没有选中样本，请先回到样本选择。",
+        disabled: actionDisabled,
+      };
+    }
+    if (pendingEvidence) {
+      return {
+        step: "当前步骤：富化证据",
+        button: "下一步：开始富化证据",
+        command: "build_evidence",
+        summary: "部分样本还缺素材包或关键帧，点击后继续富化未完成项。",
+        disabled: actionDisabled,
+      };
+    }
+    return {
       step: "当前步骤：富化证据",
-      button: "下一步：开始富化证据",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条可富化视频。`,
-    },
-    ENRICH_EMPTY: {
-      step: "当前步骤：富化证据",
-      button: "返回选择样本",
-      summary: "还没有选中样本。请先回到素材列表选择代表样本。",
-    },
-    ENRICH_READY: {
-      step: "当前步骤：富化证据",
-      button: "下一步：开始富化证据",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，其中 ${formatNumber(buildable.length)} 条待富化视频。`,
-    },
-    ENRICH_DONE: {
-      step: "当前步骤：富化证据",
-      button: selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES ? "下一步：进入分批蒸馏" : "下一步：进入大模型蒸馏",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，当前没有待富化视频，可进入蒸馏。`,
-    },
-    ENRICHING: {
-      step: "当前步骤：富化证据",
-      button: "正在富化证据",
-      summary: "当前任务：Creator Clone 富化队列。完成后会进入大模型蒸馏。",
-    },
-    DISTILL_BLOCKED: {
+      button: "下一步：进入大模型蒸馏",
+      command: "show_distill",
+      summary: "已选样本的基础证据已准备好，可以进入创作者蒸馏。",
+      disabled: actionDisabled,
+    };
+  }
+  if (stage === "distill") {
+    if (!selectedCount) {
+      return {
+        step: "当前步骤：大模型蒸馏",
+        button: "返回选择样本",
+        command: "show_select",
+        summary: "还没有选中样本，请先选择要蒸馏的代表样本。",
+        disabled: actionDisabled,
+      };
+    }
+    const isBatch = selectedCount > CREATOR_CLONE_MAX_DISTILL_SAMPLES;
+    return {
       step: "当前步骤：大模型蒸馏",
-      button: "返回选择样本",
-      summary: "还没有可蒸馏样本。请先选择代表样本，必要时先完成证据富化。",
-    },
-    DISTILL_READY: {
-      step: "当前步骤：大模型蒸馏",
-      button: "下一步：开始大模型蒸馏",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，当前证据可进入蒸馏。`,
-    },
-    BATCH_DISTILL_READY: {
-      step: "当前步骤：大模型蒸馏",
-      button: "下一步：开始分批蒸馏",
-      summary: `已选择 ${formatNumber(selected.length)} 条样本，超过单次蒸馏上限，将按批次蒸馏后汇总。`,
-    },
-    DISTILLING: {
-      step: "当前步骤：大模型蒸馏",
-      button: "正在大模型蒸馏",
-      summary: "当前任务：Creator Clone 大模型蒸馏。完成后会展示可视化报告。",
-    },
-    EXPORT_EMPTY: {
-      step: "当前步骤：可视化输出",
-      button: "返回大模型蒸馏",
-      summary: "还没有生成创作者蒸馏报告。请先完成大模型蒸馏，或查看已生成的 Prompt。",
-    },
-    EXPORT_READY: {
-      step: "当前步骤：可视化输出",
-      button: "下一步：下载报告",
-      summary: "创作者克隆报告已生成，可下载报告或复制规则继续使用。",
-    },
+      button: isBatch ? "下一步：分批蒸馏已选样本" : "下一步：执行蒸馏",
+      command: isBatch ? "start_batch_distillation" : "start_distillation",
+      summary: isBatch
+        ? `已选 ${selectedCount} 条，超过单次上限 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条，将按批次蒸馏后汇总。`
+        : `已选 ${selectedCount} 条，点击后生成创作者蒸馏报告。`,
+      disabled: actionDisabled,
+    };
+  }
+  if (stage === "export") {
+    return {
+      step: "当前步骤：查看报告",
+      button: hasStrategyOutput ? "打开蒸馏报告" : "返回大模型蒸馏",
+      command: hasStrategyOutput ? "export_report" : "show_distill",
+      summary: hasStrategyOutput
+        ? "创作者蒸馏报告已生成，可以打开查看或继续调整样本重跑。"
+        : "还没有可展示的蒸馏报告，请先完成大模型蒸馏。",
+      disabled: actionDisabled,
+    };
+  }
+  return {
+    step: "当前步骤：导入素材",
+    button: "下一步：开始导入素材",
+    command: "import_input",
+    summary: "输入主页 URL、作品链接、aweme_id 或分享文案后，点击主按钮开始。",
+    disabled: false,
   };
-  return metas[state] || metas.IMPORT_EMPTY;
+}
+
+function creatorCloneStateMeta(state = getCreatorCloneWizardState()) {
+  void state;
+  return creatorCloneStageMeta();
 }
 
 function creatorCloneActionStateForCurrentView(state = getCreatorCloneWizardState()) {
-  if (["ENRICHING", "DISTILLING"].includes(state)) {
-    return state;
-  }
-  const activeStage = normalizeProfileStage(profileStageView);
-  const selected = selectedProfileItems();
-  if (activeStage === "import") {
-    return hasCreatorCloneImportInput() ? "IMPORT_READY" : "IMPORT_EMPTY";
-  }
-  if (activeStage === "pool") {
-    if (!profileItems.length) return "POOL_EMPTY";
-    return recommendedProfileSampleMix().length ? "RECOMMENDED_READY" : "POOL_READY";
-  }
-  if (activeStage === "select") {
-    if (!profileItems.length) return "POOL_EMPTY";
-    if (!selected.length) return "SELECT_EMPTY";
-    return hasPendingEnrichment(selected) ? "SELECT_TO_ENRICH" : "SELECT_TO_DISTILL";
-  }
-  if (activeStage === "enrich") {
-    if (!selected.length) return "ENRICH_EMPTY";
-    return hasPendingEnrichment(selected) ? "ENRICH_READY" : "ENRICH_DONE";
-  }
-  if (activeStage === "distill") {
-    if (!selected.length) return "DISTILL_BLOCKED";
-    if (hasPendingEnrichment(selected)) return "ENRICH_READY";
-    return selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES ? "BATCH_DISTILL_READY" : "DISTILL_READY";
-  }
-  if (activeStage === "export") {
-    return currentCreatorCloneResult ? "EXPORT_READY" : "EXPORT_EMPTY";
-  }
-  return state;
+  return workflowNextAction()?.state || state;
 }
 
 function renderCreatorCloneRecommendation() {
@@ -1177,25 +1615,30 @@ function renderCreatorCloneRecommendation() {
 
 function renderWizardPrimaryAction(state = creatorCloneActionStateForCurrentView()) {
   const meta = creatorCloneStateMeta(state);
+  const command = meta.command || "";
   if (creatorCloneNextButton) {
     creatorCloneNextButton.textContent = creatorCloneNextActionRunning ? "处理中..." : meta.button;
-    creatorCloneNextButton.dataset.creatorCloneAction = state;
-    creatorCloneNextButton.disabled = creatorCloneNextActionRunning || ["ENRICHING", "DISTILLING"].includes(state) || Boolean(meta.disabled);
+    creatorCloneNextButton.dataset.creatorCloneAction = command;
+    creatorCloneNextButton.disabled = creatorCloneNextActionRunning || command === "wait" || Boolean(meta.disabled);
   }
 }
 
-function renderCreatorCloneNextAction() {
+function renderCreatorCloneStageChrome() {
   const wizardState = getCreatorCloneWizardState();
   const state = creatorCloneActionStateForCurrentView(wizardState);
   const meta = creatorCloneStateMeta(state);
-  const progressIndex = creatorCloneStateStepIndex(wizardState);
-  const activeStage = normalizeProfileStage(profileStageView || getCreatorCloneStage());
+  const activeStage = activeProfileStage();
   const activeStageIndex = stageIndexFromName(activeStage);
+  const lockedStage = lockedProfileNavigationStage();
   creatorCloneFlowSteps.forEach((step) => {
     const stage = normalizeProfileStage(step.dataset.profileStageNav || "");
     const index = stageIndexFromName(stage);
+    const locked = Boolean(lockedStage && stage !== lockedStage);
     step.classList.toggle("active", index === activeStageIndex);
-    step.classList.toggle("completed", index < progressIndex);
+    step.classList.toggle("completed", index < activeStageIndex);
+    step.classList.toggle("locked", locked);
+    step.disabled = locked;
+    step.title = locked ? "当前任务正在运行，完成后会自动进入下一步。" : "";
     step.setAttribute("aria-current", index === activeStageIndex ? "step" : "false");
   });
   if (creatorCloneCurrentStep) {
@@ -1209,6 +1652,10 @@ function renderCreatorCloneNextAction() {
   }
   renderWizardPrimaryAction(state);
   renderCreatorCloneRecommendation();
+}
+
+function renderCreatorCloneNextAction() {
+  renderCreatorCloneStageChrome();
   renderProfileStageView();
 }
 
@@ -1224,20 +1671,12 @@ function renderCreatorCloneOverview(summary = {}) {
   if (!profileSummary) {
     return;
   }
-  const selected = selectedProfileItems();
-  const buildable = profileItems.filter(isProfileItemBuildable);
-  const selectedBuildable = selected.filter(isProfileItemBuildable);
-  const coverage = profileEvidenceCoverageSummary(profileItems);
-  const nextAction = !profileItems.length
-    ? "先导入一组对标素材"
-    : !selected.length
-      ? `选择 3-${PROFILE_BUILD_MAX_ITEMS} 条样本`
-      : selectedBuildable.some((item) => !item.has_frames)
-      ? "开始富化证据"
-      : selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES
-        ? "可以开始分批大模型蒸馏"
-        : "可以开始大模型蒸馏";
-  const total = summary.scanned_count || profileItems.length;
+  const items = activeCreatorSampleViewItems();
+  const selected = selectedCreatorSampleViewItems();
+  const buildable = items.filter(isSampleViewItemBuildable);
+  const coverage = profileEvidenceCoverageSummary(items);
+  const nextAction = creatorCloneStateMeta().summary || "等待当前步骤完成。";
+  const total = summary.scanned_count || items.length;
   profileSummary.innerHTML = `
     <article><span>素材数量</span><strong>${formatNumber(total)}</strong></article>
     <article><span>已选样本</span><strong>${formatNumber(selected.length)}</strong></article>
@@ -1250,8 +1689,8 @@ function renderCreatorCloneOverview(summary = {}) {
 
 // Creator Clone: selection
 function updateCreatorCloneSelectionStatus() {
-  const selected = selectedProfileItems();
-  const buildable = selected.filter(isProfileItemBuildable);
+  const selected = selectedCreatorSampleViewItems();
+  const buildable = selected.filter(isSampleViewItemBuildable);
   const unbuildableCount = selected.length - buildable.length;
   const counts = selected.reduce(
     (acc, item) => {
@@ -1312,22 +1751,22 @@ function updateCreatorCloneSelectionStatus() {
 }
 
 function selectedSampleReason(item) {
-  const key = profileItemKey(item);
+  const key = sampleViewItemKey(item);
   if (!key) {
     return "手动选择";
   }
-  const highestLikes = topProfileItemsBy("like_count", 3).some((candidate) => profileItemKey(candidate) === key);
-  const highestComments = topProfileItemsBy("comment_count", 3).some((candidate) => profileItemKey(candidate) === key);
-  const highestShares = topProfileItemsBy("share_count", 3).some((candidate) => profileItemKey(candidate) === key);
-  const highestCollects = topProfileItemsBy("collect_count", 3).some((candidate) => profileItemKey(candidate) === key);
-  const newest = topProfileItemsBy("create_time", 3).some((candidate) => profileItemKey(candidate) === key);
+  const highestLikes = topCreatorSampleViewItemsBy("like_count", 3).some((candidate) => sampleViewItemKey(candidate) === key);
+  const highestComments = topCreatorSampleViewItemsBy("comment_count", 3).some((candidate) => sampleViewItemKey(candidate) === key);
+  const highestShares = topCreatorSampleViewItemsBy("share_count", 3).some((candidate) => sampleViewItemKey(candidate) === key);
+  const highestCollects = topCreatorSampleViewItemsBy("collect_count", 3).some((candidate) => sampleViewItemKey(candidate) === key);
+  const newest = topCreatorSampleViewItemsBy("create_time", 3).some((candidate) => sampleViewItemKey(candidate) === key);
   const reasons = [];
   if (highestLikes) reasons.push("高赞");
   if (highestComments) reasons.push("高评");
   if (highestShares) reasons.push("高分享");
   if (highestCollects) reasons.push("高收藏");
   if (newest) reasons.push("最新");
-  if (isProfileItemBuildable(item) && !item.has_frames) reasons.push("待富化");
+  if (isSampleViewItemBuildable(item) && !item.has_frames) reasons.push("待富化");
   return reasons.join(" / ") || "手动选择";
 }
 
@@ -1354,7 +1793,7 @@ function profileEvidenceText(item) {
 function profileSampleMetaLine(item) {
   const typeLabel = {video: "视频", image: "图文", unknown: "未知"}[item.media_type] || "未知";
   const evidence = `证据 ${profileEvidenceScore(item)}/5`;
-  const buildable = isProfileItemBuildable(item) ? "可富化" : "参考样本";
+  const buildable = isSampleViewItemBuildable(item) ? "可富化" : "参考样本";
   return [
     selectedSampleReason(item),
     profileMetricText(item),
@@ -1441,7 +1880,7 @@ function renderProfileEvidenceQueueProgress(result = {}) {
     return;
   }
   const pipelineSummary = result.pipeline_summary || {};
-  const selectedCount = Number(pipelineSummary.selected_count || selectedProfileItems().length || 0);
+  const selectedCount = Number(pipelineSummary.selected_count || selectedCreatorSampleViewItems().length || 0);
   const downloadableCount = Number(pipelineSummary.downloadable_count || 0);
   const referenceOnlyCount = Number(pipelineSummary.reference_only_count || 0);
   const downloadedCount = Number(pipelineSummary.downloaded_count || 0);
@@ -1572,13 +2011,13 @@ function renderProfileDecisionBoard(payload) {
   if (!profileDecisionBoard) {
     return;
   }
-  const items = normalizeItems(profileItems);
+  const items = activeCreatorSampleViewItems();
   if (!items.length) {
     profileDecisionBoard.classList.add("hidden");
     profileDecisionBoard.innerHTML = "";
     return;
   }
-  const buildable = items.filter(isProfileItemBuildable);
+  const buildable = items.filter(isSampleViewItemBuildable);
   const videoCount = items.filter((item) => item.media_type === "video").length;
   const imageCount = items.filter((item) => item.media_type === "image").length;
   const unknownCount = items.filter((item) => item.media_type === "unknown").length;
@@ -1587,10 +2026,10 @@ function renderProfileDecisionBoard(payload) {
   const profileMeta = payload?.set?.profile_metadata || payload?.summary?.profile_metadata || {};
   const creatorName = profileMeta.nickname || payload?.set?.creator_name || "当前账号";
   const evidenceText = profileEvidenceCoverageSummary(items);
-  const topLike = topProfileItemsBy("like_count", 1)[0];
-  const topComment = topProfileItemsBy("comment_count", 1)[0];
-  const topShare = topProfileItemsBy("share_count", 1)[0];
-  const latest = topProfileItemsBy("create_time", 1)[0];
+  const topLike = topCreatorSampleViewItemsBy("like_count", 1)[0];
+  const topComment = topCreatorSampleViewItemsBy("comment_count", 1)[0];
+  const topShare = topCreatorSampleViewItemsBy("share_count", 1)[0];
+  const latest = topCreatorSampleViewItemsBy("create_time", 1)[0];
   const qualityText = metricCount
     ? `${formatNumber(metricCount)}/${formatNumber(items.length)} 条带互动数据，可按点赞、评论、分享、收藏排序。`
     : "互动指标不足，建议改用 JSON / CSV 或本机 Chrome 辅助补充。";
@@ -1644,8 +2083,9 @@ function renderProfileSegmentsPreview(segments) {
   if (!profileSegmentsPreview) {
     return;
   }
-  const latestItems = profileItems.length
-    ? sortProfileItems(profileItems, "create_time").slice(0, 5).map((item) => ({
+  const items = activeCreatorSampleViewItems();
+  const latestItems = items.length
+    ? sortCreatorSampleViewItems(items, "create_time").slice(0, 5).map((item) => ({
         ...item,
         metric_value: item.create_time || "",
       }))
@@ -1714,6 +2154,8 @@ function renderProfileResults(payload) {
   profileScanPayload = payload;
   currentCreatorCloneResult = null;
   currentDistillPrompt = "";
+  currentCreatorIntelligenceStrategy = null;
+  applyCreatorIntelligencePayload(payload);
   creatorCloneResultCard?.classList.add("hidden");
   const cloneSet = payload.set || null;
   currentCloneSetId = cloneSet?.set_id || "";
@@ -1724,11 +2166,11 @@ function renderProfileResults(payload) {
   if (currentCloneSetId) {
     rememberRecentCreatorCloneSetId(currentCloneSetId);
   }
-  profileItems = normalizeItems(payload.items || cloneSet?.samples);
+  profileSampleViewItems = normalizeItems(payload.items || cloneSet?.samples);
   const persistedSelected = normalizeItems(cloneSet?.selected_sample_ids);
   profileSelectedKeys = persistedSelected.length
     ? new Set(persistedSelected)
-    : new Set([...profileSelectedKeys].filter((key) => profileItems.some((item) => profileItemKey(item) === key)));
+    : new Set([...profileSelectedKeys].filter((key) => profileSampleViewItems.some((item) => sampleViewItemKey(item) === key)));
   profileResultsCard.classList.remove("hidden");
   profileQueueCard.classList.add("hidden");
   profileProviderBadge.textContent = cloneSet ? "creator clone lab" : (payload.provider || "profile");
@@ -1747,6 +2189,18 @@ function renderProfileResults(payload) {
   } else {
     renderProfileStageView();
   }
+  const restoredStrategy = payload.creator_intelligence?.strategy_output || null;
+  const workflowState = payload.creator_intelligence?.workflow?.state || "";
+  if (restoredStrategy && workflowState === "DONE") {
+    renderCreatorCloneResult(
+      creatorCloneResultFromStrategyOutput(restoredStrategy),
+      cloneSet,
+      currentDistillPrompt,
+      payload.exports || {},
+      {scroll: false},
+    );
+  }
+  clearCreatorCloneUnifiedInput();
 }
 
 function renderProfileCaptureAudit(audit) {
@@ -1884,7 +2338,7 @@ function cloneSummaryFromSet(set) {
     avg_like_count: averageMetric(samples, "like_count"),
     avg_comment_count: averageMetric(samples, "comment_count"),
     avg_share_count: averageMetric(samples, "share_count"),
-    top_items: sortProfileItems(samples, "engagement_score").slice(0, 3),
+    top_items: sortCreatorSampleViewItems(samples, "engagement_score").slice(0, 3),
     profile_metadata: set.profile_metadata || {},
     content_keywords: [],
   };
@@ -2068,7 +2522,7 @@ function renderProfileTable() {
 }
 
 function renderCompactProfileTable() {
-  const sorted = visibleProfileItems();
+  const sorted = visibleCreatorSampleViewItems();
   if (!sorted.length) {
     profileResultsBody.innerHTML = '<tr><td colspan="7" class="muted">当前筛选下没有素材。可以切换证据筛选，或改用粘贴作品链接、JSON / CSV、已有 Case 导入。</td></tr>';
     return;
@@ -2143,7 +2597,7 @@ function renderProfileTableRow(item) {
   const level = item.understanding_level || "metadata_only";
   const levelLabel = {full: "完整", partial: "部分", metadata_only: "仅元数据"}[level] || "仅元数据";
   const evidenceBadges = profileEvidenceBadges(item);
-  const key = profileItemKey(item);
+  const key = sampleViewItemKey(item);
   const checked = profileSelectedKeys.has(key) ? " checked" : "";
   const awemeLabel = item.aweme_id || item.case_id || item.sample_id || "无";
   const titleText = item.title || item.desc || awemeLabel;
@@ -2159,7 +2613,7 @@ function renderProfileTableRow(item) {
     : "";
   const primaryAction = item.case_id
     ? caseLink
-    : isProfileItemBuildable(item)
+    : isSampleViewItemBuildable(item)
       ? `<button type="button" class="text-button" data-profile-select-action="${escapeHtml(key)}">选入富化</button>`
       : sourceLink || `<span class="muted">仅参考</span>`;
   const metricLines = [
@@ -2462,7 +2916,7 @@ async function runCreatorCloneImportStep() {
       return;
     }
     await scanProfile("public");
-    if (!profileItems.length) {
+    if (!activeCreatorSampleViewItems().length) {
       setActiveImportMode("manual");
       profileManualLinks?.focus();
       profileScanStatus.textContent = profileScanStatus.textContent || "主页导入未得到素材，已切换到作品链接粘贴方式。";
@@ -2473,80 +2927,122 @@ async function runCreatorCloneImportStep() {
   await scanProfile(sourceMode);
 }
 
-function useRecommendedProfileSamples() {
+async function syncCreatorCloneWorkflowSelection() {
+  if (!currentCloneSetId) {
+    return null;
+  }
+  const selectedIds = selectedCreatorSampleViewItems().map(sampleViewItemKey).filter(Boolean);
+  if (!selectedIds.length) {
+    return null;
+  }
+  return dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES", {selected_sample_ids: selectedIds});
+}
+
+async function dispatchCreatorIntelligenceWorkflowAction(action, requestPayload = {}) {
+  if (!currentCloneSetId) {
+    return null;
+  }
+  const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(currentCloneSetId)}/workflow`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      action,
+      ...requestPayload,
+    }),
+  });
+  const responsePayload = await readJsonResponse(response);
+  const profilePayload = profilePayloadFromCreatorIntelligenceProject(responsePayload);
+  applyCreatorIntelligencePayload(profilePayload);
+  if (profilePayload.set) {
+    refreshProfilePoolFromSet(profilePayload.set);
+  }
+  return responsePayload;
+}
+
+async function markCreatorCloneDistillationStarted() {
+  if (!currentCloneSetId) {
+    return null;
+  }
+  await dispatchCreatorIntelligenceWorkflowAction("MARK_EVIDENCE_READY");
+  return dispatchCreatorIntelligenceWorkflowAction("START_DISTILLATION");
+}
+
+async function useRecommendedProfileSamples() {
   const recommended = recommendedProfileSampleMix();
   if (!recommended.length) {
     profileScanStatus.textContent = "当前素材池还没有可推荐样本，请展开“手动调整样本”自行选择。";
     return;
   }
   setProfileSelection(recommended);
+  try {
+    await syncCreatorCloneWorkflowSelection();
+  } catch (error) {
+    profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "样本选择同步失败"}`;
+    return;
+  }
   setProfileStageView("select", {scroll: true});
   profileScanStatus.textContent = `已使用推荐样本继续：${recommended.length} 条。`;
 }
 
 async function handleWizardPrimaryAction() {
-  const state = creatorCloneActionStateForCurrentView();
-  if (["IMPORT_EMPTY", "IMPORT_READY"].includes(state)) {
+  const command = creatorCloneNextButton?.dataset.creatorCloneAction || creatorCloneStateMeta().command || "";
+  if (command === "import_input") {
     await runCreatorCloneImportStep();
-    syncProfileStageToWizard({scroll: true});
+    if (activeCreatorSampleViewItems().length || currentCloneSetId) {
+      setProfileStageView("pool", {scroll: true});
+    } else {
+      setProfileStageView("import", {scroll: true});
+    }
     return;
   }
-  if (state === "POOL_EMPTY") {
-    setProfileStageView("import", {scroll: true});
+  if (command === "show_pool") {
+    setProfileStageView("pool", {scroll: true});
     renderCreatorCloneNextAction();
     return;
   }
-  if (["POOL_READY", "RECOMMENDED_READY"].includes(state)) {
-    useRecommendedProfileSamples();
-    return;
-  }
-  if (state === "SELECT_TO_ENRICH") {
-    setProfileStageView("enrich", {scroll: true});
-    await buildSelectedProfileQueue();
-    return;
-  }
-  if (state === "SELECT_TO_DISTILL") {
-    setProfileStageView("distill", {scroll: true});
-    renderCreatorCloneNextAction();
-    return;
-  }
-  if (state === "ENRICH_EMPTY" || state === "DISTILL_BLOCKED") {
+  if (command === "show_select") {
     setProfileStageView("select", {scroll: true});
     renderCreatorCloneNextAction();
     return;
   }
-  if (["SAMPLE_SELECTED", "ENRICH_READY"].includes(state)) {
+  if (command === "show_distill") {
+    setProfileStageView("distill", {scroll: true});
+    renderCreatorCloneNextAction();
+    return;
+  }
+  if (command === "select_recommended_samples") {
+    await useRecommendedProfileSamples();
+    return;
+  }
+  if (command === "select_samples") {
+    setProfileStageView("select", {scroll: true});
+    renderCreatorCloneNextAction();
+    return;
+  }
+  if (command === "build_evidence") {
     setProfileStageView("enrich", {scroll: true});
     await buildSelectedProfileQueue();
     return;
   }
-  if (state === "ENRICH_DONE") {
-    setProfileStageView("distill", {scroll: true});
-    renderCreatorCloneNextAction();
-    return;
-  }
-  if (state === "DISTILL_READY") {
+  if (command === "start_distillation") {
     setProfileStageView("distill", {scroll: true});
     await distillSelectedCreatorClone();
     return;
   }
-  if (state === "BATCH_DISTILL_READY") {
+  if (command === "start_batch_distillation") {
     setProfileStageView("distill", {scroll: true});
     await batchDistillSelectedCreatorClone({confirm: true});
     return;
   }
-  if (state === "EXPORT_EMPTY") {
-    setProfileStageView("distill", {scroll: true});
-    renderCreatorCloneNextAction();
-    return;
-  }
-  if (state === "EXPORT_READY") {
+  if (command === "export_report") {
     if (downloadCreatorCloneMd?.href && downloadCreatorCloneMd.href !== "#") {
       window.open(downloadCreatorCloneMd.href, "_blank", "noopener,noreferrer");
       return;
     }
     creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
+    return;
   }
+  renderCreatorCloneNextAction();
 }
 
 async function runCreatorCloneNextAction() {
@@ -2554,7 +3050,7 @@ async function runCreatorCloneNextAction() {
 }
 
 function setProfileSelection(items) {
-  const selectedIds = new Set(items.map(profileItemKey));
+  const selectedIds = new Set(items.map(sampleViewItemKey));
   profileSelectedKeys = selectedIds;
   document.querySelectorAll("[data-profile-select]").forEach((input) => {
     input.checked = selectedIds.has(input.value) && !input.disabled;
@@ -2562,8 +3058,8 @@ function setProfileSelection(items) {
   updateCreatorCloneSelectionStatus();
 }
 
-function selectedBuildableProfileItems() {
-  return selectedProfileItems().filter(isProfileItemBuildable);
+function selectedBuildableSampleViewItems() {
+  return selectedCreatorSampleViewItems().filter(isSampleViewItemBuildable);
 }
 
 function queueItemPayload(item) {
@@ -2582,10 +3078,11 @@ function queueItemPayload(item) {
 
 function mergeProfileQueueItems(items) {
   const queueItems = normalizeItems(items);
-  if (!queueItems.length || !profileItems.length) {
+  const baseItems = activeCreatorSampleViewItems();
+  if (!queueItems.length || !baseItems.length) {
     return;
   }
-  profileItems = profileItems.map((item) => {
+  profileSampleViewItems = baseItems.map((item) => {
     const itemKeys = new Set([
       item.sample_id,
       item.aweme_id,
@@ -2593,7 +3090,7 @@ function mergeProfileQueueItems(items) {
       item.source_url,
       item.webpage_url,
     ].filter(Boolean).map(String));
-    const queueItem = queueItems.find((candidate) => profileItemMatchesKeySet(candidate, itemKeys));
+    const queueItem = queueItems.find((candidate) => sampleViewItemMatchesKeySet(candidate, itemKeys));
     if (!queueItem) {
       return item;
     }
@@ -2616,6 +3113,7 @@ function mergeProfileQueueItems(items) {
       understanding_level: caseId ? "partial" : (item.understanding_level || "metadata_only"),
     };
   });
+  syncCreatorProjectSamplesFromViewItems(profileSampleViewItems);
   renderProfileTable();
 }
 
@@ -2732,7 +3230,8 @@ function refreshProfilePoolFromSet(set) {
   if (!set) {
     return;
   }
-  const selectedIds = new Set(selectedProfileItems().map(profileItemKey));
+  applyCreatorIntelligencePayload({set});
+  const selectedIds = new Set(selectedCreatorSampleViewItems().map(sampleViewItemKey));
   currentCloneSetId = set.set_id || currentCloneSetId;
   if (currentCloneSetId) {
     rememberRecentCreatorCloneSetId(currentCloneSetId);
@@ -2741,11 +3240,12 @@ function refreshProfilePoolFromSet(set) {
     profileContentProfile.value = set.content_profile;
   }
   profileScanPayload = {set};
-  profileItems = normalizeItems(set.samples);
+  profileSampleViewItems = normalizeItems(set.samples);
+  syncCreatorProjectSamplesFromViewItems(profileSampleViewItems);
   renderProfileSummary(cloneSummaryFromSet(set) || {});
   renderProfileDecisionBoard({set});
   renderProfileTable();
-  setProfileSelection(profileItems.filter((item) => selectedIds.has(profileItemKey(item))));
+  setProfileSelection(activeCreatorSampleViewItems().filter((item) => selectedIds.has(sampleViewItemKey(item))));
   updateCreatorCloneSelectionStatus();
   const warnings = normalizeItems(set.warnings);
   profileWarnings.classList.toggle("hidden", !warnings.length);
@@ -2756,17 +3256,16 @@ async function pollProfileQueue(jobId) {
   const response = await fetch(`/api/jobs/${jobId}`, {cache: "no-store"});
   const payload = await readJsonResponse(response);
   const job = payload.job;
-  progressBar.style.width = `${job.progress || 0}%`;
-  jobMessage.textContent = `${job.status} · ${job.progress}% · ${job.message || ""}`;
+  renderJobStatus(job);
   renderProfileQueue(job.result_json || {});
   if (job.status === "success") {
-    jobMessage.className = "job-message success";
+    renderJobStatus(job);
     if (job.result_json?.set) {
       refreshProfilePoolFromSet(job.result_json.set);
     }
     updateCreatorCloneSelectionStatus();
     if (profileAutoDistill?.checked) {
-      const selected = selectedProfileItems();
+      const selected = selectedCreatorSampleViewItems();
       if (selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES) {
         setProfileStageView("distill", {scroll: true});
         profileScanStatus.textContent = "样本富化队列完成，正在继续进行分批大模型蒸馏...";
@@ -2799,13 +3298,13 @@ async function buildSelectedProfileQueue() {
   if (creatorCloneEnrichmentRunning) {
     return;
   }
-  const selected = selectedProfileItems();
+  const selected = selectedCreatorSampleViewItems();
   if (!selected.length) {
     profileScanStatus.textContent = `请先选择代表样本。视频样本会下载富化，图文/元数据样本会保存为蒸馏参考。`;
     return;
   }
   setProfileStageView("enrich", {scroll: true});
-  const buildableCount = selected.filter(isProfileItemBuildable).length;
+  const buildableCount = selected.filter(isSampleViewItemBuildable).length;
   const referenceOnlyCount = selected.length - buildableCount;
   if (buildableCount > PROFILE_BUILD_MAX_ITEMS) {
     profileScanStatus.textContent = `当前自用版最多一次富化 ${PROFILE_BUILD_MAX_ITEMS} 条可下载视频，避免误批量下载。`;
@@ -2814,6 +3313,7 @@ async function buildSelectedProfileQueue() {
   setCreatorCloneEnrichmentLocked(true);
   renderCreatorCloneNextAction();
   try {
+    await syncCreatorCloneWorkflowSelection();
     placeJobCard("profile");
     resetJobCard(buildableCount
       ? `创建素材富化队列：视频 ${buildableCount} 条，参考样本 ${referenceOnlyCount} 条。`
@@ -2834,10 +3334,10 @@ async function buildSelectedProfileQueue() {
     renderProfileQueue({items: selected.map((item) => ({
       ...queueItemPayload(item),
       status: "pending",
-      message: isProfileItemBuildable(item) ? "等待下载和素材包生成" : "参考样本等待保留",
-      enrichment_status: isProfileItemBuildable(item) ? "pending" : "skipped",
-      asr_status: isProfileItemBuildable(item) ? "pending" : "skipped",
-      ocr_status: isProfileItemBuildable(item) ? "pending" : "skipped",
+      message: isSampleViewItemBuildable(item) ? "等待下载和素材包生成" : "参考样本等待保留",
+      enrichment_status: isSampleViewItemBuildable(item) ? "pending" : "skipped",
+      asr_status: isSampleViewItemBuildable(item) ? "pending" : "skipped",
+      ocr_status: isSampleViewItemBuildable(item) ? "pending" : "skipped",
       analysis_status: "skipped",
     })), pipeline_summary: {
       selected_count: selected.length,
@@ -2851,7 +3351,7 @@ async function buildSelectedProfileQueue() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         items: selected.map(queueItemPayload),
-        selected_sample_ids: selectedProfileItems().map(profileItemKey),
+        selected_sample_ids: selectedCreatorSampleViewItems().map(sampleViewItemKey),
         auto_enrich: true,
         auto_asr: true,
         auto_ocr: true,
@@ -2864,7 +3364,7 @@ async function buildSelectedProfileQueue() {
     rememberRecentProfileBuildState({
       setId: currentCloneSetId,
       jobId: payload.job_id,
-      selectedSampleIds: selectedProfileItems().map(profileItemKey),
+      selectedSampleIds: selectedCreatorSampleViewItems().map(sampleViewItemKey),
     });
     profileScanStatus.textContent = buildableCount
       ? `已创建样本富化队列：${payload.selected_count} 条；可下载视频会生成素材包，图文/元数据样本会作为蒸馏参考。`
@@ -2882,18 +3382,18 @@ async function buildSelectedProfileQueue() {
   }
 }
 
-function topProfileItemsBy(key, count = 3) {
-  return sortProfileItems(profileItems, key).slice(0, count);
+function topCreatorSampleViewItemsBy(key, count = 3) {
+  return sortCreatorSampleViewItems(activeCreatorSampleViewItems(), key).slice(0, count);
 }
 
-function lowPerformanceProfileItems(count = 3) {
-  return [...profileItems]
+function lowPerformanceCreatorSampleViewItems(count = 3) {
+  return [...activeCreatorSampleViewItems()]
     .sort((left, right) => Number(left.engagement_score || 0) - Number(right.engagement_score || 0))
     .slice(0, count);
 }
 
-function needsEnrichmentProfileItems(count = 5) {
-  return sortProfileItems(profileItems.filter((item) => isProfileItemBuildable(item) && !item.has_frames), "engagement_score").slice(0, count);
+function needsEnrichmentCreatorSampleViewItems(count = 5) {
+  return sortCreatorSampleViewItems(activeCreatorSampleViewItems().filter((item) => isSampleViewItemBuildable(item) && !item.has_frames), "engagement_score").slice(0, count);
 }
 
 function profileEvidenceScore(item) {
@@ -2906,8 +3406,8 @@ function profileEvidenceScore(item) {
   ].filter(Boolean).length;
 }
 
-function readyEvidenceProfileItems(count = 5) {
-  return [...profileItems]
+function readyEvidenceCreatorSampleViewItems(count = 5) {
+  return [...activeCreatorSampleViewItems()]
     .filter((item) => profileEvidenceScore(item) >= 2)
     .sort((left, right) => {
       const scoreDiff = profileEvidenceScore(right) - profileEvidenceScore(left);
@@ -2924,7 +3424,7 @@ function profileDistillReadiness(items) {
       acc.video += item.media_type === "video" ? 1 : 0;
       acc.image += item.media_type === "image" ? 1 : 0;
       acc.unknown += item.media_type === "unknown" ? 1 : 0;
-      acc.buildable += isProfileItemBuildable(item) ? 1 : 0;
+      acc.buildable += isSampleViewItemBuildable(item) ? 1 : 0;
       acc.frames += item.has_frames ? 1 : 0;
       acc.asr += item.has_asr ? 1 : 0;
       acc.ocr += item.has_ocr ? 1 : 0;
@@ -3026,11 +3526,11 @@ function confirmProfileDistillReadiness(selected) {
   );
 }
 
-function dedupeProfileItems(items, limit = 10) {
+function dedupeCreatorSampleViewItems(items, limit = 10) {
   const seen = new Set();
   const deduped = [];
   normalizeItems(items).forEach((item) => {
-    const key = profileItemKey(item);
+    const key = sampleViewItemKey(item);
     if (!key || seen.has(key) || deduped.length >= limit) {
       return;
     }
@@ -3041,14 +3541,14 @@ function dedupeProfileItems(items, limit = 10) {
 }
 
 function recommendedProfileSampleMix() {
-  return dedupeProfileItems(
+  return dedupeCreatorSampleViewItems(
     [
-      ...topProfileItemsBy("like_count", 3),
-      ...topProfileItemsBy("comment_count", 2),
-      ...topProfileItemsBy("share_count", 2),
-      ...topProfileItemsBy("collect_count", 2),
-      ...topProfileItemsBy("create_time", 2),
-      ...lowPerformanceProfileItems(2),
+      ...topCreatorSampleViewItemsBy("like_count", 3),
+      ...topCreatorSampleViewItemsBy("comment_count", 2),
+      ...topCreatorSampleViewItemsBy("share_count", 2),
+      ...topCreatorSampleViewItemsBy("collect_count", 2),
+      ...topCreatorSampleViewItemsBy("create_time", 2),
+      ...lowPerformanceCreatorSampleViewItems(2),
     ],
     10,
   );
@@ -3062,14 +3562,14 @@ function profilePresetItems(preset) {
   if (match) {
     const [, type, countText] = match;
     const count = Math.max(1, Number(countText || 3));
-    if (type === "top_likes") return topProfileItemsBy("like_count", count);
-    if (type === "top_comments") return topProfileItemsBy("comment_count", count);
-    if (type === "top_shares") return topProfileItemsBy("share_count", count);
-    if (type === "top_collects") return topProfileItemsBy("collect_count", count);
-    if (type === "latest") return topProfileItemsBy("create_time", count);
-    if (type === "low_performance") return lowPerformanceProfileItems(count);
-    if (type === "needs_enrichment") return needsEnrichmentProfileItems(count);
-    if (type === "ready_evidence") return readyEvidenceProfileItems(count);
+    if (type === "top_likes") return topCreatorSampleViewItemsBy("like_count", count);
+    if (type === "top_comments") return topCreatorSampleViewItemsBy("comment_count", count);
+    if (type === "top_shares") return topCreatorSampleViewItemsBy("share_count", count);
+    if (type === "top_collects") return topCreatorSampleViewItemsBy("collect_count", count);
+    if (type === "latest") return topCreatorSampleViewItemsBy("create_time", count);
+    if (type === "low_performance") return lowPerformanceCreatorSampleViewItems(count);
+    if (type === "needs_enrichment") return needsEnrichmentCreatorSampleViewItems(count);
+    if (type === "ready_evidence") return readyEvidenceCreatorSampleViewItems(count);
   }
   return [];
 }
@@ -3096,7 +3596,7 @@ function profilePresetLabel(preset) {
 }
 
 function applyProfilePresetSelection(preset) {
-  if (!profileItems.length) {
+  if (!activeCreatorSampleViewItems().length) {
     profileScanStatus.textContent = "请先扫描或导入账号素材清单。";
     return;
   }
@@ -3107,7 +3607,7 @@ function applyProfilePresetSelection(preset) {
 
 function creatorCloneSamplePayload(item) {
   return {
-    sample_id: profileItemKey(item),
+    sample_id: sampleViewItemKey(item),
     source_type: item.source_type || "douyin",
     source_url: item.source_url || item.webpage_url || "",
     aweme_id: item.aweme_id || "",
@@ -3174,37 +3674,518 @@ function renderCompactPerformanceSegments(segments = {}) {
 }
 
 function renderTopicBuckets(buckets) {
-  return renderPublicList(normalizeItems(buckets).map((item) => {
+  const rows = normalizeItems(buckets).map((item) => {
     if (!item || typeof item !== "object") {
       return item;
     }
-    return `${item.name || "选题桶"}：${item.description || ""}；为什么有效：${item.why_it_works || ""}`;
-  }));
+    const name = item.name || item.title || "";
+    const parts = [
+      item.description,
+      item.why_it_works ? `为什么有效：${item.why_it_works}` : "",
+      item.evidence ? `证据：${formatReportValue(item.evidence)}` : "",
+    ].filter(isMeaningfulReportText);
+    return [name, parts.join("；")].filter(isMeaningfulReportText).join("：");
+  }).filter(isMeaningfulReportText);
+  return renderPublicList(rows, "暂无稳定选题方向。");
 }
 
 function renderFormulaCards(formulas) {
-  return renderPublicList(normalizeItems(formulas).map((item) => {
+  const rows = normalizeItems(formulas).map((item) => {
     if (!item || typeof item !== "object") {
       return item;
     }
-    return `${item.name || "公式"}：适用 ${item.when_to_use || ""}；结构 ${formatReportValue(item.beat_structure || [])}；风险 ${formatReportValue(item.risks || [])}`;
-  }));
+    const name = item.name || item.title || item.formula || "";
+    const parts = [
+      item.when_to_use ? `适用：${item.when_to_use}` : "",
+      publicValueHasContent(item.input_material_needed) ? `素材：${formatReportValue(item.input_material_needed)}` : "",
+      publicValueHasContent(item.beat_structure || item.beats || item.structure) ? `结构：${formatReportValue(item.beat_structure || item.beats || item.structure)}` : "",
+      item.expected_metric_strength ? `强项：${item.expected_metric_strength}` : "",
+      publicValueHasContent(item.risks) ? `风险：${formatReportValue(item.risks)}` : "",
+    ].filter(isMeaningfulReportText);
+    return [name, parts.join("；")].filter(isMeaningfulReportText).join("：");
+  }).filter(isMeaningfulReportText);
+  return renderPublicList(rows, "本次没有返回独立公式，建议先从高互动样本中人工提炼 2-3 个可复用拍法。");
 }
 
 function renderCandidateIdeas(ideas) {
-  return renderPublicList(normalizeItems(ideas).map((item) => {
+  const rows = normalizeItems(ideas).map((item) => {
     if (!item || typeof item !== "object") {
       return item;
     }
-    return `${item.title || "选题"}：${item.formula_used || ""}；强度 ${item.likely_strength || ""}；制作要求 ${formatReportValue(item.production_requirements || [])}`;
-  }));
+    const title = item.title || item.idea || item.name || "";
+    const parts = [
+      item.formula_used ? `使用公式：${item.formula_used}` : "",
+      item.why_worth_trying || item.reason ? `理由：${item.why_worth_trying || item.reason}` : "",
+      item.likely_strength ? `强度：${item.likely_strength}` : "",
+      publicValueHasContent(item.production_requirements) ? `制作要求：${formatReportValue(item.production_requirements)}` : "",
+    ].filter(isMeaningfulReportText);
+    return [title, parts.join("；")].filter(isMeaningfulReportText).join("：");
+  }).filter(isMeaningfulReportText);
+  return renderPublicList(rows, "本次没有返回独立选题库，可先基于爆款共性手动生成候选选题。");
+}
+
+function compactReportList(...values) {
+  const rows = [];
+  values.forEach((value) => {
+    normalizeItems(value).forEach((item) => {
+      const text = reportItemPrimaryText(item).trim();
+      if (isMeaningfulReportText(text) && !rows.includes(text)) {
+        rows.push(text);
+      }
+    });
+  });
+  return rows;
+}
+
+function isTechnicalReportNote(value) {
+  return /(LLM|Reduce|Prompt|批次|本地汇总|大模型暂不可用|大模型未配置|重试|超时|失败|fallback|prompt_only)/i.test(String(value || ""));
+}
+
+function trimReportClause(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().replace(/[。；;,，、\s]+$/g, "");
+}
+
+function truncateReportText(value, limit = 120) {
+  const text = trimReportClause(value);
+  return text.length > limit ? `${text.slice(0, limit - 1).trim()}…` : text;
+}
+
+function compactPublicReportText(value, limit = 240) {
+  const chunks = [];
+  normalizeItems(value).forEach((item) => {
+    const text = reportItemPrimaryText(item).replace(/\s+/g, " ").trim();
+    text.split(/[。；;!！?？]\s*/).forEach((part) => {
+      const clean = trimReportClause(part);
+      if (!isMeaningfulReportText(clean) || isTechnicalReportNote(clean) || chunks.includes(clean)) {
+        return;
+      }
+      chunks.push(truncateReportText(clean, 96));
+    });
+  });
+  const summary = chunks.slice(0, 3).join("；");
+  return summary.length > limit ? `${summary.slice(0, limit - 1).trim()}…` : summary;
+}
+
+function compactReportHeadline(value, limit = 120) {
+  for (const item of normalizeItems(value)) {
+    const text = reportItemPrimaryText(item).replace(/\s+/g, " ").trim();
+    for (const part of text.split(/[。；;!！?？]\s*/)) {
+      const clean = trimReportClause(part);
+      if (isMeaningfulReportText(clean) && !isTechnicalReportNote(clean)) {
+        return truncateReportText(clean, limit);
+      }
+    }
+  }
+  return "";
+}
+
+function nonTechnicalReportList(...values) {
+  return compactReportList(...values).filter((item) => !isTechnicalReportNote(item));
+}
+
+function technicalReportNotes(...values) {
+  return compactReportList(...values).filter(isTechnicalReportNote).slice(0, 6);
+}
+
+function reportViewEvidenceCountsFromOverview(overview = {}) {
+  const counts = overview.understanding_counts || {};
+  return {
+    selected_count: Number(overview.selected_count || 0),
+    sample_count: Number(overview.sample_count || 0),
+    understanding_full: Number(counts.full || 0),
+    understanding_partial: Number(counts.partial || 0),
+    understanding_metadata_only: Number(counts.metadata_only || 0),
+  };
+}
+
+function creatorReportViewModelFromResult(result = {}, overview = {}, templateLabel = "") {
+  if (result.creator_report_view_model && typeof result.creator_report_view_model === "object") {
+    const viewModel = {...result.creator_report_view_model};
+    viewModel.headline = compactReportHeadline(viewModel.headline || result.summary, 120) || truncateReportText(viewModel.headline || "", 120);
+    viewModel.summary = compactPublicReportText(viewModel.summary || result.summary) || truncateReportText(viewModel.summary || result.summary || "", 240);
+    viewModel.technical_notes = normalizeItems(viewModel.technical_notes).filter(isMeaningfulReportText).slice(0, 6);
+    return viewModel;
+  }
+  const strategy = creatorStrategyFromResult(result) || {};
+  const positioning = result.creator_positioning || {};
+  const patterns = result.expression_patterns || {};
+  const thinking = result.thinking_patterns || {};
+  const spec = result.creator_clone_spec || {};
+  const segments = result.performance_segments || {};
+  const headline = compactReportHeadline(strategy.positioning || positioning.what_the_creator_sells || positioning.audience_promise || "账号规律已完成蒸馏", 120);
+  const fallbackSummary = compactPublicReportText([
+    strategy.positioning,
+    positioning.what_the_creator_sells,
+    positioning.audience_promise,
+    result.summary,
+  ]);
+  const formulas = nonTechnicalReportList(strategy.templates, result.transferable_formulas).slice(0, 5);
+  const ideas = nonTechnicalReportList(strategy.idea_bank, result.candidate_ideas, result.topic_buckets).slice(0, 6);
+  return {
+    headline,
+    summary: fallbackSummary || "请先查看下方核心结论、流量来源和可复刻公式。",
+    template_label: templateLabel || result.content_profile?.effective_label || "自动识别",
+    confidence_label: overview.confidence || "",
+    confidence_note: overview.confidence ? `系统置信度：${overview.confidence}` : "",
+    evidence_counts: reportViewEvidenceCountsFromOverview(overview),
+    sections: {
+      core_judgment: {
+        fields: [
+          {label: "定位", value: headline},
+          {label: "观众承诺", value: positioning.audience_promise},
+          {label: "隐藏类型", value: positioning.hidden_genre},
+          {label: "观众假设", value: positioning.audience_assumption},
+        ],
+        bullets: nonTechnicalReportList(positioning.audience_promise, positioning.hidden_genre, positioning.audience_assumption, result.summary).slice(0, 5),
+      },
+      traffic_sources: {
+        metric_signals: compactReportList(
+          firstSegmentBrief(segments, "highest_like_samples", "高赞"),
+          firstSegmentBrief(segments, "highest_comment_samples", "高评"),
+          firstSegmentBrief(segments, "highest_share_samples", "高分享"),
+          firstSegmentBrief(segments, "highest_collect_samples", "高收藏"),
+        ).slice(0, 4),
+        hooks: nonTechnicalReportList(strategy.hooks, patterns.opening_hooks, thinking.tension_sources, positioning.audience_promise).slice(0, 6),
+      },
+      formulas: formulas.length ? formulas : nonTechnicalReportList(strategy.content_strategy, spec.structure_rules, spec.visual_rules, patterns.opening_hooks).slice(0, 5),
+      repeatable_patterns: nonTechnicalReportList(result.topic_buckets, patterns.visual_style, patterns.scene_order, patterns.subtitle_voice, spec.expression_rules, spec.visual_rules, spec.structure_rules).slice(0, 6),
+      next_ideas: ideas,
+      next_actions: nonTechnicalReportList(result.next_actions, result.topic_buckets).slice(0, 5),
+      checklist: nonTechnicalReportList(strategy.validation_rules, spec.self_check_rubric).slice(0, 6),
+      anti_patterns: nonTechnicalReportList(strategy.anti_patterns, spec.anti_patterns).slice(0, 6),
+    },
+    technical_notes: technicalReportNotes(overview.warnings, result.next_actions, result.evidence_gaps),
+  };
+}
+
+function renderDistillationFormulaList(strategy, result) {
+  const templates = normalizeItems(strategy.templates);
+  const formulas = normalizeItems(result.transferable_formulas);
+  if (templates.length || formulas.length) {
+    return renderFormulaCards(templates.length ? templates : formulas);
+  }
+  const fallback = compactReportList(
+    strategy.content_strategy,
+    result.creator_clone_spec?.structure_rules,
+    result.creator_clone_spec?.visual_rules,
+    result.expression_patterns?.opening_hooks,
+  ).slice(0, 4);
+  return renderPublicList(fallback, "本次没有返回独立公式，建议先从内容策略中人工提炼 2-3 个可复用拍法。");
+}
+
+function renderDistillationIdeaList(strategy, result) {
+  const ideas = normalizeItems(strategy.idea_bank);
+  const candidates = normalizeItems(result.candidate_ideas);
+  if (ideas.length || candidates.length) {
+    return renderCandidateIdeas(ideas.length ? ideas : candidates);
+  }
+  const buckets = normalizeItems(result.topic_buckets).map((item) => {
+    if (!item || typeof item !== "object") {
+      return item;
+    }
+    return item.name || item.title || item.description || formatReportValue(item);
+  });
+  return renderPublicList(buckets.slice(0, 6), "本次没有返回独立选题库，可先基于爆款共性手动生成候选选题。");
+}
+
+function renderDistillationSegmentGrid(segments = {}) {
+  return `
+    <div class="creator-segment-grid">
+      <section>
+        <h5>高赞：情绪 / 身份共鸣</h5>
+        ${renderSegmentSampleList(segments.highest_like_samples, "like_count", "赞", "暂无高赞分层。")}
+      </section>
+      <section>
+        <h5>高评：讨论 / 参与钩子</h5>
+        ${renderSegmentSampleList(segments.highest_comment_samples, "comment_count", "评", "暂无高评分层。")}
+      </section>
+      <section>
+        <h5>高分享：转发理由</h5>
+        ${renderSegmentSampleList(segments.highest_share_samples, "share_count", "分享", "暂无高分享分层。")}
+      </section>
+      <section>
+        <h5>高收藏：模板 / 复看价值</h5>
+        ${renderSegmentSampleList(segments.highest_collect_samples, "collect_count", "收藏", "暂无高收藏分层。")}
+      </section>
+    </div>
+  `;
+}
+
+function reportValueHasAny(...values) {
+  return values.some((value) => publicValueHasContent(value));
+}
+
+function renderThinkingPatternBlock(patterns = {}) {
+  return `
+    ${renderPublicFields([
+      ["熟悉与新鲜感", patterns.novelty_vs_familiarity],
+    ])}
+    <h5>观众假设</h5>
+    ${renderPublicList(patterns.assumptions, "暂无观众假设。")}
+    <h5>张力来源</h5>
+    ${renderPublicList(patterns.tension_sources, "暂无张力判断。")}
+    <h5>细节选择规则</h5>
+    ${renderPublicList(patterns.detail_selection_rules, "暂无细节选择规则。")}
+  `;
+}
+
+function renderExpressionPatternBlock(patterns = {}, spec = {}) {
+  const values = compactReportList(
+    patterns.opening_hooks,
+    patterns.scene_order,
+    patterns.shot_types,
+    patterns.subtitle_voice,
+    patterns.visual_style,
+    patterns.ending_patterns,
+    spec.expression_rules,
+    spec.visual_rules,
+    spec.ending_rules,
+  );
+  return renderPublicList(values, "暂无表达/视觉规律。");
+}
+
+function renderCloneRulesBlock(spec = {}, strategy = {}) {
+  return `
+    ${renderPublicFields([
+      ["Taste", spec.taste],
+      ["字幕/文案语气", spec.caption_voice],
+    ])}
+    <h5>选题规则</h5>
+    ${renderPublicList(spec.topic_selection_rules || strategy.content_strategy, "暂无选题规则。")}
+    <h5>结构规则</h5>
+    ${renderPublicList(spec.structure_rules, "暂无结构规则。")}
+    <h5>自检规则</h5>
+    ${renderPublicList(spec.self_check_rubric || strategy.validation_rules, "暂无自检规则。")}
+  `;
+}
+
+function renderCreatorReportHero({viewModel, summary, templateLabel, overview, positioningText}) {
+  const evidence = viewModel?.evidence_counts || {};
+  const counts = overview?.understanding_counts || {};
+  const selectedCount = Number(evidence.selected_count ?? overview?.selected_count ?? 0);
+  const sampleCount = Number(evidence.sample_count ?? overview?.sample_count ?? 0);
+  const confidence = viewModel?.confidence_label || overview?.confidence || "";
+  const evidenceLine = viewModel?.confidence_note
+    || `完整 ${formatNumber(counts.full || evidence.understanding_full || 0)} · 部分 ${formatNumber(counts.partial || evidence.understanding_partial || 0)} · 仅元数据 ${formatNumber(counts.metadata_only || evidence.understanding_metadata_only || 0)}`;
+  const mediaLine = [evidence.with_video, evidence.with_keyframes, evidence.with_asr, evidence.with_ocr, evidence.with_comments]
+    .some((value) => value !== undefined)
+    ? `视频 ${formatNumber(evidence.with_video || 0)} · 关键帧 ${formatNumber(evidence.with_keyframes || 0)} · ASR ${formatNumber(evidence.with_asr || 0)} · OCR ${formatNumber(evidence.with_ocr || 0)} · 评论 ${formatNumber(evidence.with_comments || 0)}`
+    : "";
+  return `
+    <article class="creator-report-hero-card">
+      <div>
+        <span>创作者蒸馏报告</span>
+        <h3>${escapeHtml(viewModel?.headline || positioningText || "账号规律已完成蒸馏")}</h3>
+        <p>${escapeHtml(viewModel?.summary || summary || "请先查看下方核心结论和可复刻公式。")}</p>
+      </div>
+      <dl>
+        <dt>分析模板</dt>
+        <dd>${escapeHtml(viewModel?.template_label || templateLabel || "自动识别")}</dd>
+        <dt>样本</dt>
+        <dd>${formatNumber(selectedCount)} / ${formatNumber(sampleCount)}</dd>
+        <dt>证据完整度</dt>
+        <dd>${escapeHtml(evidenceLine)}</dd>
+        ${mediaLine ? `<dt>证据覆盖</dt><dd>${escapeHtml(mediaLine)}</dd>` : ""}
+        ${confidence ? `<dt>置信度</dt><dd>${escapeHtml(confidence)}</dd>` : ""}
+      </dl>
+    </article>
+  `;
+}
+
+function renderCreatorReportTrafficSignals(segments, positioning, patterns, strategy) {
+  const metricSignals = compactReportList(
+    firstSegmentBrief(segments, "highest_like_samples", "高赞"),
+    firstSegmentBrief(segments, "highest_comment_samples", "高评"),
+    firstSegmentBrief(segments, "highest_share_samples", "高分享"),
+    firstSegmentBrief(segments, "highest_collect_samples", "高收藏"),
+  ).slice(0, 4);
+  const hookSignals = compactReportList(
+    strategy.hooks,
+    patterns.opening_hooks,
+    positioning.hidden_genre,
+    positioning.audience_promise,
+  ).slice(0, 8);
+  return `
+    ${metricSignals.length ? `
+      <h5>数据里最强的信号</h5>
+      ${renderPublicList(metricSignals)}
+    ` : ""}
+    <h5>抓停留 / 促互动方式</h5>
+    ${renderPublicList(hookSignals, "暂无明确钩子。")}
+  `;
+}
+
+function renderCreatorReportActionPlan(strategy, result) {
+  const nextActions = nonTechnicalReportList(
+    result.next_actions,
+    result.topic_buckets,
+  ).slice(0, 6);
+  return `
+    <h5>候选选题</h5>
+    ${renderDistillationIdeaList(strategy, result)}
+    <h5>下一步动作</h5>
+    ${renderPublicList(nextActions, "先从最高互动样本中选 3 条，人工复核开头、封面、动作和标题，再生成候选脚本。")}
+  `;
+}
+
+function renderCreatorReportChecklist(strategy, spec) {
+  const validationRules = nonTechnicalReportList(strategy.validation_rules, spec.self_check_rubric).slice(0, 6);
+  const antiPatterns = nonTechnicalReportList(strategy.anti_patterns, spec.anti_patterns).slice(0, 6);
+  return `
+    <h5>发布前自检</h5>
+    ${renderPublicList(validationRules, "暂无自检规则。")}
+    <h5>不要照搬 / 风险边界</h5>
+    ${renderPublicList(antiPatterns, "暂无风险边界。")}
+  `;
+}
+
+function firstSegmentBrief(segments, key, metricLabel) {
+  const item = normalizeItems(segments?.[key])[0];
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  const title = item.title || item.desc || item.source_url || "代表样本";
+  const metricValue = item.metric_value ?? item.like_count ?? item.comment_count ?? item.share_count ?? item.collect_count;
+  return metricValue !== undefined && metricValue !== null && metricValue !== ""
+    ? `${metricLabel}代表：${title}（${formatNumber(metricValue)}）`
+    : `${metricLabel}代表：${title}`;
+}
+
+function renderCreatorDistillationEvidenceDetails(overview, result, reportViewModel = null) {
+  const thinking = result.thinking_patterns || {};
+  const patterns = result.expression_patterns || {};
+  const spec = result.creator_clone_spec || {};
+  const strategy = creatorStrategyFromResult(result) || {};
+  const viewModel = reportViewModel || result.creator_report_view_model || null;
+  const hasThinking = reportValueHasAny(thinking.assumptions, thinking.tension_sources, thinking.detail_selection_rules, thinking.novelty_vs_familiarity);
+  const hasExpression = reportValueHasAny(
+    patterns.opening_hooks,
+    patterns.scene_order,
+    patterns.shot_types,
+    patterns.subtitle_voice,
+    patterns.visual_style,
+    patterns.ending_patterns,
+    spec.expression_rules,
+    spec.visual_rules,
+  );
+  return `
+    <details class="creator-report-evidence-details">
+      <summary>报告依据：样本、证据完整度和后台细节</summary>
+      ${renderCreatorCloneEvidenceOverview(overview)}
+      ${renderCompactPerformanceSegments(result.performance_segments || {})}
+      <div class="creator-report-evidence-inner">
+        ${reportValueHasAny(result.topic_buckets) ? `
+          <section>
+            <h5>选题桶</h5>
+            ${renderTopicBuckets(result.topic_buckets)}
+          </section>
+        ` : ""}
+        ${hasThinking ? `
+          <section>
+            <h5>思维模式</h5>
+            ${renderThinkingPatternBlock(thinking)}
+          </section>
+        ` : ""}
+        ${hasExpression ? `
+          <section>
+            <h5>表达 / 视觉依据</h5>
+            ${renderExpressionPatternBlock(patterns, spec)}
+          </section>
+        ` : ""}
+        ${reportValueHasAny(strategy.templates, result.transferable_formulas) ? `
+          <section>
+            <h5>原始公式字段</h5>
+            ${renderDistillationFormulaList(strategy, result)}
+          </section>
+        ` : ""}
+        ${reportValueHasAny(result.evidence_gaps) ? `
+          <section>
+            <h5>证据缺口</h5>
+            ${renderPublicList(result.evidence_gaps)}
+          </section>
+        ` : ""}
+        ${reportValueHasAny(viewModel?.technical_notes) ? `
+          <section>
+            <h5>运行备注</h5>
+            ${renderPublicList(viewModel.technical_notes)}
+          </section>
+        ` : ""}
+      </div>
+    </details>
+  `;
+}
+
+function renderCreatorDistillationReport(result, overview, templateLabel) {
+  const viewModel = creatorReportViewModelFromResult(result, overview, templateLabel);
+  const strategy = creatorStrategyFromResult(result) || {};
+  const positioning = result.creator_positioning || {};
+  const patterns = result.expression_patterns || {};
+  const thinking = result.thinking_patterns || {};
+  const spec = result.creator_clone_spec || {};
+  const segments = result.performance_segments || {};
+  const sections = viewModel.sections || {};
+  const positioningText = viewModel.headline || strategy.positioning || positioning.what_the_creator_sells || result.summary || "待补充";
+  const creatorLogic = normalizeItems(sections.core_judgment?.bullets).slice(0, 5);
+  const repeatablePatterns = normalizeItems(sections.repeatable_patterns).slice(0, 6);
+  const trafficHtml = `
+    ${normalizeItems(sections.traffic_sources?.metric_signals).length ? `
+      <h5>数据里最强的信号</h5>
+      ${renderPublicList(sections.traffic_sources.metric_signals)}
+    ` : ""}
+    <h5>抓停留 / 促互动方式</h5>
+    ${renderPublicList(sections.traffic_sources?.hooks, "暂无明确钩子。")}
+  `;
+  const actionHtml = `
+    <h5>候选选题</h5>
+    ${renderPublicList(sections.next_ideas, "本次没有返回独立选题库，可先基于爆款共性手动生成候选选题。")}
+    <h5>下一步动作</h5>
+    ${renderPublicList(sections.next_actions, "先从最高互动样本中选 3 条，人工复核开头、封面、动作和标题，再生成候选脚本。")}
+  `;
+  const checklistHtml = `
+    <h5>发布前自检</h5>
+    ${renderPublicList(sections.checklist, "暂无自检规则。")}
+    <h5>不要照搬 / 风险边界</h5>
+    ${renderPublicList(sections.anti_patterns, "暂无风险边界。")}
+  `;
+  return `
+    <section class="creator-distillation-report" aria-label="创作者蒸馏核心报告">
+      ${renderCreatorReportHero({
+        viewModel,
+        summary: viewModel.summary || result.summary,
+        templateLabel,
+        overview,
+        positioningText,
+      })}
+      <div class="public-report-grid creator-distillation-grid creator-decision-grid">
+        ${renderPublicCard("1. 核心判断：这个账号为什么能跑通", `
+          ${renderPublicFields([
+            ["定位", positioningText],
+            ["观众承诺", positioning.audience_promise],
+            ["隐藏类型", positioning.hidden_genre],
+            ["观众假设", positioning.audience_assumption],
+          ])}
+          <h5>一句话创作逻辑</h5>
+          ${renderPublicList(creatorLogic, "暂无核心逻辑。")}
+        `, "featured wide")}
+        ${renderPublicCard("2. 流量来源：用户为什么会停留、点赞、评论或转发", trafficHtml, "featured")}
+        ${renderPublicCard("3. 可复刻创作公式：下一条照这个结构拍", `
+          ${renderPublicList(sections.formulas, "本次没有返回独立公式，建议先从高互动样本中人工提炼 2-3 个可复用拍法。")}
+          <h5>共性创作要素</h5>
+          ${renderPublicList(repeatablePatterns, "暂无稳定共性。")}
+        `, "featured")}
+        ${renderPublicCard("4. 下一批可以怎么拍：选题与执行动作", actionHtml, "featured")}
+        ${renderPublicCard("5. 发布前自检：保留有效结构，避开无效模仿", checklistHtml)}
+      </div>
+      ${renderCreatorDistillationEvidenceDetails(overview, result, viewModel)}
+    </section>
+  `;
 }
 
 function renderCreatorCloneEvidenceOverview(overview) {
   const counts = overview.understanding_counts || {};
   const warnings = normalizeItems(overview.warnings);
   return `
-    <section class="creator-clone-evidence-strip" aria-label="创作者克隆证据完整度">
+    <section class="creator-clone-evidence-strip" aria-label="创作者蒸馏证据完整度">
       <article>
         <span>选中样本</span>
         <strong>${formatNumber(overview.selected_count || 0)} / ${formatNumber(overview.sample_count || 0)}</strong>
@@ -3242,21 +4223,27 @@ function firstCloneValue(value, fallback = "待补充") {
 }
 
 function renderCreatorCloneActionSummary(result) {
+  const strategy = creatorStrategyFromResult(result) || {};
   const positioning = result.creator_positioning || {};
   const formulas = normalizeItems(result.transferable_formulas);
   const ideas = normalizeItems(result.candidate_ideas);
-  const spec = result.creator_clone_spec || {};
-  const antiPatterns = normalizeItems(spec.anti_patterns);
-  const nextActions = normalizeItems(result.next_actions);
+  const templateValue = firstCloneValue(
+    normalizeItems(strategy.templates).map((item) => item?.name || item?.title || item?.template || item),
+    "",
+  );
+  const ideaValue = firstCloneValue(
+    normalizeItems(strategy.idea_bank).map((item) => item?.title || item?.idea || item),
+    firstCloneValue(ideas.map((item) => item?.title || item), ""),
+  );
   const summaryCards = [
-    ["核心定位", positioning.what_the_creator_sells || result.summary || "待补充"],
-    ["可复用公式", firstCloneValue(formulas.map((item) => item?.name || item), "待补充")],
-    ["优先选题", firstCloneValue(ideas.map((item) => item?.title || item), "待补充")],
-    ["不要照搬", firstCloneValue(antiPatterns, "暂无明确禁忌")],
-    ["下一步", firstCloneValue(nextActions, "基于公式生成 3-5 个候选选题并人工筛选")],
-  ];
+    ["核心定位", strategy.positioning || positioning.what_the_creator_sells || result.summary || "待补充"],
+    ["内容策略", firstCloneValue(strategy.content_strategy || formulas.map((item) => item?.name || item), "待补充")],
+    ["开头钩子", firstCloneValue(strategy.hooks || result.expression_patterns?.opening_hooks, "")],
+    ["可复用模板", templateValue],
+    ["优先选题", ideaValue],
+  ].filter(([, value]) => publicValueHasContent(value));
   return `
-    <section class="creator-clone-action-summary" aria-label="创作者克隆可执行摘要">
+    <section class="creator-clone-action-summary" aria-label="创作者蒸馏可执行摘要">
       <div class="section-heading-row compact-row">
         <div>
           <div class="entry-label">Action Summary</div>
@@ -3275,6 +4262,49 @@ function renderCreatorCloneActionSummary(result) {
           .join("")}
       </div>
     </section>
+  `;
+}
+
+function renderCreatorStrategyOutput(strategy = {}) {
+  if (!strategy || typeof strategy !== "object") {
+    return "";
+  }
+  const hasStrategy = [
+    strategy.positioning,
+    ...normalizeItems(strategy.content_strategy),
+    ...normalizeItems(strategy.hooks),
+    ...normalizeItems(strategy.templates),
+    ...normalizeItems(strategy.anti_patterns),
+    ...normalizeItems(strategy.idea_bank),
+    ...normalizeItems(strategy.validation_rules),
+  ].some((item) => item !== undefined && item !== null && item !== "");
+  if (!hasStrategy) {
+    return "";
+  }
+  const cards = [
+    publicValueHasContent(strategy.positioning)
+      ? renderPublicCard("策略定位", renderPublicFields([["Positioning", strategy.positioning]]), "featured")
+      : "",
+    publicValueHasContent(strategy.content_strategy)
+      ? renderPublicCard("内容策略", renderPublicList(strategy.content_strategy), "featured")
+      : "",
+    publicValueHasContent(strategy.hooks)
+      ? renderPublicCard("开头钩子", renderPublicList(strategy.hooks))
+      : "",
+    publicValueHasContent(strategy.templates)
+      ? renderPublicCard("可复用模板", renderFormulaCards(strategy.templates), "featured")
+      : "",
+    publicValueHasContent(strategy.idea_bank)
+      ? renderPublicCard("选题库", renderCandidateIdeas(strategy.idea_bank), "featured")
+      : "",
+  ].filter(Boolean).join("");
+  if (!cards) {
+    return "";
+  }
+  return `
+    <div class="public-report-grid creator-strategy-grid" aria-label="Creator Intelligence Strategy Output">
+      ${cards}
+    </div>
   `;
 }
 
@@ -3309,7 +4339,7 @@ function creatorCloneOverviewFromSet(set) {
 }
 
 // Creator Clone: export
-function renderCreatorCloneResult(result, set, prompt, exports = {}) {
+function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {}) {
   currentCreatorCloneResult = result || null;
   currentDistillPrompt = prompt || currentDistillPrompt || "";
   setProfileStageView("export");
@@ -3317,7 +4347,9 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
   if (creatorCloneExportActions) {
     creatorCloneExportActions.open = true;
   }
-  creatorCloneResultCard.scrollIntoView({behavior: "smooth", block: "start"});
+  if (options.scroll !== false) {
+    creatorCloneResultCard.scrollIntoView({behavior: "smooth", block: "start"});
+  }
   const overview = result?.sample_overview || creatorCloneOverviewFromSet(set);
   creatorCloneConfidence.textContent = overview.confidence || (result ? "distilled" : "prompt only");
   if (downloadCreatorCloneJson && exports.creator_clone_result_json && set?.set_id) {
@@ -3338,9 +4370,6 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
     renderCreatorCloneNextAction();
     return;
   }
-  const positioning = result.creator_positioning || {};
-  const patterns = result.expression_patterns || {};
-  const spec = result.creator_clone_spec || {};
   const contentProfile = result.content_profile || overview.content_profile || {};
   const templateLabel = contentProfile.effective_label || contentProfile.requested_label || "自动判断";
   creatorCloneResult.innerHTML = `
@@ -3348,43 +4377,13 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}) {
       <span>${escapeHtml(`样本 ${overview.selected_count || 0}/${overview.sample_count || 0} · ${overview.confidence || "unknown"} · ${templateLabel}`)}</span>
       <strong>${escapeHtml(result.summary || "创作者蒸馏完成。")}</strong>
     </section>
-    ${renderCreatorCloneActionSummary(result)}
-    ${renderCreatorCloneEvidenceOverview(overview)}
-    ${renderCompactPerformanceSegments(result.performance_segments || {})}
-    <div class="public-report-grid">
-      ${renderPublicCard("创作者定位", renderPublicFields([
-        ["真正售卖", positioning.what_the_creator_sells],
-        ["观众承诺", positioning.audience_promise],
-        ["隐藏类型", positioning.hidden_genre],
-        ["观众假设", positioning.audience_assumption],
-        ["分析模板", templateLabel],
-      ]), "featured")}
-      ${renderPublicCard("选题桶", renderTopicBuckets(result.topic_buckets), "featured")}
-      ${renderPublicCard("表达模式", `
-        <h5>开头方式</h5>${renderPublicList(patterns.opening_hooks)}
-        <h5>镜头 / 场景顺序</h5>${renderPublicList(patterns.scene_order)}
-        <h5>字幕 / 口播</h5>${renderPublicList(patterns.subtitle_voice)}
-        <h5>结尾方式</h5>${renderPublicList(patterns.ending_patterns)}
-      `)}
-      ${renderPublicCard("可复用公式", renderFormulaCards(result.transferable_formulas), "featured")}
-      ${renderPublicCard("AI Creator Clone", `
-        ${renderPublicFields([["Taste", spec.taste], ["Caption Voice", spec.caption_voice]])}
-        <h5>Topic Rules</h5>${renderPublicList(spec.topic_selection_rules)}
-        <h5>Structure Rules</h5>${renderPublicList(spec.structure_rules)}
-        <h5>Anti-patterns</h5>${renderPublicList(spec.anti_patterns)}
-        <h5>Self-check</h5>${renderPublicList(spec.self_check_rubric)}
-      `)}
-      ${renderPublicCard("候选选题", renderCandidateIdeas(result.candidate_ideas), "featured")}
-      ${renderPublicCard("证据缺口 / 下一步", `
-        <h5>证据缺口</h5>${renderPublicList(result.evidence_gaps)}
-        <h5>下一步</h5>${renderPublicList(result.next_actions)}
-      `)}
-    </div>
+    ${renderCreatorDistillationReport(result, overview, templateLabel)}
   `;
   renderCreatorCloneNextAction();
 }
 
 function applyCreatorCloneDistillPayload(payload) {
+  applyCreatorIntelligencePayload(payload);
   const batch = payload.batch_distill || {};
   const recoveryHint = payload.recovery === "prompt_only"
     ? (payload.error_code === "LLM_NOT_CONFIGURED"
@@ -3392,7 +4391,7 @@ function applyCreatorCloneDistillPayload(payload) {
       : `${payload.error_code || "LLM_FAILED"}：${payload.message || "大模型蒸馏失败"} 已保留素材池证据和蒸馏 Prompt，可稍后重试或手动分析。`)
     : batch.batch_count
       ? `分批蒸馏完成：${formatNumber(batch.batch_count)} 个批次，已生成总汇总。`
-      : "创作者克隆蒸馏完成。";
+      : "创作者蒸馏完成。";
   profileScanStatus.textContent = recoveryHint;
   currentCloneSetId = payload.set?.set_id || currentCloneSetId;
   renderCreatorCloneResult(payload.result || null, payload.set, payload.prompt || "", payload.exports || {});
@@ -3402,10 +4401,9 @@ async function pollCreatorCloneDistillJob(jobId) {
   const response = await fetch(`/api/jobs/${jobId}`, {cache: "no-store"});
   const payload = await readJsonResponse(response);
   const job = payload.job;
-  progressBar.style.width = `${job.progress || 0}%`;
-  jobMessage.textContent = `${job.status} · ${job.progress}% · ${job.message || ""}`;
+  renderJobStatus(job);
   if (job.status === "success") {
-    jobMessage.className = "job-message success";
+    renderJobStatus(job);
     applyCreatorCloneDistillPayload(job.result_json || {});
     return;
   }
@@ -3425,7 +4423,7 @@ async function pollCreatorCloneDistillJob(jobId) {
 // Creator Clone: distillation
 async function distillSelectedCreatorClone(options = {}) {
   const shouldConfirmReadiness = options.confirmReadiness !== false;
-  const selected = selectedProfileItems();
+  const selected = selectedCreatorSampleViewItems();
   if (!selected.length) {
     profileScanStatus.textContent = "请先选择要蒸馏的样本。";
     return;
@@ -3451,7 +4449,9 @@ async function distillSelectedCreatorClone(options = {}) {
   setCreatorCloneDistillButtonsLocked(true);
   renderCreatorCloneNextAction();
   try {
-    const selectedIds = selected.map(profileItemKey);
+    const selectedIds = selected.map(sampleViewItemKey);
+    await syncCreatorCloneWorkflowSelection();
+    await markCreatorCloneDistillationStarted();
     placeJobCard("profile");
     resetJobCard("正在创建创作者蒸馏任务...");
     scrollProfileTaskPanel();
@@ -3460,7 +4460,7 @@ async function distillSelectedCreatorClone(options = {}) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         sample_set_id: currentCloneSetId,
-        samples: currentCloneSetId ? [] : profileItems.map(creatorCloneSamplePayload),
+        samples: currentCloneSetId ? [] : activeCreatorSampleViewItems().map(creatorCloneSamplePayload),
         selected_sample_ids: selectedIds,
         distill_mode: "quick",
         include_case_reports: true,
@@ -3485,7 +4485,7 @@ async function distillSelectedCreatorClone(options = {}) {
 }
 
 async function batchDistillSelectedCreatorClone(options = {}) {
-  const selected = selectedProfileItems();
+  const selected = selectedCreatorSampleViewItems();
   if (!selected.length) {
     profileScanStatus.textContent = "请先选择要分批蒸馏的样本。";
     return;
@@ -3503,11 +4503,13 @@ async function batchDistillSelectedCreatorClone(options = {}) {
     profileScanStatus.textContent = "已取消分批蒸馏。";
     return;
   }
-  const selectedIds = selected.map(profileItemKey);
+  const selectedIds = selected.map(sampleViewItemKey);
   setProfileStageView("distill", {scroll: true});
   setCreatorCloneDistillButtonsLocked(true);
   renderCreatorCloneNextAction();
   try {
+    await syncCreatorCloneWorkflowSelection();
+    await markCreatorCloneDistillationStarted();
     placeJobCard("profile");
     resetJobCard(options.triggeredByQueue ? "富化完成，正在创建分批蒸馏任务..." : "正在创建分批蒸馏任务...");
     scrollProfileTaskPanel();
@@ -3516,7 +4518,7 @@ async function batchDistillSelectedCreatorClone(options = {}) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         sample_set_id: currentCloneSetId,
-        samples: currentCloneSetId ? [] : profileItems.map(creatorCloneSamplePayload),
+        samples: currentCloneSetId ? [] : activeCreatorSampleViewItems().map(creatorCloneSamplePayload),
         selected_sample_ids: selectedIds,
         distill_mode: "quick",
         batch_size: CREATOR_CLONE_MAX_DISTILL_SAMPLES,
@@ -4050,12 +5052,21 @@ profileImportModeButtons.forEach((button) => {
 
 creatorCloneFlowSteps.forEach((button) => {
   button.addEventListener("click", () => {
-    setProfileStageView(button.dataset.profileStageNav || "import", {scroll: true});
+    const targetStage = normalizeProfileStage(button.dataset.profileStageNav || "import");
+    if (!canNavigateProfileStage(targetStage)) {
+      profileScanStatus.textContent = creatorCloneEnrichmentRunning
+        ? "证据富化正在运行，完成后会自动进入大模型蒸馏；当前先保持队列视图。"
+        : "大模型蒸馏正在运行，完成后会自动进入报告页；当前先保持任务视图。";
+      renderCreatorCloneNextAction();
+      return;
+    }
+    setProfileStageView(targetStage, {scroll: true});
     renderCreatorCloneNextAction();
   });
 });
 
 profileQuickInput?.addEventListener("input", () => {
+  profileQuickInputRestoredValue = "";
   renderCreatorCloneNextAction();
 });
 
@@ -4129,7 +5140,7 @@ profileResultsBody.addEventListener("click", (event) => {
 });
 
 profileSelectAllButton.addEventListener("click", () => {
-  const items = visibleProfileItems();
+  const items = visibleCreatorSampleViewItems();
   setProfileSelection(items);
   profileScanStatus.textContent = `已全选当前列表：${items.length} 条。蒸馏最多支持 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条。`;
 });
@@ -4177,10 +5188,12 @@ creatorCloneBatchDistillButton?.addEventListener("click", async () => {
 });
 
 copyCreatorCloneSpecButton.addEventListener("click", async () => {
-  if (!currentCreatorCloneResult?.creator_clone_spec) {
+  const strategy = creatorStrategyFromResult(currentCreatorCloneResult || {}) || null;
+  const payload = strategy || currentCreatorCloneResult?.creator_clone_spec || null;
+  if (!payload) {
     return;
   }
-  await navigator.clipboard.writeText(JSON.stringify(currentCreatorCloneResult.creator_clone_spec, null, 2));
+  await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
   copyCreatorCloneSpecButton.textContent = "已复制";
   window.setTimeout(() => {
     copyCreatorCloneSpecButton.textContent = "复制 Creator Clone Spec";
@@ -4332,10 +5345,9 @@ async function pollJob(jobId, onSuccess, onProgress) {
     const response = await fetch(`/api/jobs/${jobId}`, {cache: "no-store"});
     const payload = await readJsonResponse(response);
     const job = payload.job;
-    progressBar.style.width = `${job.progress || 0}%`;
-    jobMessage.textContent = `${job.status} · ${job.progress}% · ${job.message || ""}`;
+    renderJobStatus(job);
     if (job.status === "success") {
-      jobMessage.className = "job-message success";
+      renderJobStatus(job);
       if (onSuccess) {
         await onSuccess(job);
       } else if (jobResult) {

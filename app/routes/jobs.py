@@ -27,6 +27,8 @@ from app.services.creator_clone import (
     CloneSampleSet,
     MAX_DISTILL_SAMPLES,
     batch_distill_creator_clone,
+    build_distill_execution_plan,
+    creator_intelligence_payload_for_sample_set,
     dedupe_samples,
     distill_creator_clone,
     load_sample_set,
@@ -34,12 +36,48 @@ from app.services.creator_clone import (
     prompt_only_result,
     sample_from_dict,
     save_sample_set,
-    update_sample_set_selection,
     update_sample_set_with_case_artifacts,
 )
+from app.services.creator_intelligence import WorkflowAction
+from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
 
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+
+class CreatorIntelligenceJobRunner:
+    """Small bridge that keeps creator jobs registered with the v2 engine."""
+
+    def __init__(self, sample_set: CloneSampleSet):
+        self.sample_set = sample_set
+
+    def select_samples(self, selected_sample_ids: list[str]) -> dict:
+        if not selected_sample_ids:
+            return creator_intelligence_payload_for_sample_set(self.sample_set)
+        result = dispatch_creator_workflow(
+            self.sample_set.set_id,
+            WorkflowAction.SELECT_SAMPLES,
+            selected_sample_ids=selected_sample_ids,
+        )
+        self.sample_set = result.sample_set
+        return result.creator_intelligence
+
+    def start_distillation(self) -> dict:
+        try:
+            dispatch_creator_workflow(self.sample_set.set_id, WorkflowAction.MARK_EVIDENCE_READY)
+        except AppError:
+            pass
+        result = dispatch_creator_workflow(self.sample_set.set_id, WorkflowAction.START_DISTILLATION)
+        return result.creator_intelligence
+
+    def complete_distillation(self, strategy_output: dict) -> dict:
+        result = dispatch_creator_workflow(
+            self.sample_set.set_id,
+            WorkflowAction.COMPLETE_DISTILLATION,
+            strategy_output=strategy_output,
+        )
+        self.sample_set = result.sample_set
+        return result.creator_intelligence
 
 
 class BuildCaseJobRequest(BaseModel):
@@ -791,6 +829,13 @@ def _update_profile_queue_job(db, job_id: str, progress: int, message: str, queu
         db.commit()
 
 
+def _profile_queue_total_progress(index: int, total: int, item_fraction: float) -> int:
+    """Map a per-item stage to overall queue progress."""
+    safe_total = max(1, total)
+    fraction = max(0.0, min(1.0, item_fraction))
+    return max(1, min(95, int(((index + fraction) / safe_total) * 95)))
+
+
 def _run_profile_optional_case_steps(
     db,
     *,
@@ -798,7 +843,8 @@ def _run_profile_optional_case_steps(
     item: dict,
     artifact: CaseArtifact,
     queue_items: list[dict],
-    base_progress: int,
+    item_index: int,
+    total_items: int,
     auto_enrich: bool,
     auto_asr: bool,
     auto_ocr: bool,
@@ -812,7 +858,13 @@ def _run_profile_optional_case_steps(
         else:
             item["status"] = "enriching"
             item["message"] = "正在写入富化归档"
-            _update_profile_queue_job(db, job_id, base_progress + 65, item["message"], queue_items)
+            _update_profile_queue_job(
+                db,
+                job_id,
+                _profile_queue_total_progress(item_index, total_items, 0.72),
+                item["message"],
+                queue_items,
+            )
             try:
                 item["enrichment"] = build_enrichment_archive(
                     artifact,
@@ -831,7 +883,13 @@ def _run_profile_optional_case_steps(
         else:
             item["status"] = "asr_optional"
             item["message"] = "正在执行可选 ASR"
-            _update_profile_queue_job(db, job_id, base_progress + 70, item["message"], queue_items)
+            _update_profile_queue_job(
+                db,
+                job_id,
+                _profile_queue_total_progress(item_index, total_items, 0.80),
+                item["message"],
+                queue_items,
+            )
             try:
                 item["asr"] = run_case_asr(artifact)
                 item["asr_status"] = item["asr"].get("status") or "success"
@@ -849,7 +907,13 @@ def _run_profile_optional_case_steps(
         else:
             item["status"] = "ocr_optional"
             item["message"] = "正在执行可选 OCR"
-            _update_profile_queue_job(db, job_id, base_progress + 74, item["message"], queue_items)
+            _update_profile_queue_job(
+                db,
+                job_id,
+                _profile_queue_total_progress(item_index, total_items, 0.88),
+                item["message"],
+                queue_items,
+            )
             try:
                 item["ocr"] = run_case_ocr(artifact)
                 item["ocr_status"] = item["ocr"].get("status") or "success"
@@ -867,7 +931,13 @@ def _run_profile_optional_case_steps(
         else:
             item["status"] = "analyzing_optional"
             item["message"] = "正在执行可选 AI 拆解"
-            _update_profile_queue_job(db, job_id, base_progress + 78, item["message"], queue_items)
+            _update_profile_queue_job(
+                db,
+                job_id,
+                _profile_queue_total_progress(item_index, total_items, 0.94),
+                item["message"],
+                queue_items,
+            )
             try:
                 item["analysis"] = _analysis_result(analyze_case_artifact(artifact, mode="fast"))
                 item["analysis_status"] = "success"
@@ -953,7 +1023,6 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
 
         total = max(1, len(queue_items))
         for index, item in enumerate(queue_items):
-            base_progress = int((index / total) * 95)
             if not _is_profile_queue_downloadable(item):
                 item["status"] = "skipped"
                 item["error_code"] = ErrorCode.UNSUPPORTED_PROFILE_ITEM
@@ -963,7 +1032,7 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                     _set_job(
                         job,
                         "running",
-                        min(95, base_progress + 5),
+                        _profile_queue_total_progress(index, total, 1.0),
                         f"已保留参考样本 {index + 1}/{total}",
                         result=_profile_queue_result(queue_items),
                     )
@@ -989,14 +1058,21 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                     item["case_id"] = artifact.case_id
                     item["case"] = _artifact_result(artifact)
                     completed_artifacts.append(artifact)
-                    _update_profile_queue_job(db, job_id, base_progress + 20, item["message"], queue_items)
+                    _update_profile_queue_job(
+                        db,
+                        job_id,
+                        _profile_queue_total_progress(index, total, 0.25),
+                        item["message"],
+                        queue_items,
+                    )
                     _run_profile_optional_case_steps(
                         db,
                         job_id=job_id,
                         item=item,
                         artifact=artifact,
                         queue_items=queue_items,
-                        base_progress=base_progress,
+                        item_index=index,
+                        total_items=total,
                         auto_enrich=auto_enrich,
                         auto_asr=auto_asr,
                         auto_ocr=auto_ocr,
@@ -1021,7 +1097,13 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 item["message"] = "正在解析清晰度候选"
                 job = db.get(Job, job_id)
                 if job:
-                    _set_job(job, "running", min(95, base_progress + 5), item["message"], result=_profile_queue_result(queue_items))
+                    _set_job(
+                        job,
+                        "running",
+                        _profile_queue_total_progress(index, total, 0.12),
+                        item["message"],
+                        result=_profile_queue_result(queue_items),
+                    )
                     db.commit()
 
                 candidates = resolve_quality_candidates(db, item["aweme_id"])
@@ -1031,7 +1113,13 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 item["message"] = "正在下载视频"
                 job = db.get(Job, job_id)
                 if job:
-                    _set_job(job, "running", min(95, base_progress + 25), item["message"], result=_profile_queue_result(queue_items))
+                    _set_job(
+                        job,
+                        "running",
+                        _profile_queue_total_progress(index, total, 0.35),
+                        item["message"],
+                        result=_profile_queue_result(queue_items),
+                    )
                     db.commit()
 
                 download_result = download_candidate(db, item["aweme_id"], candidate["candidate_id"])
@@ -1041,7 +1129,13 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 item["message"] = "正在生成素材包"
                 job = db.get(Job, job_id)
                 if job:
-                    _set_job(job, "running", min(95, base_progress + 55), item["message"], result=_profile_queue_result(queue_items))
+                    _set_job(
+                        job,
+                        "running",
+                        _profile_queue_total_progress(index, total, 0.58),
+                        item["message"],
+                        result=_profile_queue_result(queue_items),
+                    )
                     db.commit()
 
                 artifact = build_case_from_local_video(db, item["local_video_id"])
@@ -1055,7 +1149,8 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                     item=item,
                     artifact=artifact,
                     queue_items=queue_items,
-                    base_progress=base_progress,
+                    item_index=index,
+                    total_items=total,
                     auto_enrich=auto_enrich,
                     auto_asr=auto_asr,
                     auto_ocr=auto_ocr,
@@ -1079,26 +1174,35 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                 _set_job(
                     job,
                     "running",
-                    min(98, int(((index + 1) / total) * 95)),
+                    _profile_queue_total_progress(index, total, 1.0),
                     f"已处理 {index + 1}/{total}",
                     result=_profile_queue_result(queue_items),
                 )
                 db.commit()
 
         final_result = _profile_queue_result(queue_items)
-        updated_set = None
+        updated_sample_set = None
+        creator_intelligence = None
         if sample_set_id and selected_sample_ids:
             try:
-                updated_set = update_sample_set_selection(sample_set_id, selected_sample_ids).to_dict()
+                runner = CreatorIntelligenceJobRunner(load_sample_set(sample_set_id))
+                creator_intelligence = runner.select_samples(selected_sample_ids)
+                updated_sample_set = runner.sample_set
             except AppError as error:
                 final_result["set_selection_error"] = error.as_dict()
         if sample_set_id and completed_artifacts:
             try:
-                updated_set = update_sample_set_with_case_artifacts(sample_set_id, completed_artifacts).to_dict()
+                updated_sample_set = update_sample_set_with_case_artifacts(sample_set_id, completed_artifacts)
+                if updated_sample_set.selected_sample_ids:
+                    runner = CreatorIntelligenceJobRunner(updated_sample_set)
+                    creator_intelligence = runner.select_samples(updated_sample_set.selected_sample_ids)
+                else:
+                    creator_intelligence = None
             except AppError as error:
                 final_result["set_update_error"] = error.as_dict()
-        if updated_set:
-            final_result["set"] = updated_set
+        if updated_sample_set:
+            final_result["set"] = updated_sample_set.to_dict()
+            final_result["creator_intelligence"] = creator_intelligence or creator_intelligence_payload_for_sample_set(updated_sample_set)
         counts = _profile_queue_counts(queue_items)
         job = db.get(Job, job_id)
         if job:
@@ -1159,6 +1263,47 @@ def _load_creator_clone_distill_set(payload: dict) -> CloneSampleSet:
     return sample_set
 
 
+def _selected_clone_samples(sample_set: CloneSampleSet, selected_sample_ids: list[str]) -> list:
+    requested = {str(value) for value in (selected_sample_ids or sample_set.selected_sample_ids or []) if str(value)}
+    if requested:
+        return [
+            sample
+            for sample in sample_set.samples
+            if sample.sample_id in requested or sample.aweme_id in requested or sample.case_id in requested
+        ]
+    return list(sample_set.samples)
+
+
+def _distill_phase_payload(phase: dict | None, *, execution_plan: dict | None = None, message: str = "") -> dict:
+    phase = dict(phase or {})
+    plan = phase.get("execution_plan") if isinstance(phase.get("execution_plan"), dict) else execution_plan or {}
+    current_phase = str(phase.get("current_phase") or "running")
+    labels = {
+        "planning": "规划分批蒸馏",
+        "batch_reduce": "分批大模型蒸馏",
+        "final_reduce": "最终账号级汇总",
+        "parse_persist": "解析并写入报告",
+        "local_fallback": "本地降级汇总",
+        "complete": "完成",
+        "running": "运行中",
+    }
+    return {
+        "kind": "creator_clone_distill",
+        "current_phase": current_phase,
+        "current_phase_label": phase.get("current_phase_label") or labels.get(current_phase, "运行中"),
+        "message": message,
+        "status": phase.get("status") or "running",
+        "phase_index": phase.get("phase_index"),
+        "phase_count": phase.get("phase_count"),
+        "batch_id": phase.get("batch_id") or "",
+        "batch_count": phase.get("batch_count") or plan.get("batch_count") or 0,
+        "sample_count": phase.get("sample_count") or 0,
+        "timeout_seconds": phase.get("timeout_seconds"),
+        "diagnostic": phase.get("diagnostic") or "",
+        "execution_plan": plan,
+    }
+
+
 def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
     db = SessionLocal()
     try:
@@ -1172,6 +1317,12 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         distill_mode = str(payload.get("distill_mode") or "quick")
         include_case_reports = bool(payload.get("include_case_reports", True))
         max_samples = int(payload.get("max_samples") or MAX_DISTILL_SAMPLES)
+        runner = CreatorIntelligenceJobRunner(sample_set)
+        selected_for_engine = selected_sample_ids or sample_set.selected_sample_ids or [sample.sample_id for sample in sample_set.samples]
+        runner.select_samples(selected_for_engine)
+        sample_set = runner.sample_set
+        selected_samples = _selected_clone_samples(sample_set, selected_for_engine)
+        execution_plan = build_distill_execution_plan(selected_samples, batch_size=max_samples, final_timeout_seconds=settings.llm_timeout_seconds)
 
         job = db.get(Job, job_id)
         if job:
@@ -1179,15 +1330,53 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                 job,
                 "running",
                 25,
-                f"已载入素材池，准备蒸馏 {len(selected_sample_ids) or len(sample_set.samples)} 条样本",
-                result={"set": sample_set.to_dict()},
+                f"已载入素材池，准备蒸馏 {len(selected_samples)} 条样本",
+                result={
+                    "set": sample_set.to_dict(),
+                    "execution_plan": execution_plan,
+                    "distill_phase": _distill_phase_payload(
+                        {
+                            "current_phase": "planning",
+                            "current_phase_label": "准备单批蒸馏",
+                            "phase_index": 1,
+                            "phase_count": 3,
+                            "execution_plan": execution_plan,
+                        },
+                        execution_plan=execution_plan,
+                        message=f"已载入素材池，准备蒸馏 {len(selected_samples)} 条样本",
+                    ),
+                },
             )
             db.commit()
 
         try:
             job = db.get(Job, job_id)
             if job:
-                _set_job(job, "running", 70, "调用大模型蒸馏创作者规则")
+                intelligence = runner.start_distillation()
+                _set_job(
+                    job,
+                    "running",
+                    45,
+                    "调用大模型蒸馏创作者规则",
+                    result={
+                        "set": sample_set.to_dict(),
+                        "creator_intelligence": intelligence,
+                        "execution_plan": execution_plan,
+                        "distill_phase": _distill_phase_payload(
+                            {
+                                "current_phase": "final_reduce",
+                                "current_phase_label": "单批大模型蒸馏",
+                                "phase_index": 2,
+                                "phase_count": 3,
+                                "timeout_seconds": int(settings.llm_timeout_seconds),
+                                "execution_plan": execution_plan,
+                                "diagnostic": "如果长时间停留在这里，通常是网关排队、模型生成较慢或返回 JSON 过长。",
+                            },
+                            execution_plan=execution_plan,
+                            message="调用大模型蒸馏创作者规则",
+                        ),
+                    },
+                )
                 db.commit()
             result = distill_creator_clone(
                 sample_set,
@@ -1198,7 +1387,31 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
             )
             job = db.get(Job, job_id)
             if job:
-                _set_job(job, "success", 100, "创作者克隆蒸馏完成", result={"ok": True, **result})
+                intelligence = runner.complete_distillation((result.get("result") or {}).get("creator_clone_strategy") or {})
+                _set_job(
+                    job,
+                    "success",
+                    100,
+                    "创作者蒸馏完成",
+                    result={
+                        "ok": True,
+                        **result,
+                        "creator_intelligence": intelligence,
+                        "execution_plan": execution_plan,
+                        "distill_phase": _distill_phase_payload(
+                            {
+                                "current_phase": "complete",
+                                "current_phase_label": "完成",
+                                "phase_index": 3,
+                                "phase_count": 3,
+                                "status": "success",
+                                "execution_plan": execution_plan,
+                            },
+                            execution_plan=execution_plan,
+                            message="创作者蒸馏完成",
+                        ),
+                    },
+                )
                 db.commit()
         except AppError as error:
             if error.code not in RECOVERABLE_DISTILL_ERROR_CODES:
@@ -1222,6 +1435,21 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                         "error_code": error.code,
                         "message": error.message,
                         **prompt_payload,
+                        "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
+                        "execution_plan": execution_plan,
+                        "distill_phase": _distill_phase_payload(
+                            {
+                                "current_phase": "local_fallback",
+                                "current_phase_label": "降级为 Prompt",
+                                "phase_index": 3,
+                                "phase_count": 3,
+                                "status": "fallback",
+                                "error_code": error.code,
+                                "execution_plan": execution_plan,
+                            },
+                            execution_plan=execution_plan,
+                            message="大模型暂不可用，已生成蒸馏 Prompt",
+                        ),
                     },
                 )
                 db.commit()
@@ -1252,8 +1480,14 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         distill_mode = str(payload.get("distill_mode") or "quick")
         batch_size = int(payload.get("batch_size") or MAX_DISTILL_SAMPLES)
         max_samples = int(payload.get("max_samples") or BATCH_DISTILL_MAX_SAMPLES)
+        runner = CreatorIntelligenceJobRunner(sample_set)
+        selected_for_engine = selected_sample_ids or sample_set.selected_sample_ids or [sample.sample_id for sample in sample_set.samples]
+        runner.select_samples(selected_for_engine)
+        sample_set = runner.sample_set
+        selected_samples = _selected_clone_samples(sample_set, selected_for_engine)
+        execution_plan = build_distill_execution_plan(selected_samples, batch_size=batch_size, final_timeout_seconds=settings.llm_final_reduce_timeout_seconds)
 
-        def progress(value: int, message: str) -> None:
+        def progress(value: int, message: str, phase: dict | None = None) -> None:
             current = db.get(Job, job_id)
             if current:
                 _set_job(
@@ -1261,11 +1495,27 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
                     "running",
                     max(1, min(98, int(value))),
                     message,
-                    result={"set": sample_set.to_dict()},
+                    result={
+                        "set": sample_set.to_dict(),
+                        "execution_plan": execution_plan,
+                        "distill_phase": _distill_phase_payload(phase, execution_plan=execution_plan, message=message),
+                    },
                 )
                 db.commit()
 
-        progress(8, f"已载入素材池，准备分批蒸馏 {len(selected_sample_ids) or len(sample_set.samples)} 条样本")
+        progress(
+            8,
+            f"已载入素材池，准备分批蒸馏 {len(selected_samples)} 条样本",
+            {
+                "current_phase": "planning",
+                "current_phase_label": "准备分批蒸馏",
+                "phase_index": 0,
+                "phase_count": execution_plan.get("batch_count", 0) + 2,
+                "batch_count": execution_plan.get("batch_count", 0),
+                "execution_plan": execution_plan,
+            },
+        )
+        runner.start_distillation()
         result = batch_distill_creator_clone(
             sample_set,
             selected_sample_ids,
@@ -1277,7 +1527,29 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         job = db.get(Job, job_id)
         if job:
             message = "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型"
-            _set_job(job, "success", 100, message, result={"ok": bool(result.get("result")), **result})
+            intelligence = runner.complete_distillation((result.get("result") or {}).get("creator_clone_strategy") or {}) if result.get("result") else creator_intelligence_payload_for_sample_set(sample_set)
+            _set_job(
+                job,
+                "success",
+                100,
+                message,
+                result={
+                    "ok": bool(result.get("result")),
+                    **result,
+                    "creator_intelligence": intelligence,
+                    "execution_plan": result.get("execution_plan") or execution_plan,
+                    "distill_phase": _distill_phase_payload(
+                        {
+                            "current_phase": "complete" if result.get("result") else "local_fallback",
+                            "current_phase_label": "完成" if result.get("result") else "降级为 Prompt",
+                            "status": "success" if result.get("result") else "fallback",
+                            "execution_plan": result.get("execution_plan") or execution_plan,
+                        },
+                        execution_plan=result.get("execution_plan") or execution_plan,
+                        message=message,
+                    ),
+                },
+            )
             db.commit()
     except AppError as error:
         job = db.get(Job, job_id)

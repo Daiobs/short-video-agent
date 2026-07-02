@@ -7,7 +7,18 @@ from urllib.parse import urlparse
 
 from app.config import settings
 from app.database import init_db
-from app.routes import cases, creator_clone, downloads, jobs, local_helper, pages, profile, settings as settings_routes, videos
+from app.routes import (
+    cases,
+    creator_clone,
+    creator_intelligence,
+    downloads,
+    jobs,
+    local_helper,
+    pages,
+    profile,
+    settings as settings_routes,
+    videos,
+)
 from app.services.local_chrome import is_loopback_client
 
 
@@ -119,6 +130,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(profile.router)
     app.include_router(creator_clone.router)
+    app.include_router(creator_intelligence.router)
     app.include_router(local_helper.router)
     app.include_router(downloads.router)
     app.include_router(settings_routes.router)

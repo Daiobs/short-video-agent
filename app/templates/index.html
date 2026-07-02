@@ -236,6 +236,7 @@ LLM_MODEL=支持图片输入的模型</pre>
                     <div id="progress-bar"></div>
                 </div>
                 <div id="job-message" class="job-message"></div>
+                <div id="job-phase" class="job-phase hidden"></div>
             </section>
             <form id="profile-form" class="profile-scan-form" data-profile-stage-section="import">
                 <section class="creator-clone-task-input">
@@ -443,6 +444,7 @@ https://v.douyin.com/xxxxxx/
                             <select id="profile-content-profile" aria-label="账号类型 / 分析模板">
                                 <option value="auto">自动判断</option>
                                 <option value="beauty_cos">美拍 / COS / 颜值</option>
+                                <option value="photo_beauty">摄影美拍 / 出片教程</option>
                                 <option value="emotional_copy">鸡汤 / 情绪文案</option>
                                 <option value="knowledge">教学 / 知识</option>
                                 <option value="story_twist">剧情 / 反转</option>
@@ -541,7 +543,7 @@ https://v.douyin.com/xxxxxx/
                 <div class="section-heading-row">
                     <div>
                         <div class="entry-label">E. Export</div>
-                        <h2>创作者克隆报告</h2>
+                        <h2>创作者蒸馏报告</h2>
                     </div>
                     <span id="creator-clone-confidence" class="status-badge muted-badge"></span>
                 </div>

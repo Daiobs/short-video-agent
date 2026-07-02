@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import secrets
 import time
 from pathlib import Path
@@ -17,6 +16,7 @@ from app.services.creator_clone import (
     build_sample_set,
     build_sample_set_from_handoff_manifest,
     creator_clone_dir,
+    creator_intelligence_payload_for_sample_set,
     distill_creator_clone,
     export_paths,
     load_sample_set,
@@ -25,6 +25,7 @@ from app.services.creator_clone import (
     sample_from_dict,
     save_sample_set,
 )
+from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
 from app.services.local_chrome import load_capture_audit, load_handoff_manifest, local_helper_security_contract
 
 
@@ -68,6 +69,11 @@ class CreatorCloneDistillRequest(BaseModel):
 class CreatorCloneHandoffImportRequest(BaseModel):
     handoff_manifest: dict = Field(default_factory=dict)
     handoff_token: str = ""
+
+
+class CreatorCloneWorkflowDispatchRequest(BaseModel):
+    action: str
+    selected_sample_ids: list[str] = Field(default_factory=list)
 
 
 def _cleanup_handoff_tokens() -> None:
@@ -154,10 +160,27 @@ def get_creator_clone_set(set_id: str):
             "set": sample_set.to_dict(),
             "has_result": result_path.is_file(),
             "has_prompt": prompt_path.is_file(),
+            "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
             "capture_audit": load_capture_audit(set_id),
             "handoff_manifest": load_handoff_manifest(set_id),
             "exports": export_paths(set_id),
         }
+    except AppError as error:
+        return error_response(error)
+
+
+@router.post("/sets/{set_id}/workflow")
+def dispatch_creator_clone_workflow(set_id: str, payload: CreatorCloneWorkflowDispatchRequest):
+    try:
+        result = dispatch_creator_workflow(set_id, payload.action, selected_sample_ids=payload.selected_sample_ids)
+        return {
+            "ok": True,
+            "set": result.sample_set.to_dict(),
+            "creator_intelligence": result.creator_intelligence,
+            "exports": export_paths(set_id),
+        }
+    except ValueError as error:
+        return error_response(AppError(ErrorCode.PROFILE_SCAN_FAILED, str(error)))
     except AppError as error:
         return error_response(error)
 
@@ -189,7 +212,11 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
                 include_case_reports=payload.include_case_reports,
                 max_samples=payload.max_samples,
             )
-            return {"ok": True, **result}
+            return {
+                "ok": True,
+                **result,
+                "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set, (result.get("result") or {}).get("creator_clone_strategy")),
+            }
         except AppError as error:
             if error.code not in RECOVERABLE_DISTILL_ERROR_CODES:
                 raise

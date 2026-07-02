@@ -38,6 +38,7 @@ class Settings:
     downloads_dir: Path = output_dir / "downloads"
     calibration_dir: Path = output_dir / "calibration"
     creator_clones_dir: Path = output_dir / "creator_clones"
+    creator_state_dir: Path = output_dir / "creator_state"
     database_url: str = os.getenv(
         "DATABASE_URL",
         f"sqlite:///{(PROJECT_ROOT / 'short_video_agent.db').as_posix()}",
@@ -99,6 +100,7 @@ class Settings:
             self.downloads_dir,
             self.calibration_dir,
             self.creator_clones_dir,
+            self.creator_state_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
 

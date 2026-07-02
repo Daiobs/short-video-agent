@@ -47,6 +47,7 @@ from app.services.creator_clone import (
     CloneSampleSet,
     MAX_DISTILL_SAMPLES,
     batch_distill_creator_clone,
+    build_distill_execution_plan,
     build_sample_set,
     build_distill_prompt,
     dedupe_samples,
@@ -295,6 +296,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="creator-clone-next-summary"' in response.text
     assert 'id="creator-clone-next-button"' in response.text
     assert 'class="job-card compact-job-card hidden" id="job-card"' in response.text
+    assert 'id="job-phase"' in response.text
     assert response.text.index('id="creator-clone-next-bar"') < response.text.index('id="job-card"') < response.text.index('<form id="profile-form"')
     assert 'id="job-result"' not in response.text
     assert 'class="primary-cta"' in response.text
@@ -511,6 +513,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "shortVideoAgent.recentProfileStage" in script
     assert "function restoreRecentCreatorCloneSet" in script
     assert "function restoreRecentProfileBuildJob" in script
+    assert "function profilePayloadFromCreatorIntelligenceProject" in script
+    assert "function sampleViewItemFromCreatorSample" in script
+    assert "function cloneSetFromCreatorIntelligenceProject" in script
     assert "function rememberRecentProfileBuildState" in script
     assert "function rememberRecentProfileStage" in script
     assert "function mergeProfileQueueItems" in script
@@ -518,29 +523,76 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function forgetRecentCreatorCloneSetId" in script
     assert "isSafeCreatorCloneSetId" in script
     assert "/api/creator-clone/sets/" in script
+    assert "/api/creator-intelligence/projects/" in script
     assert "正在恢复上次素材池" in script
     assert "已恢复上次素材池" in script
     assert "function profileScanMaxPagesForCount" in script
     assert "max_pages: profilePayload.max_pages" in script
     assert "function useRecommendedProfileSamples" in script
+    assert "currentCreatorIntelligenceWorkflow" in script
+    assert "currentCreatorIntelligenceBehavior" in script
+    assert "currentCreatorIntelligenceProject" in script
+    assert "currentCreatorIntelligenceStrategy" in script
+    assert "function applyCreatorIntelligencePayload" in script
+    assert "function creatorProjectSampleViewItems" in script
+    assert "function activeCreatorSampleViewItems" in script
+    assert "function creatorSampleFromViewItem" in script
+    assert "function creatorProjectFromCloneSet" in script
+    assert "function creatorWorkflowFromProject" not in script
+    assert "function syncCreatorProjectSamplesFromViewItems" in script
+    assert "syncCreatorProjectSamplesFromViewItems(profileSampleViewItems);" in script
+    assert "creatorProjectFromCloneSet(payload?.set)" in script
+    assert "creatorWorkflowFromProject(currentCreatorIntelligenceProject, currentCreatorIntelligenceStrategy)" not in script
+    assert "const projectChanged = previousProjectId && nextProjectId && previousProjectId !== nextProjectId;" in script
+    assert "filterCreatorSampleViewItemsByMedia(activeCreatorSampleViewItems()" in script
+    assert "return activeCreatorSampleViewItems().filter((item) => profileSelectedKeys.has(sampleViewItemKey(item)))" in script
+    assert "const items = activeCreatorSampleViewItems();" in script
+    assert "function creatorStrategyFromResult" in script
+    assert "function creatorCloneResultFromStrategyOutput" in script
+    assert "function renderCreatorStrategyOutput" in script
+    assert "creator-strategy-grid" in script
+    assert "strategy_output" in script
+    assert 'workflowState === "DONE"' in script
+    assert "{scroll: false}" in script
+    assert "const strategy = creatorStrategyFromResult(currentCreatorCloneResult || {})" in script
+    assert "function workflowStateFromCreatorIntelligence" in script
+    assert "function wizardStateFromWorkflowState" in script
+    assert "function getCreatorCloneWizardStateFromWorkflow" in script
+    assert "function syncCreatorCloneWorkflowSelection" in script
+    assert "function dispatchCreatorIntelligenceWorkflowAction" in script
+    assert "function markCreatorCloneDistillationStarted" in script
+    assert 'dispatchCreatorIntelligenceWorkflowAction("MARK_EVIDENCE_READY")' in script
+    assert 'dispatchCreatorIntelligenceWorkflowAction("START_DISTILLATION")' in script
+    assert "await markCreatorCloneDistillationStarted();" in script
+    assert "/api/creator-intelligence/projects/${encodeURIComponent(currentCloneSetId)}/workflow" in script
+    assert "/api/creator-clone/sets/${encodeURIComponent(currentCloneSetId)}/workflow" not in script
+    assert 'dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES"' in script
+    assert "creator_intelligence" in script
     assert "creatorCloneExportActions.open = true" in script
-    assert "下一步：使用推荐样本继续" in script
-    assert "下一步：开始富化证据" in script
-    assert "下一步：进入大模型蒸馏" in script
-    assert "下一步：开始分批蒸馏" in script
-    assert "下一步：开始大模型蒸馏" in script
-    assert "下一步：下载报告" in script
-    assert "POOL_READY" in script
-    assert "POOL_EMPTY" in script
-    assert "SELECT_EMPTY" in script
-    assert "SELECT_TO_ENRICH" in script
-    assert "SELECT_TO_DISTILL" in script
-    assert "ENRICH_EMPTY" in script
-    assert "ENRICH_READY" in script
-    assert "ENRICH_DONE" in script
-    assert "DISTILL_BLOCKED" in script
-    assert "BATCH_DISTILL_READY" in script
-    assert "EXPORT_EMPTY" in script
+    assert "function activeProfileStage" in script
+    assert "function creatorCloneStageMeta" in script
+    assert 'command: "show_select"' in script
+    assert 'command: "show_distill"' in script
+    assert "下一步：选择代表样本" in script
+    assert "workflowNextAction()" in script
+    assert "function workflowNextCommand" in script
+    assert 'command === "select_recommended_samples"' in script
+    assert 'command === "build_evidence"' in script
+    assert 'command === "start_distillation"' in script
+    assert 'command === "start_batch_distillation"' in script
+    assert 'command === "export_report"' in script
+    assert "if (state ===" not in script
+    assert "POOL_READY" not in script
+    assert "SELECT_EMPTY" not in script
+    assert "ENRICH_READY" not in script
+    assert "DISTILL_BLOCKED" not in script
+    assert "BATCH_DISTILL_READY" not in script
+    assert "POOL_EMPTY" not in script
+    assert "SELECT_TO_ENRICH" not in script
+    assert "SELECT_TO_DISTILL" not in script
+    assert "ENRICH_EMPTY" not in script
+    assert "ENRICH_DONE" not in script
+    assert "EXPORT_EMPTY" not in script
     assert "/api/settings/data-sources" in script
     assert "dataset.creatorCloneAction" in script
     assert "ready_for_profile_scan" in script
@@ -607,7 +659,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "highest_collect_samples" in script
     assert "高收藏样本" in script
     assert "最新样本" in script
-    assert "function filterProfileItemsByMedia" in script
+    assert "function filterCreatorSampleViewItemsByMedia" in script
     assert "function renderProfileTableRow" in script
     assert "function installProfileCoverFallbacks" in script
     assert "profileCoverMarkup" in script
@@ -643,7 +695,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function setCreatorCloneDistillButtonsLocked" in script
     assert "function setCreatorCloneEnrichmentLocked" in script
     assert "function renderSegmentSampleList" in script
-    assert "if (state === \"SELECT_TO_ENRICH\")" in script
+    assert "if (state === \"SELECT_TO_ENRICH\")" not in script
     assert "await buildSelectedProfileQueue();" in script
     assert "if (creatorCloneEnrichmentRunning)" in script
     assert "证据富化任务正在运行。" in script
@@ -727,13 +779,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "profileEvidenceStatus" in script
     assert "profileEvidenceFilter" in script
     assert "let profileSelectedKeys = new Set()" in script
-    assert "selected_sample_ids: selectedProfileItems().map(profileItemKey)" in script
+    assert "selected_sample_ids: selectedCreatorSampleViewItems().map(sampleViewItemKey)" in script
     assert "persistedSelected" in script
-    assert "function filterProfileItems" in script
-    assert "function visibleProfileItems" in script
+    assert "function filterCreatorSampleViewItems" in script
+    assert "function visibleCreatorSampleViewItems" in script
     assert "profileSelectedKeys.has" in script
     assert "已全选当前列表" in script
-    assert "function isProfileItemBuildable" in script
+    assert "function isSampleViewItemBuildable" in script
     assert '"collect_count"' in script
     assert "收藏样本" in script
     assert '["image", "text"].includes' in script
@@ -756,8 +808,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'label: "AI"' in script
     assert 'item.analysis_status === "success"' in script
     assert "function profileEvidenceCoverageSummary" in script
-    assert "function needsEnrichmentProfileItems" in script
-    assert "function readyEvidenceProfileItems" in script
+    assert "function needsEnrichmentCreatorSampleViewItems" in script
+    assert "function readyEvidenceCreatorSampleViewItems" in script
     assert "profileEvidenceScore" in script
     assert "function profileDistillReadiness" in script
     assert "function renderProfileDistillReadiness" in script
@@ -824,26 +876,49 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "将蒸馏" in script
     assert "renderCreatorCloneEvidenceOverview" in script
     assert "function renderCreatorCloneActionSummary" in script
+    assert "function renderJobPhase" in script
+    assert "function renderJobStatus" in script
+    assert "distill_phase" in script
+    assert ".job-phase" in stylesheet
     assert "id=\"profile-content-profile\"" in response.text
     assert "账号类型 / 分析模板" in response.text
     assert "美拍 / COS / 颜值" in response.text
+    assert "摄影美拍 / 出片教程" in response.text
     assert "profileContentProfile" in script
     assert "content_profile: profileContentProfile?.value || \"auto\"" in script
     assert "function renderCompactPerformanceSegments" in script
     assert "creator-clone-segment-disclosure" in script
     assert '${renderPublicCard("样本分层"' not in script
-    assert "可执行摘要" in script
-    assert "核心定位" in script
-    assert "可复用公式" in script
-    assert "不要照搬" in script
+    assert "function renderCreatorDistillationReport" in script
+    assert "function creatorReportViewModelFromResult" in script
+    assert "creator_report_view_model" in script
+    assert "isTechnicalReportNote" in script
+    assert "创作者蒸馏核心报告" in script
+    assert "核心判断：这个账号为什么能跑通" in script
+    assert "流量来源：用户为什么会停留、点赞、评论或转发" in script
+    assert "可复刻创作公式：下一条照这个结构拍" in script
+    assert "下一批可以怎么拍：选题与执行动作" in script
+    assert "发布前自检：保留有效结构，避开无效模仿" in script
+    assert "思维模式" in script
+    assert "表达 / 视觉依据" in script
+    assert "报告依据：样本、证据完整度和后台细节" in script
+    assert "可复刻创作公式" in script
+    assert "不要照搬 / 风险边界" in script
+    assert "lockedProfileNavigationStage" in script
+    assert "当前任务正在运行，完成后会自动进入下一步" in script
     assert "creatorCloneOverviewFromSet" in script
-    assert "创作者克隆证据完整度" in script
+    assert "创作者蒸馏证据完整度" in script
+    assert "creator-report-evidence-details" in script
     assert "完整证据" in script
     assert "仅元数据" in script
     assert "LLM 未配置" in script
     assert "renderCreatorCloneEvidenceOverview(overview)" in script
     assert ".creator-clone-evidence-strip" in stylesheet
     assert ".creator-clone-segment-disclosure" in stylesheet
+    assert ".creator-distillation-report" in stylesheet
+    assert ".creator-segment-grid" in stylesheet
+    assert ".profile-main-flow button.locked" in stylesheet
+    assert ".creator-report-evidence-details" in stylesheet
     assert ".profile-template-select" in stylesheet
     assert "column-count: 2" in stylesheet
     assert ".creator-clone-action-summary" in stylesheet
@@ -2849,6 +2924,9 @@ def test_creator_clone_batch_distill_job_accepts_more_than_single_limit(monkeypa
     assert job is not None
     assert job["status"] == "success"
     assert job["result_json"]["batch_distill"]["batch_count"] == 2
+    assert job["result_json"]["execution_plan"]["strategy"] == "batch_reduce"
+    assert job["result_json"]["distill_phase"]["current_phase"] == "complete"
+    assert job["result_json"]["distill_phase"]["execution_plan"]["batch_count"] == 2
 
 
 def test_batch_distill_prompt_only_writes_manifest_when_llm_disabled(monkeypatch) -> None:
@@ -2858,18 +2936,28 @@ def test_batch_distill_prompt_only_writes_manifest_when_llm_disabled(monkeypatch
         title="批量 Prompt 测试",
         samples=[CloneSample(sample_id=f"sample_prompt_{index}", title=f"样本 {index}") for index in range(MAX_DISTILL_SAMPLES + 1)],
     )
+    progress_events: list[dict] = []
 
     result = batch_distill_creator_clone(
         sample_set,
         [sample.sample_id for sample in sample_set.samples],
         batch_size=MAX_DISTILL_SAMPLES,
         max_samples=150,
+        progress=lambda value, message, phase=None: progress_events.append(
+            {"value": value, "message": message, "phase": phase or {}}
+        ),
     )
 
     assert result["recovery"] == "prompt_only"
     assert result["batch_distill"]["batch_count"] == 2
     assert result["batch_distill"]["final"]["status"] == "prompt_only"
     assert Path(result["batch_distill"]["final"]["prompt_path"]).is_file()
+    phases = [event["phase"].get("current_phase") for event in progress_events]
+    assert "planning" in phases
+    assert "batch_reduce" in phases
+    assert "final_reduce" in phases
+    assert phases[-1] == "complete"
+    assert result["execution_plan"]["strategy"] == "batch_reduce"
 
 
 def test_batch_distill_writes_local_fallback_when_final_reduce_times_out(monkeypatch) -> None:
@@ -3169,6 +3257,11 @@ def test_profile_build_cases_queue_backfills_asr_ocr_evidence_into_sample_set(mo
     assert any("素材包" in note for note in result["pipeline_summary"]["notes"])
     assert any("本轮选中 1 条" in note for note in result["pipeline_summary"]["notes"])
     assert result["set"]["selected_sample_ids"] == [f"sample_{aweme_id}"]
+    assert result["creator_intelligence"]["project"]["project_id"] == set_id
+    assert result["creator_intelligence"]["workflow"]["state"] == "EVIDENCE_READY"
+    assert result["creator_intelligence"]["workflow"]["selected_count"] == 1
+    assert result["creator_intelligence"]["behavior_model"]["selected_count"] == 1
+    assert result["creator_intelligence"]["behavior_model"]["evidence_matrix"]["with_keyframes"] == 1
     updated_sample = load_sample_set(set_id).samples[0]
     assert updated_sample.case_id == case_id
     assert updated_sample.has_video is True
@@ -9036,32 +9129,50 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "page_confirmed: true" not in script
     assert script.count("resetProfileChromeConfirmation();") >= 4
     assert "recommendedProfileSampleMix" in script
-    assert "dedupeProfileItems" in script
+    assert "dedupeCreatorSampleViewItems" in script
     assert "function getCreatorCloneWizardState()" in script
+    assert "currentCreatorIntelligenceWorkflow" in script
+    assert "function applyCreatorIntelligencePayload" in script
+    assert "function getCreatorCloneWizardStateFromWorkflow" in script
+    assert "function syncCreatorCloneWorkflowSelection" in script
+    assert "wizardStateFromWorkflowState(workflowStateFromCreatorIntelligence())" in script
+    assert "selectedHasFrontendDelta" not in script
+    assert "workflowNextAction()?.state" in script
+    assert "workflowUiState().stage" in script
+    assert "creator_intelligence" in script
     assert "function renderWizardPrimaryAction" in script
     assert "function handleWizardPrimaryAction" in script
     assert "function creatorCloneActionStateForCurrentView" in script
     assert "IMPORT_EMPTY" in script
-    assert "POOL_READY" in script
-    assert "POOL_EMPTY" in script
-    assert "SELECT_EMPTY" in script
-    assert "SELECT_TO_ENRICH" in script
-    assert "SELECT_TO_DISTILL" in script
-    assert "ENRICH_EMPTY" in script
-    assert "ENRICH_READY" in script
-    assert "ENRICH_DONE" in script
-    assert "DISTILL_BLOCKED" in script
-    assert "DISTILL_READY" in script
-    assert "BATCH_DISTILL_READY" in script
-    assert "EXPORT_EMPTY" in script
-    assert "EXPORT_READY" in script
+    assert "function workflowNextCommand" in script
+    assert 'command === "import_input"' in script
+    assert 'command === "select_recommended_samples"' in script
+    assert 'command === "select_samples"' in script
+    assert 'command === "build_evidence"' in script
+    assert 'command === "start_distillation"' in script
+    assert 'command === "start_batch_distillation"' in script
+    assert 'command === "export_report"' in script
+    assert "if (state ===" not in script
+    assert "POOL_READY" not in script
+    assert "SELECT_EMPTY" not in script
+    assert "ENRICH_READY" not in script
+    assert "DISTILL_BLOCKED" not in script
+    assert "DISTILL_READY" not in script
+    assert "BATCH_DISTILL_READY" not in script
+    assert "EXPORT_READY" not in script
+    assert "POOL_EMPTY" not in script
+    assert "SELECT_TO_ENRICH" not in script
+    assert "SELECT_TO_DISTILL" not in script
+    assert "ENRICH_EMPTY" not in script
+    assert "ENRICH_DONE" not in script
+    assert "EXPORT_EMPTY" not in script
     assert "下一步：开始导入素材" in script
-    assert "下一步：使用推荐样本继续" in script
-    assert "下一步：开始富化证据" in script
-    assert "下一步：进入大模型蒸馏" in script
-    assert "下一步：开始分批蒸馏" in script
-    assert "下一步：开始大模型蒸馏" in script
-    assert "下一步：下载报告" in script
+    assert "function activeProfileStage" in script
+    assert "function creatorCloneStageMeta" in script
+    assert 'command: "show_select"' in script
+    assert 'command: "show_distill"' in script
+    assert "下一步：选择代表样本" in script
+    assert "workflowNextAction()" in script
 
 
 def test_creator_clone_import_manual_links_generates_sample_set() -> None:
@@ -9830,6 +9941,15 @@ def test_creator_clone_prompt_marks_metadata_only_samples() -> None:
     assert "媒体类型统计" in prompt
     assert "账号类型 / 分析模板" in prompt
     assert "美拍 / COS / 颜值" in prompt
+    assert "结构化认知模型" in prompt
+    assert "performance_segments" in prompt
+    assert "media_mix" in prompt
+    assert "creator_clone_strategy" in prompt
+    assert "稳定输出契约 CreatorCloneSchema" in prompt
+    assert "核心判断、流量来源、可复刻公式、下一批怎么拍、发布前自检" in prompt
+    assert "给用户阅读的完整蒸馏报告" in prompt
+    assert "content_strategy" in prompt
+    assert "validation_rules" in prompt
     assert "账号可见资料" in prompt
     assert "甜美 COS 账号" in prompt
     assert "follower_count" in prompt
@@ -9856,6 +9976,102 @@ def test_creator_clone_prompt_allows_manual_content_profile_override() -> None:
     assert "文案段落逻辑" in prompt
     assert normalized["content_profile"]["requested"] == "emotional_copy"
     assert normalized["content_profile"]["effective"] == "emotional_copy"
+
+
+def test_creator_clone_auto_detects_photo_beauty_profile_and_public_view_model() -> None:
+    sample_set = CloneSampleSet(
+        set_id="clone_test_photo_beauty_profile",
+        title="摄影美拍素材池",
+        source_platform="douyin",
+        content_profile="auto",
+        creator_name="出片摄影师",
+        samples=[
+            CloneSample(
+                sample_id="sample_photo_a",
+                title="📷新手用杂牌相机拍一组星穹铁道 COS 写真",
+                desc="模特出镜，普通棚子也能出片",
+                media_type="video",
+                like_count=158000,
+                comment_count=2100,
+                share_count=34000,
+                collect_count=14000,
+                understanding_level="partial",
+                has_video=True,
+                has_frames=True,
+                has_asr=True,
+                has_ocr=True,
+                has_comments=True,
+            ),
+            CloneSample(
+                sample_id="sample_photo_b",
+                title="杂牌相机拍一组制服写真，光线对了就很出片",
+                desc="拍照过程和成片对比",
+                media_type="video",
+                like_count=88000,
+                comment_count=900,
+                share_count=13000,
+                collect_count=9000,
+                understanding_level="partial",
+                has_video=True,
+                has_frames=True,
+                has_asr=True,
+                has_ocr=True,
+                has_comments=True,
+            ),
+        ],
+    )
+    normalized = normalize_creator_clone_result(
+        {
+            "summary": "第一批摘要：新手用杂牌相机拍一组形成稳定系列；最终大模型 Reduce 未完成，当前报告由已成功的批次摘要本地汇总生成。",
+            "creator_positioning": {
+                "what_the_creator_sells": "低门槛也能拍出好看的模特写真",
+                "audience_promise": "让观众相信普通设备和普通场景也能出片",
+            },
+            "transferable_formulas": [],
+            "candidate_ideas": [],
+            "next_actions": ["基于本地批次汇总先查看账号级规律。", "优先复核高赞成片结构。"],
+        },
+        sample_set,
+        sample_set.samples,
+        warnings=["最终大模型 Reduce 未完成，当前报告由已成功的批次摘要本地汇总生成。"],
+    )
+
+    assert normalized["content_profile"]["effective"] == "photo_beauty"
+    assert normalized["content_profile"]["effective_label"] == "摄影美拍 / 出片教程"
+    view_model = normalized["creator_report_view_model"]
+    assert view_model["template_label"] == "摄影美拍 / 出片教程"
+    assert "Reduce" not in view_model["summary"]
+    assert "本地汇总" not in view_model["summary"]
+    assert view_model["evidence_counts"]["with_video"] == 2
+    assert view_model["evidence_counts"]["media_complete"] == 2
+    assert "视频、关键帧、ASR、OCR 和评论均已覆盖" in view_model["confidence_note"]
+    assert any("低门槛出片公式" in item for item in view_model["sections"]["formulas"])
+    assert any("新手用杂牌相机" in item for item in view_model["sections"]["next_ideas"])
+    assert any("Reduce" in item for item in view_model["technical_notes"])
+
+
+def test_creator_clone_distill_execution_plan_scales_large_batches(monkeypatch, tmp_path: Path) -> None:
+    case_dir = tmp_path / "case_with_duration"
+    case_dir.mkdir(parents=True)
+    (case_dir / "ffprobe.json").write_text(json.dumps({"duration": 12.5}), encoding="utf-8")
+    monkeypatch.setattr("app.services.creator_clone.settings.cases_dir", tmp_path)
+    samples = [
+        CloneSample(sample_id="sample_000", title="带时长样本", case_id="case_with_duration", has_video=True),
+        *[
+            CloneSample(sample_id=f"sample_{index:03d}", title=f"样本 {index}", has_video=True)
+            for index in range(1, 150)
+        ],
+    ]
+
+    plan = build_distill_execution_plan(samples, batch_size=20, final_timeout_seconds=600)
+
+    assert plan["strategy"] == "hierarchical_reduce"
+    assert plan["batch_count"] == 8
+    assert plan["duration"]["known_count"] == 1
+    assert plan["duration"]["total_seconds"] == 12.5
+    assert plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] >= 720
+    phases = [item["phase"] for item in plan["timeout_policy"]["phase_diagnostics"]]
+    assert phases == ["connect", "first_byte", "generation", "parse_persist"]
 
 
 def test_creator_clone_prompt_includes_local_performance_segments() -> None:
@@ -10176,6 +10392,10 @@ def test_creator_clone_distill_job_unconfigured_returns_prompt(monkeypatch) -> N
     assert job["result_json"]["error_code"] == "LLM_NOT_CONFIGURED"
     assert "prompt" in job["result_json"]
     assert "distill_prompt.md" in job["result_json"]["exports"]["distill_prompt_md"]
+    assert job["result_json"]["creator_intelligence"]["project"]["project_id"] == set_id
+    assert job["result_json"]["creator_intelligence"]["workflow"]["state"] == "SAMPLE_SELECTED"
+    assert job["result_json"]["creator_intelligence"]["workflow"]["selected_count"] == len(samples)
+    assert job["result_json"]["creator_intelligence"]["behavior_model"]["selected_count"] == len(samples)
 
 
 def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) -> None:
@@ -10221,8 +10441,51 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
     assert payload["ok"] is True
     assert payload["result"]["summary"] == "用轻剧情和标题判断题驱动停留。"
     assert payload["result"]["sample_overview"]["selected_count"] == 2
+    assert payload["result"]["creator_clone_strategy"]["positioning"] == "现场轻剧情；快速看到人物反应；景区互动短剧"
+    assert payload["result"]["creator_clone_strategy"]["content_strategy"]
+    assert payload["result"]["creator_clone_strategy"]["anti_patterns"] == ["硬广"]
+    assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
+    assert payload["creator_intelligence"]["project"]["project_id"] == payload["set"]["set_id"]
+    assert payload["creator_intelligence"]["strategy_output"] == payload["result"]["creator_clone_strategy"]
     assert Path(payload["exports"]["creator_clone_result_json"]).is_file()
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
+
+
+def test_creator_clone_distill_accepts_schema_first_llm_output(monkeypatch) -> None:
+    class FakeProvider:
+        def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            assert "稳定输出契约 CreatorCloneSchema" in prompt
+            return {
+                "summary": "schema-first 输出。",
+                "creator_clone_strategy": {
+                    "positioning": "甜美 COS 视觉账号",
+                    "content_strategy": ["近景人物第一眼"],
+                    "hooks": ["开头直接给脸和眼神"],
+                    "templates": [{"name": "近景三拍", "beats": ["脸", "动作", "标题"]}],
+                    "anti_patterns": ["不要照搬高风险擦边表达"],
+                    "idea_bank": [{"title": "粉色妆造回头杀"}],
+                    "validation_rules": ["第一秒是否有人物亮点"],
+                },
+            }
+
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: FakeProvider())
+    response = client.post(
+        "/api/creator-clone/distill",
+        json={
+            "samples": [{"sample_id": "sample_schema", "title": "schema 样本", "like_count": 100}],
+            "selected_sample_ids": ["sample_schema"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    strategy = payload["result"]["creator_clone_strategy"]
+    assert strategy == payload["creator_intelligence"]["strategy_output"]
+    assert set(strategy) == {"positioning", "content_strategy", "hooks", "templates", "anti_patterns", "idea_bank", "validation_rules"}
+    assert strategy["positioning"] == "甜美 COS 视觉账号"
+    assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
+    assert payload["creator_intelligence"]["workflow"]["next_action"]["command"] == "export_report"
 
 
 def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> None:
@@ -10275,7 +10538,8 @@ def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) ->
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
             self.prompts.append(prompt)
             assert "样本摘要" in prompt
-            assert "极简合法 JSON" in prompt
+            assert "合法 JSON" in prompt
+            assert "不要压缩成一句话摘要" in prompt
             assert "请严格返回这个 JSON 结构" not in prompt
             assert "case_analysis_report_excerpt" not in prompt
             return {
@@ -10305,7 +10569,7 @@ def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) ->
     assert payload["result"]["sample_overview"]["selected_count"] == 3
     assert payload["map_reduce"]["enabled"] is True
     assert len(provider.prompts) == 1
-    assert len(provider.prompts[-1]) < 2500
+    assert len(provider.prompts[-1]) < 5000
     assert Path(payload["exports"]["map_summaries_json"]).is_file()
     assert Path(payload["exports"]["distill_prompt_micro_md"]).is_file()
 
@@ -10358,6 +10622,9 @@ def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch
     assert payload["ok"] is True
     assert payload["result"]["summary"] == "后台任务蒸馏完成。"
     assert payload["result"]["sample_overview"]["selected_count"] == 2
+    assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
+    assert payload["creator_intelligence"]["project"]["project_id"] == payload["set"]["set_id"]
+    assert payload["creator_intelligence"]["strategy_output"] == payload["result"]["creator_clone_strategy"]
     assert Path(payload["exports"]["creator_clone_result_json"]).is_file()
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
     assert "sk-" not in Path(payload["exports"]["creator_clone_result_json"]).read_text(encoding="utf-8")
