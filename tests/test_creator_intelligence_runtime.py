@@ -26,6 +26,7 @@ from app.services.creator_intelligence import (
     WorkflowState,
     build_behavior_representation,
 )
+from app.services.creator_intelligence.report_quality import validate_creator_report_quality
 
 
 def runtime_project() -> CreatorProject:
@@ -276,3 +277,56 @@ def test_ui_renderer_no_longer_contains_legacy_wizard_state_calculation() -> Non
     assert "function creatorRuntimeCurrentStep" in script
     assert "function creatorRuntimePrimaryAction" in script
     assert "runtime_state" in script
+
+
+def test_frontend_primary_button_uses_current_view_action_without_losing_runtime_progress() -> None:
+    script = Path("app/static/app.js").read_text(encoding="utf-8")
+    view_start = script.index("function creatorCloneViewMetaForStage")
+    view_end = script.index("function creatorCloneStageMeta", view_start)
+    view_meta_body = script[view_start:view_end]
+    start = script.index("function creatorCloneStageMeta")
+    end = script.index("function creatorCloneStateMeta", start)
+    stage_meta_body = script[start:end]
+
+    assert "return creatorCloneViewMetaForStage(stage);" in stage_meta_body
+    assert "creatorRuntimeMetaFromState()" in view_meta_body
+    assert 'normalizedStage === "export"' in view_meta_body
+    assert 'command: "show_select"' in view_meta_body
+    assert 'command: "build_evidence"' in view_meta_body
+    assert 'command: "show_distill"' in view_meta_body
+    assert 'command: "export_report"' in view_meta_body
+    assert "selectedCreatorSampleViewItems" in view_meta_body
+    assert "hasPendingEnrichment" in view_meta_body
+    assert "CREATOR_CLONE_MAX_DISTILL_SAMPLES" not in view_meta_body
+
+
+def test_report_quality_validator_flags_empty_and_weak_reports() -> None:
+    empty = validate_creator_report_quality({}, evidence_summary={"selected_count": 3, "evidence_ready_count": 0, "with_keyframes": 0}).to_dict()
+    weak = validate_creator_report_quality(
+        {
+            "positioning": "甜美 COS 近景视觉",
+            "content_strategy": ["近景人设先行"],
+            "hooks": ["第一眼给脸"],
+            "templates": [],
+            "anti_patterns": [],
+            "idea_bank": [],
+            "validation_rules": ["第一秒必须有人物亮点"],
+        },
+        evidence_summary={"selected_count": 3, "evidence_ready_count": 1, "with_keyframes": 1, "with_asr": 0, "with_ocr": 0},
+    ).to_dict()
+
+    assert empty["ok"] is False
+    assert set(empty["missing_fields"]) == {
+        "positioning",
+        "content_strategy",
+        "hooks",
+        "templates",
+        "anti_patterns",
+        "idea_bank",
+        "validation_rules",
+    }
+    assert empty["evidence_warnings"]
+    assert weak["ok"] is False
+    assert "templates" in weak["missing_fields"]
+    assert "content_strategy" in weak["weak_fields"]
+    assert weak["evidence_warnings"]

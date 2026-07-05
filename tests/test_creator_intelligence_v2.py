@@ -660,6 +660,8 @@ def test_legacy_creator_clone_module_documents_dto_boundary() -> None:
     assert "Legacy creator-clone persistence and compatibility helpers." in source
     assert "on-disk DTOs" in source
     assert "convert to ``CreatorProject`` for v2 logic" in source
+    assert "_record_creator_runtime_state" not in source
+    assert ".dispatch(" not in source
 
 
 def test_creator_jobs_dispatch_through_runtime_engine_without_runner_bridge() -> None:
@@ -671,3 +673,43 @@ def test_creator_jobs_dispatch_through_runtime_engine_without_runner_bridge() ->
     assert "WorkflowAction.SELECT_SAMPLES" in source
     assert "WorkflowAction.START_DISTILLATION" in source
     assert "WorkflowAction.COMPLETE_DISTILLATION" in source
+
+
+def test_creator_clone_distill_job_completion_updates_runtime_state(monkeypatch) -> None:
+    sample_set = sample_set_for_v2()
+    output_dir = settings.creator_clones_dir / sample_set.set_id
+    shutil.rmtree(output_dir, ignore_errors=True)
+    save_sample_set(sample_set)
+    strategy = CreatorCloneStrategy(
+        positioning="甜美 COS 近景视觉",
+        content_strategy=("近景人设先行", "动作变化制造停留"),
+        hooks=("第一眼给脸", "手势互动"),
+        templates=({"name": "近景三拍", "steps": ["给脸", "眼神", "手势"]},),
+        anti_patterns=("避免静态摆拍",),
+        idea_bank=({"title": "粉色妆造回头杀"},),
+        validation_rules=("第一秒是否有人物亮点", "是否有动作变化"),
+    ).to_dict()
+
+    def fake_distill_creator_clone(sample_set_arg, selected_sample_ids, **kwargs):
+        return {
+            "set": sample_set_arg.to_dict(),
+            "result": {"summary": "完成", "creator_clone_strategy": strategy},
+            "exports": {},
+            "warnings": [],
+        }
+
+    monkeypatch.setattr("app.routes.jobs.distill_creator_clone", fake_distill_creator_clone)
+
+    response = client.post(
+        "/api/jobs/creator-clone-distill",
+        json={"sample_set_id": sample_set.set_id, "selected_sample_ids": ["sample_ready"], "max_samples": 20},
+    )
+
+    assert response.status_code == 200
+    job_payload = client.get(f"/api/jobs/{response.json()['job_id']}").json()["job"]
+    intelligence = job_payload["result_json"]["creator_intelligence"]
+    assert job_payload["status"] == "success"
+    assert intelligence["runtime_state"]["workflow"]["state"] == WorkflowState.DONE
+    assert intelligence["runtime_state"]["primary_action"]["command"] == "export_report"
+    assert intelligence["runtime_state"]["strategy_output"] == strategy
+    shutil.rmtree(output_dir, ignore_errors=True)

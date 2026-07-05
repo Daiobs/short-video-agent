@@ -15,7 +15,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.errors import AppError, ErrorCode
 from app.main import app
-from app.models import CaseArtifact, DouyinVideoItem, VideoQualityCandidate
+from app.models import CaseArtifact, DouyinVideoItem, Job, VideoQualityCandidate, utc_now
 from app.providers.base import VideoQualityCandidateDTO
 from app.providers.douyin_web import DouyinWebProvider, normalize_douyin_detail_payload, normalize_douyin_html_payload
 from app.providers.profile_base import ProfileScanRequest, ProfileScanResult, ProfileVideoItem, profile_engagement_score, sorted_profile_items
@@ -507,6 +507,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderCreatorCloneNextAction" in script
     assert "function runCreatorCloneNextAction" in script
     assert "function runCreatorCloneImportStep" in script
+    import_step = script.split("async function runCreatorCloneImportStep()", 1)[1].split("async function syncCreatorCloneWorkflowSelection", 1)[0]
+    assert 'await scanProfile("public");' in import_step
+    assert "scanProfileWithLocalChrome()" not in import_step
     assert "RECENT_CREATOR_CLONE_SET_STORAGE_KEY" in script
     assert "shortVideoAgent.recentCreatorCloneSetId" in script
     assert "shortVideoAgent.recentProfileBuildState" in script
@@ -519,6 +522,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function rememberRecentProfileBuildState" in script
     assert "function rememberRecentProfileStage" in script
     assert "function mergeProfileQueueItems" in script
+    assert "job_id: isSafeJobId(jobId) ? jobId : \"\"" in script
+    assert "return setId ? {set_id: setId, job_id: jobId" in script
     assert "function rememberRecentCreatorCloneSetId" in script
     assert "function forgetRecentCreatorCloneSetId" in script
     assert "function enterCreatorCloneFreshImport" in script
@@ -548,9 +553,17 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "isSafeCreatorCloneSetId" in script
     assert "/api/creator-clone/sets/" in script
     assert "/api/creator-intelligence/projects/" in script
+    assert "function hydrateRecentCreatorCloneReport" in script
+    assert "/api/jobs/creator-clone-distill/recent" in script
+    assert "await hydrateRecentCreatorCloneReport({scroll});" in script
     assert "正在恢复上次素材池" in script
     assert "已恢复上次创作者蒸馏报告" in script
     assert "已恢复上次素材池" in script
+    poll_distill = script[
+        script.index("async function pollCreatorCloneDistillJob") : script.index("// Creator Clone: distillation")
+    ]
+    assert "applyCreatorCloneDistillPayload(resultPayload);" in poll_distill
+    assert "await hydrateCreatorCloneReportFromSet(resultPayload.set.set_id, {scroll: false});" in poll_distill
     assert "function profileScanMaxPagesForCount" in script
     assert "max_pages: profilePayload.max_pages" in script
     assert "function useRecommendedProfileSamples" in script
@@ -626,9 +639,24 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function creatorCloneStageUnavailableReason" in script
     assert "function resolveProfileStageForView" in script
     assert 'creatorCloneResult?.querySelector(".creator-distillation-report")' in script
-    assert 'if (normalizeProfileStage(stage) === "import")' in script
-    assert 'command === "show_select"' in script
-    assert 'command === "show_distill"' in script
+    view_meta = script[
+        script.index("function creatorCloneViewMetaForStage") : script.index("function creatorCloneStageMeta")
+    ]
+    assert "function creatorCloneViewMetaForStage" in script
+    assert 'button: "下一步：选择样本"' in view_meta
+    assert 'button: "下一步：开始富化证据"' in view_meta
+    assert 'button: "下一步：进入大模型蒸馏"' in view_meta
+    assert '"下一步：开始大模型蒸馏"' in view_meta
+    assert '"下一步：开始分批蒸馏"' in view_meta
+    assert 'button: "下一步：下载报告"' in view_meta
+    assert 'command: "show_select"' in view_meta
+    assert 'command: "show_distill"' in view_meta
+    assert 'command: "export_report"' in view_meta
+    assert "creatorRuntimeMetaFromState()" in view_meta
+    stage_meta = script[
+        script.index("function creatorCloneStageMeta") : script.index("function creatorCloneStateMeta")
+    ]
+    assert "return creatorCloneViewMetaForStage(stage);" in stage_meta
     assert "runtime_state" in script
     assert "workflowNextAction()" not in script
     assert "function workflowNextCommand" not in script
@@ -680,6 +708,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "// Creator Clone: distillation" in script
     assert "// Creator Clone: export" in script
     assert "function firstUrlFromText" in script
+    assert "function firstDouyinProfileTargetFromText" in script
+    assert "urls.length === 1" in script
+    assert "creatorCloneCurrentProfileValue" in script
+    assert "firstDouyinProfileTargetFromText(candidate)" in script
     assert "function loadChromeHelperStatus" in script
     assert "function chromeHelperNextAction" in script
     assert "下一步：点击“本机 Chrome 辅助入口”" in script
@@ -753,6 +785,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderSegmentSampleList" in script
     assert "if (state === \"SELECT_TO_ENRICH\")" not in script
     assert "await buildSelectedProfileQueue();" in script
+    assert "window.addEventListener(\"beforeunload\"" in script
+    assert "creatorCloneEnrichmentRunning" in script
     assert "if (creatorCloneEnrichmentRunning)" in script
     assert "证据富化任务正在运行。" in script
     assert "function pollCreatorCloneDistillJob" in script
@@ -765,7 +799,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "data-profile-stage-nav" in script
     assert "stage-hidden" in stylesheet
     assert "await batchDistillSelectedCreatorClone({confirm: false, triggeredByQueue: true})" in script
-    assert "分批蒸馏最多 ${PROFILE_BUILD_MAX_ITEMS} 条" in script
+    assert "分批蒸馏建议单批 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条" in script
     assert 'fetch("/api/creator-clone/distill"' not in script
     assert "function profileEvidenceCounts" in script
     assert "富化计划" in script
@@ -846,12 +880,15 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "收藏样本" in script
     assert '["image", "text"].includes' in script
     assert "可富化" in script
+    assert "可富化 ${buildable.length}/${PROFILE_BUILD_MAX_ITEMS}" not in script
+    assert "可富化视频 ${buildable.length} 条" in script
+    assert "本轮富化上限 ${PROFILE_BUILD_MAX_ITEMS} 条" in script
     assert "图文/元数据样本会作为蒸馏参考" in script
     assert "这些样本不下载视频，可直接进入大模型蒸馏" in script
     assert "请先选择代表样本。视频样本会下载富化" in script
     assert "保存 ${selected.length} 条参考样本，不执行视频下载" in script
     assert "不执行视频下载，可直接进入大模型蒸馏" in script
-    assert "不可富化" in script
+    assert "参考样本 ${unbuildableCount} 条" in script
     assert "请使用分批蒸馏" in script
     assert "disabledReason" in script
     assert "profileSelectedBuildButton.title" in script
@@ -2928,6 +2965,54 @@ def test_recent_profile_build_cases_job_returns_latest_queue() -> None:
     payload = recent_response.json()
     assert payload["job"]["id"] == job_id
     assert payload["job"]["type"] == "profile-build-cases"
+    assert payload["job"]["result_json"]["set"]["set_id"] == set_id
+    assert payload["job"]["result_json"]["selected_sample_ids"] == ["sample_recent_queue"]
+
+
+def test_recent_creator_clone_distill_job_returns_latest_success() -> None:
+    set_id = "clone_recent_creator_distill"
+    shutil.rmtree(settings.creator_clones_dir / set_id, ignore_errors=True)
+    save_sample_set(
+        CloneSampleSet(
+            set_id=set_id,
+            title="最近蒸馏报告",
+            samples=[CloneSample(sample_id="sample_recent_distill", title="最近蒸馏样本")],
+            selected_sample_ids=["sample_recent_distill"],
+        )
+    )
+    db = SessionLocal()
+    try:
+        job = Job(
+            id="job_recent_creator_distill",
+            type="creator-clone-batch-distill",
+            status="success",
+            progress=100,
+            message="分批蒸馏完成",
+            created_at=utc_now(),
+            updated_at=utc_now(),
+            result_json=json.dumps(
+                {
+                    "ok": True,
+                    "set": {"set_id": set_id},
+                    "result": {"summary": "最近报告已生成"},
+                    "exports": {"creator_clone_html": str(settings.creator_clones_dir / set_id / "creator_clone.html")},
+                },
+                ensure_ascii=False,
+            ),
+        )
+        db.merge(job)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(f"/api/jobs/creator-clone-distill/recent?sample_set_id={set_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["job"]["id"] == "job_recent_creator_distill"
+    assert payload["job"]["type"] == "creator-clone-batch-distill"
+    assert payload["job"]["result_json"]["set"]["set_id"] == set_id
+    assert payload["job"]["result_json"]["result"]["summary"] == "最近报告已生成"
 
 
 def test_creator_clone_distill_job_rejects_too_many_samples() -> None:
@@ -3069,7 +3154,7 @@ def test_batch_distill_writes_local_fallback_when_final_reduce_times_out(monkeyp
     assert Path(result["batch_distill"]["final"]["result_path"]).is_file()
     assert Path(result["batch_distill"]["final"]["markdown_path"]).is_file()
     assert "final_reduce_recovery" in result["result"]["batch_distill"]
-    assert provider_kwargs[-1]["timeout_seconds"] == 600
+    assert provider_kwargs[-1]["timeout_seconds"] >= 600
     assert provider_kwargs[-1]["max_output_tokens"] == 4000
 
 
@@ -9308,7 +9393,7 @@ def test_creator_clone_import_profile_url_prioritizes_public_scan(monkeypatch) -
     assert payload["set"]["profile_metadata"]["source_input"] == "https://www.douyin.com/user/MS4wLjABAAAAabc12345"
     assert payload["set"]["profile_metadata"]["source_mode"] == "profile"
     assert payload["set"]["profile_metadata"]["profile_url"] == "https://www.douyin.com/user/MS4wLjABAAAAabc12345"
-    assert any("公开主页扫描优先执行" in warning for warning in payload["set"]["warnings"])
+    assert any("统一 profile pipeline" in warning for warning in payload["set"]["warnings"])
 
 
 def test_creator_clone_build_sample_set_passes_profile_max_pages(monkeypatch) -> None:
@@ -10137,15 +10222,50 @@ def test_creator_clone_distill_execution_plan_scales_large_batches(monkeypatch, 
         ],
     ]
 
-    plan = build_distill_execution_plan(samples, batch_size=20, final_timeout_seconds=600)
+    plan = build_distill_execution_plan(samples, batch_size=20, final_timeout_seconds=600, single_timeout_seconds=90, prompt_chars=24000)
 
     assert plan["strategy"] == "hierarchical_reduce"
     assert plan["batch_count"] == 8
+    assert plan["prompt_chars"] == 24000
     assert plan["duration"]["known_count"] == 1
     assert plan["duration"]["total_seconds"] == 12.5
-    assert plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] >= 720
+    assert plan["timeout_policy"]["recommended_enrichment_timeout_seconds"] >= 1800
+    assert plan["timeout_policy"]["recommended_batch_timeout_seconds"] > 90
+    assert plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] > 600
+    assert plan["timeout_policy"]["basis"]["known_video_duration_seconds"] == 12.5
+    assert plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"] > 0
+    assert plan["timeout_policy"]["basis"]["components_seconds"]["sample_complexity"] > 0
+    assert "富化预算" in plan["timeout_policy"]["basis"]["rules"][0]
     phases = [item["phase"] for item in plan["timeout_policy"]["phase_diagnostics"]]
     assert phases == ["connect", "first_byte", "generation", "parse_persist"]
+
+
+def test_creator_clone_distill_execution_plan_uses_continuous_complexity_factors(monkeypatch, tmp_path: Path) -> None:
+    short_case = tmp_path / "case_short_duration"
+    long_case = tmp_path / "case_long_duration"
+    short_case.mkdir(parents=True)
+    long_case.mkdir(parents=True)
+    (short_case / "ffprobe.json").write_text(json.dumps({"duration": 10.0}), encoding="utf-8")
+    (long_case / "ffprobe.json").write_text(json.dumps({"duration": 600.0}), encoding="utf-8")
+    monkeypatch.setattr("app.services.creator_clone.settings.cases_dir", tmp_path)
+
+    short_samples = [
+        CloneSample(sample_id=f"short_{index}", title=f"短视频 {index}", case_id="case_short_duration")
+        for index in range(30)
+    ]
+    long_samples = [
+        CloneSample(sample_id=f"long_{index}", title=f"长视频 {index}", case_id="case_long_duration")
+        for index in range(30)
+    ]
+
+    short_plan = build_distill_execution_plan(short_samples, batch_size=20, final_timeout_seconds=600, prompt_chars=12000)
+    long_plan = build_distill_execution_plan(long_samples, batch_size=20, final_timeout_seconds=600, prompt_chars=12000)
+    larger_prompt_plan = build_distill_execution_plan(short_samples, batch_size=20, final_timeout_seconds=600, prompt_chars=48000)
+
+    assert long_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] > short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
+    assert larger_prompt_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] > short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
+    assert long_plan["timeout_policy"]["basis"]["components_seconds"]["duration_complexity"] > short_plan["timeout_policy"]["basis"]["components_seconds"]["duration_complexity"]
+    assert larger_prompt_plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"] > short_plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"]
 
 
 def test_creator_clone_prompt_includes_local_performance_segments() -> None:
@@ -10467,7 +10587,7 @@ def test_creator_clone_distill_job_unconfigured_returns_prompt(monkeypatch) -> N
     assert "prompt" in job["result_json"]
     assert "distill_prompt.md" in job["result_json"]["exports"]["distill_prompt_md"]
     assert job["result_json"]["creator_intelligence"]["project"]["project_id"] == set_id
-    assert job["result_json"]["creator_intelligence"]["workflow"]["state"] == "SAMPLE_SELECTED"
+    assert job["result_json"]["creator_intelligence"]["workflow"]["state"] == "EVIDENCE_READY"
     assert job["result_json"]["creator_intelligence"]["workflow"]["selected_count"] == len(samples)
     assert job["result_json"]["creator_intelligence"]["behavior_model"]["selected_count"] == len(samples)
 

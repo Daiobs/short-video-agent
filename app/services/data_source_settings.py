@@ -98,8 +98,13 @@ def update_douyin_settings_payload(payload: dict) -> dict:
 
 
 def test_douyin_settings_payload(payload: dict) -> dict:
+    profile_url = str(payload.get("profile_url") or "").strip()
+    sec_user_id = str(payload.get("sec_user_id") or "").strip()
+    if profile_url.startswith("MS4w") and not sec_user_id:
+        sec_user_id = profile_url
+        profile_url = ""
     return test_douyin_cookie_api(
-        profile_url=str(payload.get("profile_url") or "").strip(),
-        sec_user_id=str(payload.get("sec_user_id") or "").strip(),
+        profile_url=profile_url,
+        sec_user_id=sec_user_id,
         count=int(payload.get("count") or 5),
     )

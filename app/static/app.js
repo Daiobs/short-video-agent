@@ -253,7 +253,7 @@ function readRecentProfileBuildState() {
     const selectedSampleIds = normalizeItems(value.selected_sample_ids)
       .map((item) => String(item || ""))
       .filter(Boolean);
-    return setId && jobId ? {set_id: setId, job_id: jobId, selected_sample_ids: selectedSampleIds} : null;
+    return setId ? {set_id: setId, job_id: jobId, selected_sample_ids: selectedSampleIds} : null;
   } catch {
     return null;
   }
@@ -276,13 +276,13 @@ function rememberRecentProfileStage(stage) {
 }
 
 function rememberRecentProfileBuildState({setId = "", jobId = "", selectedSampleIds = []} = {}) {
-  if (!isSafeCreatorCloneSetId(setId) || !isSafeJobId(jobId)) {
+  if (!isSafeCreatorCloneSetId(setId)) {
     return;
   }
   try {
     window.localStorage?.setItem(RECENT_PROFILE_BUILD_STATE_STORAGE_KEY, JSON.stringify({
       set_id: setId,
-      job_id: jobId,
+      job_id: isSafeJobId(jobId) ? jobId : "",
       selected_sample_ids: normalizeItems(selectedSampleIds).map((item) => String(item || "")).filter(Boolean),
       saved_at: new Date().toISOString(),
     }));
@@ -371,8 +371,13 @@ async function restoreRecentCreatorCloneSet() {
 
 async function restoreRecentProfileBuildJob(setId) {
   const state = readRecentProfileBuildState();
-  const shouldUseStoredJob = state && state.set_id === setId;
+  const shouldUseStoredJob = state && state.set_id === setId && state.job_id;
   const selectedKeys = new Set(shouldUseStoredJob ? state.selected_sample_ids : []);
+  if (!selectedKeys.size && state && state.set_id === setId) {
+    normalizeItems(state.selected_sample_ids).forEach((key) => {
+      if (key) selectedKeys.add(key);
+    });
+  }
   if (selectedKeys.size) {
     setProfileSelection(activeCreatorSampleViewItems().filter((item) => sampleViewItemMatchesKeySet(item, selectedKeys)));
   }
@@ -451,6 +456,31 @@ function escapeHtml(value) {
 function firstUrlFromText(value) {
   const match = String(value || "").match(/https?:\/\/[^\s]+/i);
   return match ? match[0] : "";
+}
+
+function urlsFromText(value) {
+  return String(value || "").match(/https?:\/\/[^\s]+/gi) || [];
+}
+
+function firstDouyinProfileTargetFromText(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const urls = urlsFromText(raw);
+  const profileUrl = urls.find((url) => /douyin\.com\/user\//i.test(url));
+  if (profileUrl) {
+    return profileUrl;
+  }
+  const likelyProfileShortLink = urls.find((url) => /v\.douyin\.com/i.test(url));
+  if (likelyProfileShortLink && urls.length === 1 && /更多作品|TA的更多作品|主页|账号|博主/i.test(raw)) {
+    return likelyProfileShortLink;
+  }
+  const secMatch = raw.match(/\bMS4w[A-Za-z0-9_.-]+\b/);
+  if (secMatch) {
+    return secMatch[0];
+  }
+  return "";
 }
 
 function douyinProfileFingerprint(value) {
@@ -703,17 +733,29 @@ function renderJobPhase(job) {
     return;
   }
   const plan = phase.execution_plan || result.execution_plan || {};
-  const timeout = phase.timeout_seconds || plan.timeout_policy?.configured_final_reduce_timeout_seconds || "";
-  const recommendedTimeout = plan.timeout_policy?.recommended_final_reduce_timeout_seconds || "";
+  const timeoutPolicy = plan.timeout_policy || {};
+  const timeout = phase.timeout_seconds || timeoutPolicy.recommended_batch_timeout_seconds || timeoutPolicy.configured_batch_timeout_seconds || "";
+  const recommendedBatchTimeout = timeoutPolicy.recommended_batch_timeout_seconds || "";
+  const recommendedFinalTimeout = timeoutPolicy.recommended_final_reduce_timeout_seconds || "";
+  const recommendedEnrichmentTimeout = timeoutPolicy.recommended_enrichment_timeout_seconds || "";
   const batchLine = Number(phase.batch_count || plan.batch_count || 0)
     ? `批次 ${phase.phase_index ? `${formatNumber(phase.phase_index)} / ` : ""}${formatNumber(phase.batch_count || plan.batch_count)}`
     : "";
   const timeoutLine = timeout
-    ? `当前阶段最多等待 ${formatNumber(timeout)} 秒${recommendedTimeout && Number(recommendedTimeout) > Number(timeout) ? ` · 建议上限 ${formatNumber(recommendedTimeout)} 秒` : ""}`
+    ? `当前阶段最多等待 ${formatNumber(timeout)} 秒`
     : "";
+  const budgetLine = [recommendedEnrichmentTimeout ? `富化建议 ${formatNumber(recommendedEnrichmentTimeout)} 秒` : "", recommendedBatchTimeout ? `单批建议 ${formatNumber(recommendedBatchTimeout)} 秒` : "", recommendedFinalTimeout ? `汇总建议 ${formatNumber(recommendedFinalTimeout)} 秒` : ""].filter(Boolean).join(" · ");
   const duration = plan.duration || {};
   const durationLine = Number(duration.known_count || 0)
     ? `已知视频时长 ${formatNumber(duration.known_count)} 条 · 总计 ${formatNumber(duration.total_seconds || 0)} 秒`
+    : "";
+  const basis = timeoutPolicy.basis || {};
+  const promptLine = Number(basis.prompt_chars || plan.prompt_chars || 0)
+    ? `Prompt 约 ${formatNumber(basis.prompt_chars || plan.prompt_chars)} 字符`
+    : "";
+  const components = basis.components_seconds || {};
+  const componentLine = Object.keys(components).length
+    ? `预算贡献：批次 ${formatNumber(components.batch_complexity || 0)}s · Prompt ${formatNumber(components.prompt_complexity || 0)}s · 样本 ${formatNumber(components.sample_complexity || 0)}s · 时长 ${formatNumber(components.duration_complexity || 0)}s`
     : "";
   const diagnostics = normalizeItems(plan.timeout_policy?.phase_diagnostics)
     .map((item) => item && typeof item === "object" ? `${item.phase}: ${item.meaning}` : formatReportValue(item))
@@ -724,7 +766,10 @@ function renderJobPhase(job) {
     phase.current_phase_label || "",
     batchLine,
     timeoutLine,
+    budgetLine,
     durationLine,
+    promptLine,
+    componentLine,
   ].filter(isMeaningfulReportText);
   jobPhase.classList.remove("hidden");
   jobPhase.innerHTML = `
@@ -1553,6 +1598,22 @@ function creatorCloneStageLabel(stage) {
   }[normalizeProfileStage(stage)] || "当前步骤：导入素材";
 }
 
+function creatorRuntimeMetaFromState() {
+  const step = creatorRuntimeCurrentStep();
+  const action = creatorRuntimePrimaryAction();
+  if (!step.label && !action.command && !action.label && !action.summary) {
+    return null;
+  }
+  const command = action.command || "";
+  return {
+    step: step.label || creatorCloneStageLabel(step.stage || "import"),
+    button: action.label || "下一步",
+    command,
+    summary: action.summary || "",
+    disabled: Boolean(action.disabled) || command === "wait",
+  };
+}
+
 function hasCreatorCloneReportValue(value) {
   return Boolean(value && typeof value === "object" && Object.keys(value).length);
 }
@@ -1574,15 +1635,9 @@ function hasCreatorCloneReportLinkReady() {
 
 function hasRecoverableCreatorCloneReport() {
   const workflowState = currentCreatorRuntimeState?.workflow?.state || "";
-  const jobText = jobMessage?.textContent || "";
-  const statusText = profileScanStatus?.textContent || "";
   return Boolean(
     currentCreatorCloneSetId()
-    && (
-      workflowState === "DONE"
-      || /success\\s*·\\s*100%\\s*·\\s*创作者蒸馏完成/.test(jobText)
-      || /创作者蒸馏完成|已恢复上次创作者蒸馏报告/.test(statusText)
-    )
+    && workflowState === "DONE"
   );
 }
 
@@ -1746,16 +1801,10 @@ function syncProfileStageToWizard({scroll = false} = {}) {
   setProfileStageView(creatorRuntimeStage(), {scroll});
 }
 
-function creatorCloneStageMeta(stage = activeProfileStage()) {
+function creatorCloneViewMetaForStage(stage = activeProfileStage()) {
   const normalizedStage = normalizeProfileStage(stage);
-  const selected = selectedCreatorSampleViewItems();
-  const selectedCount = selected.length;
-  const hasSamples = activeCreatorSampleViewItems().length || currentCloneSetId;
-  const pendingEvidence = hasPendingEnrichment(selected);
-  if (normalizeProfileStage(stage) === "import") {
-    return creatorRuntimeMetaFallback();
-  }
-  if (!hasSamples) {
+  const selectedCount = selectedCreatorSampleViewItems().length;
+  if (normalizedStage === "import" || hasPendingQuickImportInput()) {
     return creatorRuntimeMetaFallback();
   }
   if (normalizedStage === "pool") {
@@ -1763,102 +1812,112 @@ function creatorCloneStageMeta(stage = activeProfileStage()) {
       step: creatorCloneStageLabel("pool"),
       button: "下一步：选择样本",
       command: "show_select",
-      summary: "素材池已生成，可进入样本选择并按点赞、评论、收藏等维度筛选。",
-      disabled: creatorCloneNextActionRunning,
+      summary: "素材池已构建，可进入样本选择并按互动数据筛选。",
+      disabled: !hasCreatorCloneSamplePool(),
     };
   }
   if (normalizedStage === "select") {
     if (!selectedCount) {
       return {
         step: creatorCloneStageLabel("select"),
-        button: "下一步：使用推荐样本",
-        command: "select_recommended_samples",
-        summary: "还没有选中样本，可先使用推荐蓝本，之后再手动微调。",
-        disabled: creatorCloneNextActionRunning,
+        button: "请先选择样本",
+        command: "select_samples",
+        summary: "在素材列表中勾选代表样本，或使用快捷入口。",
+        disabled: true,
       };
     }
     return {
       step: creatorCloneStageLabel("select"),
-      button: pendingEvidence ? "下一步：开始富化证据" : "下一步：进入大模型蒸馏",
-      command: pendingEvidence ? "build_evidence" : "show_distill",
-      summary: pendingEvidence
-        ? `已选择 ${selectedCount} 条样本，下一步补齐素材包、关键帧、OCR/ASR 等证据。`
-        : `已选择 ${selectedCount} 条样本，证据已可进入蒸馏。`,
-      disabled: creatorCloneNextActionRunning,
+      button: "下一步：开始富化证据",
+      command: "build_evidence",
+      summary: `已选择 ${formatNumber(selectedCount)} 条样本，下一步补齐视频、关键帧、OCR、ASR 等证据。`,
+      disabled: false,
     };
   }
   if (normalizedStage === "enrich") {
-    if (!selectedCount) {
-      return {
-        step: creatorCloneStageLabel("enrich"),
-        button: "返回选择样本",
-        command: "show_select",
-        summary: "还没有选中样本，请先回到样本选择。",
-        disabled: creatorCloneNextActionRunning,
-      };
-    }
     if (creatorCloneEnrichmentRunning) {
       return {
         step: creatorCloneStageLabel("enrich"),
         button: "正在富化证据",
         command: "wait",
-        summary: "素材包队列正在运行，完成后会进入下一步。",
+        summary: "证据富化正在后台运行，完成后会更新素材包队列。",
         disabled: true,
+      };
+    }
+    if (!selectedCount) {
+      return {
+        step: creatorCloneStageLabel("enrich"),
+        button: "返回选择样本",
+        command: "show_select",
+        summary: "还没有选中的代表样本。",
+        disabled: false,
+      };
+    }
+    if (hasPendingEnrichment()) {
+      return {
+        step: creatorCloneStageLabel("enrich"),
+        button: "下一步：开始富化证据",
+        command: "build_evidence",
+        summary: `已选择 ${formatNumber(selectedCount)} 条样本，仍有素材需要补齐证据。`,
+        disabled: false,
       };
     }
     return {
       step: creatorCloneStageLabel("enrich"),
-      button: pendingEvidence ? "下一步：开始富化证据" : "下一步：进入大模型蒸馏",
-      command: pendingEvidence ? "build_evidence" : "show_distill",
-      summary: pendingEvidence
-        ? `已选择 ${selectedCount} 条样本，其中仍有素材需要下载和抽帧。`
-        : "所选样本已有可用证据，可以进入蒸馏。",
-      disabled: creatorCloneNextActionRunning,
+      button: "下一步：进入大模型蒸馏",
+      command: "show_distill",
+      summary: "选中样本已有可用证据，可进入大模型蒸馏。",
+      disabled: false,
     };
   }
   if (normalizedStage === "distill") {
+    if (creatorCloneDistillRunning) {
+      return {
+        step: creatorCloneStageLabel("distill"),
+        button: "正在大模型蒸馏",
+        command: "wait",
+        summary: "当前任务由后台执行，完成后会展示创作者蒸馏报告。",
+        disabled: true,
+      };
+    }
     if (!selectedCount) {
       return {
         step: creatorCloneStageLabel("distill"),
         button: "返回选择样本",
         command: "show_select",
         summary: "还没有可蒸馏样本，请先选择代表样本。",
-        disabled: creatorCloneNextActionRunning,
+        disabled: false,
       };
     }
-    if (pendingEvidence) {
-      return {
-        step: creatorCloneStageLabel("distill"),
-        button: "下一步：先富化证据",
-        command: "build_evidence",
-        summary: "部分样本还没有素材包证据，建议先补齐后再蒸馏。",
-        disabled: creatorCloneNextActionRunning,
-      };
-    }
+    const command = creatorCloneDistillCommandForSelectedCount(selectedCount);
     return {
       step: creatorCloneStageLabel("distill"),
-      button: selectedCount > CREATOR_CLONE_MAX_DISTILL_SAMPLES ? "下一步：开始分批蒸馏" : "下一步：开始大模型蒸馏",
-      command: creatorCloneDistillCommandForSelectedCount(selectedCount),
-      summary: selectedCount > CREATOR_CLONE_MAX_DISTILL_SAMPLES
-        ? `已选择 ${selectedCount} 条样本，将按批次蒸馏后汇总。`
-        : `已选择 ${selectedCount} 条样本，可直接蒸馏。`,
-      disabled: creatorCloneNextActionRunning || creatorCloneDistillRunning,
+      button: command === "start_batch_distillation" ? "下一步：开始分批蒸馏" : "下一步：开始大模型蒸馏",
+      command,
+      summary: command === "start_batch_distillation"
+        ? `已选择 ${formatNumber(selectedCount)} 条样本，将按批次蒸馏后汇总。`
+        : `已选择 ${formatNumber(selectedCount)} 条样本，开始账号级创作者蒸馏。`,
+      disabled: false,
     };
   }
   if (normalizedStage === "export") {
-    const reportReady = hasCreatorCloneReportReady();
-    const outputReady = hasCreatorCloneOutputReady();
+    const runtimeMeta = creatorRuntimeMetaFromState();
+    if (runtimeMeta?.command === "export_report") {
+      return runtimeMeta;
+    }
     return {
       step: creatorCloneStageLabel("export"),
-      button: reportReady ? "下一步：下载报告" : "下一步：查看输出",
+      button: "下一步：下载报告",
       command: "export_report",
-      summary: reportReady
-        ? "创作者蒸馏报告已生成，可下载网页报告。"
-        : "已生成蒸馏 Prompt 或降级输出，可在可视化输出页继续处理。",
-      disabled: creatorCloneNextActionRunning || !outputReady,
+      summary: hasCreatorCloneOutputReady() ? "创作者蒸馏报告已生成，可打开网页报告。" : "请先完成大模型蒸馏生成报告。",
+      disabled: !hasCreatorCloneOutputReady(),
     };
   }
   return creatorRuntimeMetaFallback();
+}
+
+function creatorCloneStageMeta(stage = activeProfileStage()) {
+  return creatorCloneViewMetaForStage(stage);
 }
 
 function creatorCloneStateMeta(state = creatorRuntimeActionState()) {
@@ -1966,7 +2025,10 @@ function updateCreatorCloneSelectionStatus() {
     {full: 0, partial: 0, metadata_only: 0},
   );
   if (creatorCloneSelectionStatus) {
-    creatorCloneSelectionStatus.textContent = `已选 ${selected.length} 条；可富化 ${buildable.length}/${PROFILE_BUILD_MAX_ITEMS} 条；不可富化 ${unbuildableCount} 条；单次蒸馏最多 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条，分批蒸馏最多 ${PROFILE_BUILD_MAX_ITEMS} 条。完整 ${counts.full || 0}，部分 ${counts.partial || 0}，仅元数据 ${counts.metadata_only || 0}。`;
+    const enrichLimitText = buildable.length > PROFILE_BUILD_MAX_ITEMS
+      ? `；超过本轮富化上限 ${PROFILE_BUILD_MAX_ITEMS} 条`
+      : `；本轮富化上限 ${PROFILE_BUILD_MAX_ITEMS} 条`;
+    creatorCloneSelectionStatus.textContent = `已选 ${selected.length} 条；可富化视频 ${buildable.length} 条${enrichLimitText}；参考样本 ${unbuildableCount} 条。单次蒸馏最多 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条，分批蒸馏建议单批 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条。完整 ${counts.full || 0}，部分 ${counts.partial || 0}，仅元数据 ${counts.metadata_only || 0}。`;
   }
   if (profileSelectedBuildButton) {
     const disabledReason = creatorCloneEnrichmentRunning
@@ -3172,16 +3234,9 @@ async function runCreatorCloneImportStep() {
   syncUnifiedInputToImportFields(mode);
   setActiveImportMode(mode);
   if (mode === "browser") {
-    let status = null;
-    try {
-      status = await loadChromeHelperStatus({silent: true});
-    } catch (error) {
-      status = null;
-    }
-    if (status?.ready_for_profile_scan) {
-      await scanProfileWithLocalChrome();
-      return;
-    }
+    // Main profile imports must go through the server profile pipeline first.
+    // When a Douyin Cookie is configured, that path prioritizes Cookie API.
+    // Local Chrome remains an explicit fallback button after API/public scan fails.
     await scanProfile("public");
     if (!activeCreatorSampleViewItems().length) {
       setActiveImportMode("manual");
@@ -3649,6 +3704,10 @@ async function buildSelectedProfileQueue() {
       notes: [`已创建本地计划队列 ${selected.length} 条，等待后端逐条回写处理状态。`],
     }});
     profileQueueCard.scrollIntoView({behavior: "smooth", block: "start"});
+    rememberRecentProfileBuildState({
+      setId: currentCloneSetId,
+      selectedSampleIds: selectedCreatorSampleViewItems().map(sampleViewItemKey),
+    });
     const response = await fetch("/api/jobs/profile-build-cases", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
@@ -4807,6 +4866,29 @@ async function hydrateCreatorCloneReportFromSet(setId, options = {}) {
   return payload;
 }
 
+async function hydrateRecentCreatorCloneReport(options = {}) {
+  const currentSetId = currentCreatorCloneSetId();
+  const url = currentSetId
+    ? `/api/jobs/creator-clone-distill/recent?sample_set_id=${encodeURIComponent(currentSetId)}`
+    : "/api/jobs/creator-clone-distill/recent";
+  const response = await fetch(url, {cache: "no-store"});
+  const payload = await readJsonResponse(response);
+  const resultPayload = payload.job?.result_json || {};
+  const setId = resultPayload.set?.set_id || "";
+  if (!setId) {
+    throw new Error("最近的创作者蒸馏任务没有关联素材池。");
+  }
+  currentCloneSetId = setId;
+  rememberRecentCreatorCloneSetId(setId);
+  applyCreatorCloneDistillPayload(resultPayload);
+  if (!creatorCloneResult?.innerHTML.trim() || !hasCreatorCloneReportLinkReady()) {
+    await hydrateCreatorCloneReportFromSet(setId, {scroll: options.scroll === true});
+  } else if (options.scroll === true) {
+    creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
+  }
+  return resultPayload;
+}
+
 async function showCreatorCloneExportStage({scroll = true} = {}) {
   const setId = currentCreatorCloneSetId();
   const needsHydration = setId && (!creatorCloneResult?.innerHTML.trim() || !hasCreatorCloneReportLinkReady());
@@ -4818,7 +4900,23 @@ async function showCreatorCloneExportStage({scroll = true} = {}) {
       profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "报告恢复失败，请重新蒸馏或刷新页面。"}`;
     }
   }
+  const needsRecentHydration = !setId && (!creatorCloneResult?.innerHTML.trim() || !hasCreatorCloneReportLinkReady());
+  if (needsRecentHydration) {
+    try {
+      await hydrateRecentCreatorCloneReport({scroll});
+      return;
+    } catch (error) {
+      profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "未找到最近的创作者蒸馏报告，请先完成蒸馏。"}`;
+    }
+  }
   setProfileStageView("export", {scroll});
+  if (!creatorCloneResult?.innerHTML.trim() && currentCreatorCloneSetId()) {
+    try {
+      await hydrateCreatorCloneReportFromSet(currentCreatorCloneSetId(), {scroll: false});
+    } catch {
+      // Keep the export stage visible; the status line already explains recovery failures.
+    }
+  }
   renderCreatorCloneNextAction();
 }
 
@@ -4846,7 +4944,7 @@ async function pollCreatorCloneDistillJob(jobId) {
     renderJobStatus(job);
     const resultPayload = job.result_json || {};
     applyCreatorCloneDistillPayload(resultPayload);
-    if (!creatorCloneResult?.innerHTML.trim() && resultPayload.set?.set_id) {
+    if (resultPayload.set?.set_id) {
       await hydrateCreatorCloneReportFromSet(resultPayload.set.set_id, {scroll: false});
     }
     return;
@@ -5083,15 +5181,19 @@ function renderDouyinCookieDiagnosticsRows(diagnostics = {}) {
 }
 
 function creatorCloneCurrentProfileValue() {
-  const quick = creatorCloneUnifiedInputValue();
-  if (quick) {
-    return firstUrlFromText(quick) || quick;
+  const candidates = [
+    creatorCloneUnifiedInputValue(),
+    profileForm ? String(new FormData(profileForm).get("profile_url") || "").trim() : "",
+    profileLastChromeProfileValue,
+    ...collectCreatorCloneProfileInputCandidates(profileScanPayload || {}),
+  ];
+  for (const candidate of candidates) {
+    const target = firstDouyinProfileTargetFromText(candidate);
+    if (target) {
+      return target;
+    }
   }
-  if (!profileForm) {
-    return "";
-  }
-  const formData = new FormData(profileForm);
-  return String(formData.get("profile_url") || "").trim();
+  return "";
 }
 
 function renderDouyinCookieTestResult(test = {}) {
@@ -5361,9 +5463,13 @@ testDouyinCookieButton?.addEventListener("click", async () => {
   try {
     const profileValue = creatorCloneCurrentProfileValue();
     const payload = {
-      profile_url: firstUrlFromText(profileValue) || profileValue,
       count: 5,
     };
+    if (/^MS4w[A-Za-z0-9_.-]+$/.test(profileValue)) {
+      payload.sec_user_id = profileValue;
+    } else {
+      payload.profile_url = firstUrlFromText(profileValue) || profileValue;
+    }
     const response = await fetch("/api/settings/data-sources/douyin/test", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
@@ -5858,6 +5964,14 @@ downloadHomeAnalysisInputButton.addEventListener("click", () => {
   if (url) {
     window.open(url, "_blank", "noopener,noreferrer");
   }
+});
+
+window.addEventListener("beforeunload", (event) => {
+  if (!creatorCloneEnrichmentRunning && !creatorCloneDistillRunning && !creatorCloneNextActionRunning) {
+    return;
+  }
+  event.preventDefault();
+  event.returnValue = "";
 });
 
 loadLlmStatus();

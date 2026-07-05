@@ -13,6 +13,7 @@ import csv
 import html
 import io
 import json
+import math
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -38,11 +39,11 @@ from app.services.creator_intelligence import (
     CreatorCloneStrategy,
     CreatorRuntimeEngine,
     ExecutionLayer,
-    WorkflowAction,
     project_from_clone_selection,
 )
 from app.services.creator_intelligence.memory import CreatorMemoryGraph
 from app.services.creator_intelligence.models import validate_creator_clone_schema as validate_creator_clone_strategy_schema
+from app.services.creator_intelligence.report_quality import validate_creator_report_quality
 
 
 VALID_SOURCE_TYPES = {"douyin", "xhs", "bili", "local", "manual", "unknown"}
@@ -262,7 +263,7 @@ def build_sample_set(
             )
             samples.extend(samples_from_profile_result(result))
             warnings.extend(result.warnings)
-            warnings.append("公开主页扫描优先执行；仅使用平台公开返回的数据，不登录、不使用 Cookie、不绕风控。")
+            warnings.append("主页扫描已通过统一 profile pipeline 执行；本机配置 Cookie 时会优先尝试 Cookie API，失败后再回退公开页面扫描。")
         except AppError as error:
             if not (manual_links.strip() or structured_items.strip() or case_ids.strip()):
                 raise
@@ -1710,27 +1711,6 @@ def _drop_empty_prompt_values(value):
     return value if _is_meaningful_report_text(value) else ""
 
 
-def _record_creator_runtime_state(sample_set: CloneSampleSet, strategy_output: dict[str, Any] | None, *, source: str) -> None:
-    try:
-        engine = CreatorRuntimeEngine.from_sample_set(sample_set)
-        if engine.workflow_engine.state.value == "SAMPLE_SELECTED":
-            engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY, persist=True, debug={"source": source})
-        if strategy_output:
-            if engine.workflow_engine.state.value == "EVIDENCE_READY":
-                engine.dispatch(WorkflowAction.START_DISTILLATION, persist=True, debug={"source": source})
-            engine.dispatch(
-                WorkflowAction.COMPLETE_DISTILLATION,
-                {"strategy_output": strategy_output},
-                persist=True,
-                debug={"source": source},
-            )
-        else:
-            engine.persist(WorkflowAction.MARK_EVIDENCE_READY, {"source": source}, debug={"source": source})
-    except Exception:
-        # Runtime state recording must never make a finished distillation fail.
-        return
-
-
 def distill_creator_clone(
     sample_set: CloneSampleSet,
     selected_sample_ids: list[str],
@@ -1761,7 +1741,6 @@ def distill_creator_clone(
     if not llm_is_configured():
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
 
-    llm = get_llm_provider()
     execution_layer = ExecutionLayer()
     report_progress(42, "正在生成样本摘要和蒸馏 Prompt", {"current_phase": "prompt_build", "current_phase_label": "生成 Prompt"})
     # Keep the web path to one external LLM call. Per-sample LLM Map calls are
@@ -1782,9 +1761,38 @@ def distill_creator_clone(
     if use_micro_reduce:
         (output_dir / "distill_prompt_micro.md").write_text(prompt, encoding="utf-8")
         warnings.append("三条及以上样本默认使用 micro reduce，以提高当前大模型网关的成功率。")
-    report_progress(58, "蒸馏 Prompt 已写入，准备调用大模型", {"current_phase": "prompt_ready", "current_phase_label": "Prompt 就绪"})
+    effective_llm = effective_llm_settings()
+    execution_plan = build_distill_execution_plan(
+        selected_samples,
+        batch_size=max_samples,
+        single_timeout_seconds=float(effective_llm.get("timeout_seconds") or settings.llm_timeout_seconds),
+        final_timeout_seconds=float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
+        prompt_chars=len(prompt),
+    )
+    llm_timeout = int(execution_plan["timeout_policy"]["recommended_batch_timeout_seconds"])
+    llm = get_llm_provider(timeout_seconds=llm_timeout)
+    report_progress(
+        58,
+        f"蒸馏 Prompt 已写入，准备调用大模型，最长等待 {llm_timeout} 秒",
+        {
+            "current_phase": "prompt_ready",
+            "current_phase_label": "Prompt 就绪",
+            "timeout_seconds": llm_timeout,
+            "execution_plan": execution_plan,
+        },
+    )
     try:
-        report_progress(68, "正在等待大模型返回蒸馏 JSON", {"current_phase": "llm_wait", "current_phase_label": "等待大模型"})
+        report_progress(
+            68,
+            "正在等待大模型返回蒸馏 JSON",
+            {
+                "current_phase": "llm_wait",
+                "current_phase_label": "等待大模型",
+                "timeout_seconds": llm_timeout,
+                "execution_plan": execution_plan,
+                "diagnostic": "如果停留在这里，通常是网关排队、模型生成较慢，或 prompt 较长导致首字节/生成耗时增加。",
+            },
+        )
         result = execution_layer.generate_creator_clone(llm, prompt, []).to_dict()
     except AppError as error:
         if use_map_reduce and error.code in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID}:
@@ -1824,11 +1832,11 @@ def distill_creator_clone(
     _write_json(output_dir / "creator_clone_result.json", normalized)
     report_progress(94, "正在写入 Markdown / HTML 报告", {"current_phase": "write_report", "current_phase_label": "写入报告"})
     write_creator_clone_report_files(output_dir, normalized)
-    _record_creator_runtime_state(sample_set, normalized.get("creator_clone_strategy") or {}, source="distill_creator_clone")
     return {
         "set": sample_set.to_dict(),
         "result": normalized,
         "exports": export_paths(sample_set.set_id),
+        "execution_plan": execution_plan,
         "warnings": warnings,
         "map_reduce": {
             "enabled": use_map_reduce,
@@ -1906,6 +1914,8 @@ def build_distill_execution_plan(
     *,
     batch_size: int = MAX_DISTILL_SAMPLES,
     final_timeout_seconds: float | None = None,
+    single_timeout_seconds: float | None = None,
+    prompt_chars: int | None = None,
 ) -> dict:
     selected_count = len(selected_samples)
     normalized_batch_size = max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES))
@@ -1925,16 +1935,44 @@ def build_distill_execution_plan(
         strategy = "hierarchical_reduce"
         strategy_label = "大样本：分层汇总，保留批次中间结果"
 
-    configured_timeout = float(final_timeout_seconds or settings.llm_final_reduce_timeout_seconds)
-    duration_factor = min(300.0, total_duration * 0.08) if durations else 0.0
-    count_factor = selected_count * (4.0 if selected_count > MAX_DISTILL_SAMPLES else 2.0)
-    recommended_timeout = int(max(configured_timeout, 120.0 + count_factor + duration_factor))
+    configured_single_timeout = float(single_timeout_seconds or settings.llm_timeout_seconds)
+    configured_final_timeout = float(final_timeout_seconds or settings.llm_final_reduce_timeout_seconds)
+    known_duration_minutes = total_duration / 60.0 if durations else 0.0
+    prompt_k = max(0.0, float(prompt_chars or 0) / 1000.0)
+    duration_complexity = min(420.0, math.log1p(known_duration_minutes) * 45.0) if durations else 0.0
+    sample_complexity = min(360.0, selected_count * 2.5)
+    batch_complexity = batch_count * 75.0
+    prompt_complexity = prompt_k * 8.0
+    enrichment_timeout = int(min(1800.0, 120.0 + selected_count * 20.0 + known_duration_minutes * 15.0))
+    batch_prompt_complexity = prompt_complexity / max(1, batch_count)
+    recommended_single_timeout = int(
+        min(
+            1200.0,
+            max(
+                configured_single_timeout,
+                180.0
+                + min(selected_count, normalized_batch_size) * 20.0
+                + batch_prompt_complexity
+                + min(180.0, duration_complexity / max(1, batch_count)),
+            ),
+        )
+    )
+    recommended_final_timeout = int(
+        min(
+            2400.0,
+            max(
+                configured_final_timeout,
+                300.0 + batch_complexity + prompt_complexity + sample_complexity + duration_complexity,
+            ),
+        )
+    )
     return {
         "strategy": strategy,
         "strategy_label": strategy_label,
         "selected_count": selected_count,
         "batch_size": normalized_batch_size,
         "batch_count": batch_count,
+        "prompt_chars": int(prompt_chars or 0),
         "duration": {
             "known_count": len(durations),
             "total_seconds": total_duration,
@@ -1942,8 +1980,29 @@ def build_distill_execution_plan(
             "source": "case ffprobe.json" if durations else "unknown",
         },
         "timeout_policy": {
-            "recommended_final_reduce_timeout_seconds": recommended_timeout,
-            "configured_final_reduce_timeout_seconds": int(configured_timeout),
+            "recommended_enrichment_timeout_seconds": enrichment_timeout,
+            "recommended_batch_timeout_seconds": recommended_single_timeout,
+            "recommended_final_reduce_timeout_seconds": recommended_final_timeout,
+            "configured_batch_timeout_seconds": int(configured_single_timeout),
+            "configured_final_reduce_timeout_seconds": int(configured_final_timeout),
+            "basis": {
+                "selected_count": selected_count,
+                "batch_count": batch_count,
+                "known_video_duration_seconds": total_duration,
+                "prompt_chars": int(prompt_chars or 0),
+                "components_seconds": {
+                    "base_final": 300,
+                    "batch_complexity": round(batch_complexity, 2),
+                    "prompt_complexity": round(prompt_complexity, 2),
+                    "sample_complexity": round(sample_complexity, 2),
+                    "duration_complexity": round(duration_complexity, 2),
+                },
+                "rules": [
+                    "富化预算 = 120s + 样本数*20s + 已知视频分钟数*15s，上限 1800s",
+                    "单批蒸馏预算 = 180s + 批内样本数*20s + 分摊Prompt复杂度 + 分摊时长复杂度，上限 1200s",
+                    "最终汇总预算 = 300s + 批次数复杂度 + Prompt复杂度 + 样本复杂度 + 时长复杂度，上限 2400s",
+                ],
+            },
             "phase_diagnostics": [
                 {"phase": "connect", "meaning": "网络连接、DNS、TLS 或网关入口耗时"},
                 {"phase": "first_byte", "meaning": "请求已发出但还没收到模型/网关首字节，通常是排队或上游阻塞"},
@@ -2490,9 +2549,12 @@ def batch_distill_creator_clone(
         )
 
     batch_results: list[dict] = []
-    llm = get_llm_provider() if llm_is_configured() else None
-    if not llm:
+    llm_configured = llm_is_configured()
+    if not llm_configured:
         warnings.append("大模型未配置，已生成分批蒸馏 Prompt 和最终汇总 Prompt。")
+    effective_llm = effective_llm_settings()
+    configured_batch_timeout = float(effective_llm.get("timeout_seconds") or settings.llm_timeout_seconds)
+    configured_final_timeout = float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds)
 
     for index, chunk in enumerate(chunks, start=1):
         batch_id = f"batch_{index:03d}"
@@ -2503,10 +2565,18 @@ def batch_distill_creator_clone(
         markdown_path = batch_dir / f"{batch_id}.md"
         prompt_path.write_text(prompt, encoding="utf-8")
         _write_json(batch_dir / f"{batch_id}_map_summaries.json", map_summaries)
+        batch_plan = build_distill_execution_plan(
+            chunk,
+            batch_size=batch_size,
+            single_timeout_seconds=configured_batch_timeout,
+            final_timeout_seconds=configured_final_timeout,
+            prompt_chars=len(prompt),
+        )
+        batch_timeout = int(batch_plan["timeout_policy"]["recommended_batch_timeout_seconds"])
         batch_progress = 10 + int((index - 1) / max(1, len(chunks)) * 65)
         report_progress(
             batch_progress,
-            f"正在蒸馏批次 {index}/{len(chunks)}",
+            f"正在蒸馏批次 {index}/{len(chunks)}，最长等待 {batch_timeout} 秒",
             {
                 "current_phase": "batch_reduce",
                 "current_phase_label": "分批大模型蒸馏",
@@ -2515,7 +2585,10 @@ def batch_distill_creator_clone(
                 "batch_id": batch_id,
                 "batch_count": len(chunks),
                 "sample_count": len(chunk),
+                "timeout_seconds": batch_timeout,
                 "status": "running",
+                "execution_plan": batch_plan,
+                "diagnostic": "批次 timeout 由批内样本数、已知视频时长和本批 Prompt 体积共同决定。",
             },
         )
         batch_payload = {
@@ -2528,11 +2601,14 @@ def batch_distill_creator_clone(
             "markdown_path": str(markdown_path),
             "status": "prompt_only",
             "summary": "",
-            "error_code": "LLM_NOT_CONFIGURED" if not llm else "",
+            "error_code": "LLM_NOT_CONFIGURED" if not llm_configured else "",
+            "timeout_seconds": batch_timeout,
+            "execution_plan": batch_plan,
         }
-        if llm:
+        if llm_configured:
             try:
-                raw_result = ExecutionLayer().generate_creator_clone(llm, prompt, []).to_dict()
+                batch_llm = get_llm_provider(timeout_seconds=batch_timeout)
+                raw_result = ExecutionLayer().generate_creator_clone(batch_llm, prompt, []).to_dict()
                 normalized = normalize_creator_clone_result(raw_result, sample_set, chunk, warnings=[])
                 _write_json(result_path, normalized)
                 markdown_path.write_text(render_creator_clone_markdown(normalized), encoding="utf-8")
@@ -2584,13 +2660,18 @@ def batch_distill_creator_clone(
         "prompt_path": str(final_prompt_path),
         "result_path": str(final_result_path),
         "markdown_path": str(final_markdown_path),
-        "error_code": "LLM_NOT_CONFIGURED" if not llm else "",
+        "error_code": "LLM_NOT_CONFIGURED" if not llm_configured else "",
     }
     final_result = None
-    effective_llm = effective_llm_settings()
-    final_timeout = float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds)
     final_max_output_tokens = int(effective_llm.get("final_reduce_max_output_tokens") or settings.llm_final_reduce_max_output_tokens)
-    execution_plan = build_distill_execution_plan(selected_samples, batch_size=batch_size, final_timeout_seconds=final_timeout)
+    execution_plan = build_distill_execution_plan(
+        selected_samples,
+        batch_size=batch_size,
+        single_timeout_seconds=configured_batch_timeout,
+        final_timeout_seconds=configured_final_timeout,
+        prompt_chars=len(final_prompt),
+    )
+    final_timeout = int(execution_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"])
     report_progress(
         82,
         f"正在汇总所有批次，最长等待 {int(final_timeout)} 秒",
@@ -2606,7 +2687,7 @@ def batch_distill_creator_clone(
             "diagnostic": "如果长时间停留在这里，通常是网关排队、模型生成较慢或最终 JSON 过长。",
         },
     )
-    if llm:
+    if llm_configured:
         try:
             final_llm = get_llm_provider(
                 timeout_seconds=final_timeout,
@@ -2623,7 +2704,6 @@ def batch_distill_creator_clone(
             final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
             _write_json(output_dir / "creator_clone_result.json", final_result)
             write_creator_clone_report_files(output_dir, final_result)
-            _record_creator_runtime_state(sample_set, final_result.get("creator_clone_strategy") or {}, source="batch_distill_creator_clone")
             final_payload.update({"status": "success", "result": final_result, "error_code": ""})
             report_progress(
                 95,
@@ -2651,7 +2731,6 @@ def batch_distill_creator_clone(
             final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
             _write_json(output_dir / "creator_clone_result.json", final_result)
             write_creator_clone_report_files(output_dir, final_result)
-            _record_creator_runtime_state(sample_set, final_result.get("creator_clone_strategy") or {}, source="batch_distill_creator_clone_fallback")
             final_payload.update({"status": "fallback", "result": final_result, "error_code": error.code, "message": error.message})
             warnings.append(f"最终汇总失败：{error.code}：{error.message}")
             report_progress(
@@ -2763,6 +2842,29 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
         for key in creator_clone_schema()["performance_segments"]
     }
     result["creator_clone_strategy"] = normalize_creator_clone_strategy(result)
+    evidence_summary = {
+        "selected_count": len(selected_samples),
+        "evidence_ready_count": sum(
+            1
+            for sample in selected_samples
+            if sample.understanding_level in {"full", "partial"}
+            or sample.has_frames
+            or sample.has_asr
+            or sample.has_ocr
+            or sample.has_comments
+        ),
+        "with_keyframes": sum(1 for sample in selected_samples if sample.has_frames),
+        "with_asr": sum(1 for sample in selected_samples if sample.has_asr),
+        "with_ocr": sum(1 for sample in selected_samples if sample.has_ocr),
+    }
+    report_quality = validate_creator_report_quality(
+        result["creator_clone_strategy"],
+        evidence_summary=evidence_summary,
+    ).to_dict()
+    result["report_quality"] = report_quality
+    result["warnings"] = list(result.get("warnings") or [])
+    result["warnings"].extend(report_quality.get("warnings") or [])
+    result["warnings"].extend(report_quality.get("evidence_warnings") or [])
     result["creator_report_view_model"] = build_creator_report_view_model(result, sample_set, selected_samples)
     return result
 

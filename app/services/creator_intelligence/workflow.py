@@ -298,7 +298,7 @@ class WorkflowEngine:
             self.message = "Samples selected."
             return
         if action == WorkflowAction.MARK_EVIDENCE_READY:
-            self._require({WorkflowState.SAMPLE_SELECTED, WorkflowState.EVIDENCE_READY, WorkflowState.DONE}, action)
+            self._require({WorkflowState.SAMPLE_SELECTED, WorkflowState.EVIDENCE_READY, WorkflowState.DISTILLING, WorkflowState.DONE}, action)
             if not self.project.selected_samples:
                 raise ValueError("Cannot mark evidence ready without selected samples.")
             self.has_behavior_model = bool(payload.get("has_behavior_model") or self.has_behavior_model)
