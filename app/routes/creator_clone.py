@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import secrets
 import time
 from pathlib import Path
@@ -18,6 +19,7 @@ from app.services.creator_clone import (
     creator_clone_dir,
     creator_intelligence_payload_for_sample_set,
     distill_creator_clone,
+    ensure_creator_clone_html_report,
     export_paths,
     load_sample_set,
     normalize_content_profile,
@@ -161,12 +163,29 @@ def get_creator_clone_set(set_id: str):
         sample_set = load_sample_set(set_id)
         result_path = creator_clone_dir(set_id) / "creator_clone_result.json"
         prompt_path = creator_clone_dir(set_id) / "distill_prompt.md"
+        result = {}
+        prompt = ""
+        if result_path.is_file():
+            try:
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                result = {}
+        if prompt_path.is_file():
+            try:
+                prompt = prompt_path.read_text(encoding="utf-8")
+            except OSError:
+                prompt = ""
         return {
             "ok": True,
             "set": sample_set.to_dict(),
             "has_result": result_path.is_file(),
             "has_prompt": prompt_path.is_file(),
-            "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
+            "result": result,
+            "prompt": prompt,
+            "creator_intelligence": creator_intelligence_payload_for_sample_set(
+                sample_set,
+                result.get("creator_clone_strategy") if isinstance(result, dict) else None,
+            ),
             "capture_audit": load_capture_audit(set_id),
             "handoff_manifest": load_handoff_manifest(set_id),
             "exports": export_paths(set_id),
@@ -258,15 +277,22 @@ def download_creator_clone_file(set_id: str, filename: str):
         "distill_prompt.md",
         "creator_clone_result.json",
         "creator_clone.md",
+        "creator_clone.html",
     }
     if filename not in allowed:
         return error_response(AppError(ErrorCode.HOST_NOT_ALLOWED, "不允许下载该文件。"))
     if filename == "handoff_manifest.json":
         load_handoff_manifest(set_id)
-    file_path = creator_clone_dir(set_id) / filename
+    file_path = ensure_creator_clone_html_report(set_id) if filename == "creator_clone.html" else creator_clone_dir(set_id) / filename
     if not file_path.is_file():
         return error_response(AppError(ErrorCode.CASE_BUILD_FAILED, "文件尚未生成。"), status_code=404)
-    media_type = "application/json" if file_path.suffix == ".json" else "text/markdown; charset=utf-8"
+    media_type = (
+        "application/json"
+        if file_path.suffix == ".json"
+        else "text/html; charset=utf-8"
+        if file_path.suffix == ".html"
+        else "text/markdown; charset=utf-8"
+    )
     return FileResponse(file_path, media_type=media_type, filename=filename)
 
 

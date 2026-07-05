@@ -222,10 +222,9 @@ LLM_MODEL=支持图片输入的模型</pre>
                     <details class="creator-clone-advanced-actions hidden">
                         <summary>高级操作</summary>
                         <div class="advanced-action-list">
-                            <p>主按钮会按输入内容自动选择导入方式。需要指定数据源、实验扫描、复制 Prompt 或下载 JSON 时，再展开对应区域。</p>
+                            <p>主按钮会按输入内容自动选择导入方式。需要指定数据源或实验扫描时，再展开对应区域。</p>
                             <a href="#profile-data-source-details">切换数据源</a>
                             <a href="#profile-data-source-details">公开扫描实验入口</a>
-                            <a href="#creator-clone-export-actions">复制 Prompt / 下载 JSON</a>
                         </div>
                     </details>
                 </div>
@@ -548,13 +547,11 @@ https://v.douyin.com/xxxxxx/
                     <span id="creator-clone-confidence" class="status-badge muted-badge"></span>
                 </div>
                 <div id="creator-clone-result" class="creator-clone-result"></div>
-                <details class="profile-action-card report-export-card" id="creator-clone-export-actions">
-                    <summary>
-                        <span class="summary-title">报告文件</span>
-                    </summary>
+                <details class="profile-action-card report-export-card hidden" id="creator-clone-export-actions" hidden>
+                    <summary>后台导出</summary>
                     <div class="profile-secondary-actions">
                         <button type="button" id="copy-creator-clone-spec-button">复制规则</button>
-                        <a id="download-creator-clone-md" class="button-link" href="#" target="_blank" rel="noreferrer">下载报告</a>
+                        <a id="download-creator-clone-md" class="button-link" href="#" target="_blank" rel="noreferrer">打开网页报告</a>
                         <button type="button" id="copy-distill-prompt-button">复制蒸馏 Prompt</button>
                         <a id="download-creator-clone-json" class="button-link ghost-download-link" href="#" target="_blank" rel="noreferrer">下载 JSON</a>
                     </div>

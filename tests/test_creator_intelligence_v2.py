@@ -190,6 +190,15 @@ def test_workflow_engine_controls_creator_distillation_state() -> None:
     assert done.state == WorkflowState.DONE
     assert done.has_strategy_output is True
     assert done.to_dict()["next_intent"] is None
+    assert WorkflowAction.MARK_EVIDENCE_READY in done.to_dict()["allowed_actions"]
+    assert WorkflowAction.START_DISTILLATION in done.to_dict()["allowed_actions"]
+
+    rerun_ready = engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY, {"has_behavior_model": True})
+    assert rerun_ready.state == WorkflowState.EVIDENCE_READY
+    assert rerun_ready.has_strategy_output is False
+    rerun_distilling = engine.dispatch(WorkflowAction.START_DISTILLATION)
+    assert rerun_distilling.state == WorkflowState.DISTILLING
+    assert rerun_distilling.has_strategy_output is False
 
 
 def test_workflow_engine_restores_done_state_from_strategy_output() -> None:
@@ -246,15 +255,19 @@ def test_creator_clone_set_endpoint_restores_done_state_from_strategy_output() -
         json.dumps({"summary": "完成", "creator_clone_strategy": strategy}, ensure_ascii=False),
         encoding="utf-8",
     )
+    (output_dir / "distill_prompt.md").write_text("# 蒸馏 Prompt\n", encoding="utf-8")
 
     response = client.get(f"/api/creator-clone/sets/{sample_set.set_id}")
 
     assert response.status_code == 200
-    intelligence = response.json()["creator_intelligence"]
+    payload = response.json()
+    intelligence = payload["creator_intelligence"]
     assert intelligence["project"]["project_id"] == sample_set.set_id
     assert intelligence["workflow"]["state"] == WorkflowState.DONE
     assert intelligence["workflow"]["has_strategy_output"] is True
     assert intelligence["strategy_output"] == strategy
+    assert payload["result"]["summary"] == "完成"
+    assert payload["prompt"] == "# 蒸馏 Prompt\n"
     shutil.rmtree(output_dir, ignore_errors=True)
 
 
@@ -433,6 +446,7 @@ def test_creator_intelligence_selection_after_done_resets_report_state() -> None
         encoding="utf-8",
     )
     (output_dir / "creator_clone.md").write_text("# 旧报告\n", encoding="utf-8")
+    (output_dir / "creator_clone.html").write_text("<h1>旧报告</h1>\n", encoding="utf-8")
 
     before = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()
     assert before["workflow"]["state"] == WorkflowState.DONE
@@ -451,6 +465,7 @@ def test_creator_intelligence_selection_after_done_resets_report_state() -> None
     assert payload["strategy_output"] == {}
     assert not (output_dir / "creator_clone_result.json").exists()
     assert not (output_dir / "creator_clone.md").exists()
+    assert not (output_dir / "creator_clone.html").exists()
 
     reloaded = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()
     assert reloaded["workflow"]["state"] == WorkflowState.SAMPLE_SELECTED

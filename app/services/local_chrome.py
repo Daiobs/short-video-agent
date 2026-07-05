@@ -397,7 +397,11 @@ def scan_douyin_profile_from_local_chrome(
         title=f"{profile.get('nickname') or '本机 Chrome'} 素材池",
         creator_name=str(profile.get("nickname") or ""),
         source_platform="douyin",
-        profile_metadata=_sanitize_profile_metadata(profile),
+        profile_metadata={
+            **_sanitize_profile_metadata(profile),
+            "source_input": _safe_requested_profile(profile_url)[:500],
+            "source_mode": "browser_dom",
+        },
         samples=samples[: max(1, min(int(max_items or 100), 200))],
         warnings=warnings,
     )

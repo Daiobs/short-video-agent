@@ -522,21 +522,34 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function rememberRecentCreatorCloneSetId" in script
     assert "function forgetRecentCreatorCloneSetId" in script
     assert "function enterCreatorCloneFreshImport" in script
+    assert "function enterCreatorCloneImportView" in script
+    assert "function collectCreatorCloneProfileInputCandidates" in script
+    assert "meta.source_input" in script
+    assert '/douyin\\.com\\/user\\//i.test(value)' in script
+    assert '!/\\/video\\//i.test(value)' in script
+    assert "sourceUrls.length > 20" in script
     assert "function hasCreatorCloneActiveSession" in script
+    assert "function hasCreatorCloneSamplePool" in script
+    assert "function hasCreatorCloneSelectedSamples" in script
+    assert "function creatorCloneStageUnavailableReason" in script
+    assert "function resolveProfileStageForView" in script
     assert "function isProfileStageNavigationLocked" in script
-    assert 'normalizedStage !== "import" && !hasCreatorCloneActiveSession()' in script
     assert "请先完成导入素材，再进入后续步骤。" in script
+    assert "请先在“选择 N 条样本”中勾选代表样本。" in script
+    assert "请先完成大模型蒸馏生成报告或 Prompt。" in script
+    assert "profileStageView = resolveProfileStageForView(stage);" in script
     assert "step.disabled = locked;" in script
     assert "currentCreatorRuntimeState = null;" in script
     assert 'profileResultsBody.innerHTML = "";' in script
     assert 'creatorCloneSelectionStatus.textContent = "已选 0 条。";' in script
     assert "resetCreatorClonePoolForNewProfile({clearInput: false});" in script
     assert 'targetStage === "import" && (currentCloneSetId || activeCreatorSampleViewItems().length || currentCreatorRuntimeState)' in script
-    assert "已回到导入素材。可直接替换上方链接并重新开始。" in script
+    assert "当前素材池仍保留；点击“下一步：开始导入素材”后才会替换旧结果。" in script
     assert "isSafeCreatorCloneSetId" in script
     assert "/api/creator-clone/sets/" in script
     assert "/api/creator-intelligence/projects/" in script
     assert "正在恢复上次素材池" in script
+    assert "已恢复上次创作者蒸馏报告" in script
     assert "已恢复上次素材池" in script
     assert "function profileScanMaxPagesForCount" in script
     assert "max_pages: profilePayload.max_pages" in script
@@ -588,13 +601,31 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "/api/creator-clone/sets/${encodeURIComponent(currentCloneSetId)}/workflow" not in script
     assert 'dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES"' in script
     assert "creator_intelligence" in script
-    assert "creatorCloneExportActions.open = true" in script
+    assert "creatorCloneExportActions.open = false" in script
+    assert "creatorCloneExportActions.hidden = true" in script
     assert "function activeProfileStage" in script
     assert "function creatorWorkflowProgressStage" in script
     assert "const activeStage = creatorWorkflowProgressStage();" in script
     assert "const viewedStage = activeProfileStage();" in script
     assert 'step.classList.toggle("viewing", stage === viewedStage && index !== activeStageIndex);' in script
     assert "function creatorCloneStageMeta" in script
+    assert "function creatorCloneStageLabel" in script
+    assert "function creatorCloneDistillCommandForSelectedCount" in script
+    assert "function hasCreatorCloneReportReady" in script
+    assert "function currentCreatorCloneSetId" in script
+    assert "function hasCreatorCloneReportLinkReady" in script
+    assert "function hasRecoverableCreatorCloneReport" in script
+    assert "function hasCreatorCloneOutputReady" in script
+    assert "function hydrateCreatorCloneReportFromSet" in script
+    assert "function showCreatorCloneExportStage" in script
+    assert "currentCreatorCloneSetId()" in script
+    assert 'workflowState === "DONE"' in script
+    assert "await hydrateCreatorCloneReportFromSet(resultPayload.set.set_id" in script
+    assert 'targetStage === "export"' in script
+    assert "await showCreatorCloneExportStage({scroll: true});" in script
+    assert "function creatorCloneStageUnavailableReason" in script
+    assert "function resolveProfileStageForView" in script
+    assert 'creatorCloneResult?.querySelector(".creator-distillation-report")' in script
     assert 'if (normalizeProfileStage(stage) === "import")' in script
     assert 'command === "show_select"' in script
     assert 'command === "show_distill"' in script
@@ -904,6 +935,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderJobPhase" in script
     assert "function renderJobStatus" in script
     assert "distill_phase" in script
+    assert "进入大模型蒸馏准备阶段" in Path("app/routes/jobs.py").read_text(encoding="utf-8")
+    assert "正在生成样本摘要和蒸馏 Prompt" in Path("app/services/creator_clone.py").read_text(encoding="utf-8")
     assert ".job-phase" in stylesheet
     assert "id=\"profile-content-profile\"" in response.text
     assert "账号类型 / 分析模板" in response.text
@@ -915,6 +948,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "creator-clone-segment-disclosure" in script
     assert '${renderPublicCard("样本分层"' not in script
     assert "function renderCreatorDistillationReport" in script
+    assert "function creatorCloneMarkdownReport" in script
+    assert "Markdown 报告正文" not in script
     assert "function creatorReportViewModelFromResult" in script
     assert "creator_report_view_model" in script
     assert "isTechnicalReportNote" in script
@@ -930,7 +965,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "可复刻创作公式" in script
     assert "不要照搬 / 风险边界" in script
     assert "lockedProfileNavigationStage" in script
-    assert "证据富化正在运行，完成后会自动进入大模型蒸馏" in script
+    assert "证据富化正在运行，完成后会自动进入下一步" in script
     assert "大模型蒸馏正在运行，完成后会自动进入报告页" in script
     assert "creatorCloneOverviewFromSet" in script
     assert "创作者蒸馏证据完整度" in script
@@ -9139,10 +9174,9 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "证据富化" in response.text
     assert "大模型蒸馏" in response.text
     assert "creator-clone-distill-button" in response.text
-    assert "报告文件" in response.text
-    assert 'id="creator-clone-export-actions"' in response.text
+    assert '<details class="profile-action-card report-export-card hidden" id="creator-clone-export-actions" hidden>' in response.text
     assert "复制规则" in response.text
-    assert "下载报告" in response.text
+    assert "打开网页报告" in response.text
     script = Path("app/static/app.js").read_text(encoding="utf-8")
     assert "/api/local-helper/chrome/status" in script
     assert "/api/local-helper/chrome/scan-token" in script
@@ -9197,6 +9231,13 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "下一步：开始导入素材" in script
     assert "function activeProfileStage" in script
     assert "function creatorCloneStageMeta" in script
+    assert "function creatorCloneStageLabel" in script
+    assert "function creatorCloneDistillCommandForSelectedCount" in script
+    assert "function hasCreatorCloneReportReady" in script
+    assert "function hasCreatorCloneOutputReady" in script
+    assert "function creatorCloneStageUnavailableReason" in script
+    assert "function resolveProfileStageForView" in script
+    assert 'creatorCloneResult?.querySelector(".creator-distillation-report")' in script
     assert 'command === "show_select"' in script
     assert 'command === "show_distill"' in script
     assert "runtime_state" in script
@@ -9264,6 +9305,9 @@ def test_creator_clone_import_profile_url_prioritizes_public_scan(monkeypatch) -
     assert sample["like_count"] == 321
     assert payload["set"]["performance_segments"]["highest_like_samples"][0]["title"] == "主页公开扫描样本"
     assert payload["set"]["performance_segments"]["highest_comment_samples"][0]["metric_value"] == 12
+    assert payload["set"]["profile_metadata"]["source_input"] == "https://www.douyin.com/user/MS4wLjABAAAAabc12345"
+    assert payload["set"]["profile_metadata"]["source_mode"] == "profile"
+    assert payload["set"]["profile_metadata"]["profile_url"] == "https://www.douyin.com/user/MS4wLjABAAAAabc12345"
     assert any("公开主页扫描优先执行" in warning for warning in payload["set"]["warnings"])
 
 
@@ -9297,6 +9341,8 @@ def test_creator_clone_build_sample_set_passes_profile_max_pages(monkeypatch) ->
     assert captured["request"].count == 150
     assert captured["request"].max_pages == 15
     assert len(sample_set.samples) == 1
+    assert sample_set.profile_metadata["source_input"] == "https://www.douyin.com/user/MS4wLjABAAAAabc12345"
+    assert sample_set.profile_metadata["source_mode"] == "profile"
 
 
 def test_creator_clone_import_structured_aweme_list_and_nested_statistics() -> None:
@@ -10475,8 +10521,14 @@ def test_creator_clone_distill_with_mock_llm_saves_visual_result(monkeypatch) ->
     assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
     assert payload["creator_intelligence"]["project"]["project_id"] == payload["set"]["set_id"]
     assert payload["creator_intelligence"]["strategy_output"] == payload["result"]["creator_clone_strategy"]
+    assert payload["creator_intelligence"]["result"]["summary"] == payload["result"]["summary"]
     assert Path(payload["exports"]["creator_clone_result_json"]).is_file()
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
+    assert Path(payload["exports"]["creator_clone_html"]).is_file()
+    html_response = client.get(f"/api/creator-clone/sets/{payload['set']['set_id']}/files/creator_clone.html")
+    assert html_response.status_code == 200
+    assert "text/html" in html_response.headers["content-type"]
+    assert "创作者蒸馏报告" in html_response.text
 
 
 def test_creator_clone_distill_accepts_schema_first_llm_output(monkeypatch) -> None:
@@ -10514,6 +10566,7 @@ def test_creator_clone_distill_accepts_schema_first_llm_output(monkeypatch) -> N
     assert strategy["positioning"] == "甜美 COS 视觉账号"
     assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
     assert payload["creator_intelligence"]["runtime_state"]["primary_action"]["command"] == "export_report"
+    assert payload["creator_intelligence"]["result"]["summary"] == "schema-first 输出。"
 
 
 def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> None:
@@ -10653,8 +10706,10 @@ def test_creator_clone_distill_job_with_mock_llm_saves_visual_result(monkeypatch
     assert payload["creator_intelligence"]["workflow"]["state"] == "DONE"
     assert payload["creator_intelligence"]["project"]["project_id"] == payload["set"]["set_id"]
     assert payload["creator_intelligence"]["strategy_output"] == payload["result"]["creator_clone_strategy"]
+    assert payload["creator_intelligence"]["result"]["summary"] == payload["result"]["summary"]
     assert Path(payload["exports"]["creator_clone_result_json"]).is_file()
     assert Path(payload["exports"]["creator_clone_md"]).is_file()
+    assert Path(payload["exports"]["creator_clone_html"]).is_file()
     assert "sk-" not in Path(payload["exports"]["creator_clone_result_json"]).read_text(encoding="utf-8")
 
 

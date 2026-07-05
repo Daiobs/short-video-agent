@@ -210,6 +210,8 @@ class WorkflowEngine:
             actions.add(WorkflowAction.COMPLETE_DISTILLATION)
         elif self.state == WorkflowState.DONE:
             actions.add(WorkflowAction.SELECT_SAMPLES)
+            if self.project.selected_samples:
+                actions.update({WorkflowAction.MARK_EVIDENCE_READY, WorkflowAction.START_DISTILLATION})
         return tuple(action.value for action in sorted(actions, key=lambda item: item.value))
 
     def next_intent(
@@ -296,15 +298,19 @@ class WorkflowEngine:
             self.message = "Samples selected."
             return
         if action == WorkflowAction.MARK_EVIDENCE_READY:
-            self._require({WorkflowState.SAMPLE_SELECTED, WorkflowState.EVIDENCE_READY}, action)
+            self._require({WorkflowState.SAMPLE_SELECTED, WorkflowState.EVIDENCE_READY, WorkflowState.DONE}, action)
             if not self.project.selected_samples:
                 raise ValueError("Cannot mark evidence ready without selected samples.")
             self.has_behavior_model = bool(payload.get("has_behavior_model") or self.has_behavior_model)
+            self.has_strategy_output = False
             self.state = WorkflowState.EVIDENCE_READY
             self.message = "Evidence ready."
             return
         if action == WorkflowAction.START_DISTILLATION:
-            self._require({WorkflowState.EVIDENCE_READY, WorkflowState.DISTILLING}, action)
+            self._require({WorkflowState.EVIDENCE_READY, WorkflowState.DISTILLING, WorkflowState.DONE}, action)
+            if not self.project.selected_samples:
+                raise ValueError("Cannot start distillation without selected samples.")
+            self.has_strategy_output = False
             self.state = WorkflowState.DISTILLING
             self.message = "Distillation started."
             return

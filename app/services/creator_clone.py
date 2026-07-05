@@ -10,6 +10,7 @@ cognition, and public strategy output must adapt these DTOs into
 from __future__ import annotations
 
 import csv
+import html
 import io
 import json
 import re
@@ -18,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy.orm import Session
@@ -243,8 +244,12 @@ def build_sample_set(
 ) -> CloneSampleSet:
     samples: list[CloneSample] = []
     warnings: list[str] = []
+    import_source_input = ""
+    import_source_mode = ""
 
     if profile_url.strip() or sec_user_id.strip():
+        import_source_input = profile_url.strip() or sec_user_id.strip()
+        import_source_mode = "profile"
         try:
             result = scan_profile(
                 ProfileScanRequest(
@@ -264,6 +269,8 @@ def build_sample_set(
             warnings.append(f"公开主页扫描失败，已继续使用兜底导入：{error.code}：{error.message}")
 
     if manual_links.strip():
+        import_source_input = import_source_input or manual_links.strip()
+        import_source_mode = import_source_mode or "manual_links"
         try:
             result = scan_profile(
                 ProfileScanRequest(
@@ -281,6 +288,8 @@ def build_sample_set(
             samples.extend(generic_manual_samples)
 
     if structured_items.strip():
+        import_source_input = import_source_input or "JSON / CSV 导入"
+        import_source_mode = import_source_mode or "structured_items"
         structured_samples = samples_from_structured_text(structured_items)
         if structured_samples:
             samples.extend(structured_samples)
@@ -296,6 +305,8 @@ def build_sample_set(
             warnings.extend(result.warnings)
 
     if case_ids.strip():
+        import_source_input = import_source_input or case_ids.strip()
+        import_source_mode = import_source_mode or "case_ids"
         if db is None:
             raise AppError(ErrorCode.CASE_BUILD_FAILED, "已有 Case 导入需要数据库会话。")
         samples.extend(samples_from_case_ids(db, case_ids))
@@ -311,6 +322,20 @@ def build_sample_set(
         title=title.strip() or "创作者克隆实验室素材池",
         creator_name=creator_name.strip(),
         source_platform=normalize_source_type(source_platform),
+        profile_metadata={
+            "source_input": _safe_public_metadata_text(import_source_input, 500),
+            "source_mode": _safe_public_metadata_text(import_source_mode, 80),
+            **(
+                {"profile_url": _safe_public_metadata_url(profile_url.strip())}
+                if profile_url.strip()
+                else {}
+            ),
+            **(
+                {"sec_user_id": _safe_public_metadata_text(sec_user_id.strip(), 180)}
+                if sec_user_id.strip()
+                else {}
+            ),
+        },
         samples=samples,
         selected_sample_ids=[],
         warnings=warnings,
@@ -636,6 +661,12 @@ def normalize_sample_set_selected_ids(sample_set: CloneSampleSet, selected_sampl
 
 
 def load_creator_strategy_output(set_id: str) -> dict:
+    payload = load_creator_clone_result(set_id)
+    strategy = payload.get("creator_clone_strategy") if isinstance(payload, dict) else {}
+    return strategy if isinstance(strategy, dict) else {}
+
+
+def load_creator_clone_result(set_id: str) -> dict:
     result_path = creator_clone_dir(set_id) / "creator_clone_result.json"
     if not result_path.is_file():
         return {}
@@ -643,8 +674,7 @@ def load_creator_strategy_output(set_id: str) -> dict:
         payload = json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    strategy = payload.get("creator_clone_strategy") if isinstance(payload, dict) else {}
-    return strategy if isinstance(strategy, dict) else {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def clear_creator_strategy_outputs(set_id: str) -> None:
@@ -652,6 +682,7 @@ def clear_creator_strategy_outputs(set_id: str) -> None:
     for relative_path in (
         "creator_clone_result.json",
         "creator_clone.md",
+        "creator_clone.html",
         "batch_distill/final_result.json",
         "batch_distill/final_report.md",
     ):
@@ -662,6 +693,7 @@ def clear_creator_strategy_outputs(set_id: str) -> None:
 
 
 def creator_intelligence_payload_for_sample_set(sample_set: CloneSampleSet, strategy_output: dict | None = None) -> dict:
+    result = load_creator_clone_result(sample_set.set_id)
     strategy = strategy_output if isinstance(strategy_output, dict) else load_creator_strategy_output(sample_set.set_id)
     engine = CreatorRuntimeEngine.from_sample_set(sample_set, strategy_output=strategy or None)
     if engine.project.selected_samples and engine.behavior_model is None:
@@ -669,6 +701,7 @@ def creator_intelligence_payload_for_sample_set(sample_set: CloneSampleSet, stra
         engine.workflow_engine.has_behavior_model = True
     payload = engine.to_payload()
     payload["runtime_state"] = engine.state.to_dict()
+    payload["result"] = result
     return payload
 
 
@@ -1705,12 +1738,22 @@ def distill_creator_clone(
     distill_mode: str = "quick",
     include_case_reports: bool = True,
     max_samples: int = MAX_DISTILL_SAMPLES,
+    progress: Callable[[int, str, dict | None], None] | None = None,
 ) -> dict:
+    def report_progress(value: int, message: str, phase: dict | None = None) -> None:
+        if progress is None:
+            return
+        try:
+            progress(value, message, phase)
+        except TypeError:
+            progress(value, message, None)
+
     selected_samples, warnings = validate_selected_samples(sample_set.samples, selected_sample_ids, max_samples=max_samples)
     sample_set.selected_sample_ids = [sample.sample_id for sample in selected_samples]
     for sample in sample_set.samples:
         sample.selected = sample.sample_id in set(sample_set.selected_sample_ids)
     save_sample_set(sample_set)
+    report_progress(32, f"已确认 {len(selected_samples)} 条蒸馏样本", {"current_phase": "sample_lock", "current_phase_label": "锁定样本"})
 
     use_map_reduce = len(selected_samples) >= 2
     output_dir = creator_clone_dir(sample_set.set_id)
@@ -1720,6 +1763,7 @@ def distill_creator_clone(
 
     llm = get_llm_provider()
     execution_layer = ExecutionLayer()
+    report_progress(42, "正在生成样本摘要和蒸馏 Prompt", {"current_phase": "prompt_build", "current_phase_label": "生成 Prompt"})
     # Keep the web path to one external LLM call. Per-sample LLM Map calls are
     # useful for future deep mode, but current providers often timeout when a
     # three-sample distill fans out into 3 Map calls plus 1 Reduce call.
@@ -1738,10 +1782,13 @@ def distill_creator_clone(
     if use_micro_reduce:
         (output_dir / "distill_prompt_micro.md").write_text(prompt, encoding="utf-8")
         warnings.append("三条及以上样本默认使用 micro reduce，以提高当前大模型网关的成功率。")
+    report_progress(58, "蒸馏 Prompt 已写入，准备调用大模型", {"current_phase": "prompt_ready", "current_phase_label": "Prompt 就绪"})
     try:
+        report_progress(68, "正在等待大模型返回蒸馏 JSON", {"current_phase": "llm_wait", "current_phase_label": "等待大模型"})
         result = execution_layer.generate_creator_clone(llm, prompt, []).to_dict()
     except AppError as error:
         if use_map_reduce and error.code in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID}:
+            report_progress(72, "常规 Reduce 失败，正在生成 micro reduce 重试 Prompt", {"current_phase": "retry_prompt", "current_phase_label": "准备重试"})
             micro_prompt = build_micro_reduce_distill_prompt(
                 sample_set,
                 selected_samples,
@@ -1750,6 +1797,7 @@ def distill_creator_clone(
             )
             (output_dir / "distill_prompt_micro.md").write_text(micro_prompt, encoding="utf-8")
             try:
+                report_progress(78, "正在用 micro reduce 重试大模型蒸馏", {"current_phase": "llm_retry", "current_phase_label": "大模型重试"})
                 result = execution_layer.generate_creator_clone(llm, micro_prompt, []).to_dict()
             except AppError:
                 raise error
@@ -1757,6 +1805,7 @@ def distill_creator_clone(
         elif error.code not in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID} or not include_case_reports:
             raise
         else:
+            report_progress(72, "首次蒸馏失败，正在生成精简证据包重试", {"current_phase": "compact_retry_prompt", "current_phase_label": "精简重试"})
             compact_prompt = build_distill_prompt(
                 sample_set,
                 selected_samples,
@@ -1765,13 +1814,16 @@ def distill_creator_clone(
             )
             (output_dir / "distill_prompt_compact.md").write_text(compact_prompt, encoding="utf-8")
             try:
+                report_progress(78, "正在用精简证据包重试大模型蒸馏", {"current_phase": "compact_llm_retry", "current_phase_label": "精简重试"})
                 result = execution_layer.generate_creator_clone(llm, compact_prompt, []).to_dict()
             except AppError:
                 raise error
             warnings.append("首次蒸馏失败，已使用精简证据包重试成功。")
+    report_progress(86, "大模型已返回，正在解析蒸馏结果", {"current_phase": "parse_result", "current_phase_label": "解析结果"})
     normalized = normalize_creator_clone_result(result, sample_set, selected_samples, warnings)
     _write_json(output_dir / "creator_clone_result.json", normalized)
-    (output_dir / "creator_clone.md").write_text(render_creator_clone_markdown(normalized), encoding="utf-8")
+    report_progress(94, "正在写入 Markdown / HTML 报告", {"current_phase": "write_report", "current_phase_label": "写入报告"})
+    write_creator_clone_report_files(output_dir, normalized)
     _record_creator_runtime_state(sample_set, normalized.get("creator_clone_strategy") or {}, source="distill_creator_clone")
     return {
         "set": sample_set.to_dict(),
@@ -2570,7 +2622,7 @@ def batch_distill_creator_clone(
             _write_json(final_result_path, final_result)
             final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
             _write_json(output_dir / "creator_clone_result.json", final_result)
-            (output_dir / "creator_clone.md").write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
+            write_creator_clone_report_files(output_dir, final_result)
             _record_creator_runtime_state(sample_set, final_result.get("creator_clone_strategy") or {}, source="batch_distill_creator_clone")
             final_payload.update({"status": "success", "result": final_result, "error_code": ""})
             report_progress(
@@ -2598,7 +2650,7 @@ def batch_distill_creator_clone(
             _write_json(final_result_path, final_result)
             final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
             _write_json(output_dir / "creator_clone_result.json", final_result)
-            (output_dir / "creator_clone.md").write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
+            write_creator_clone_report_files(output_dir, final_result)
             _record_creator_runtime_state(sample_set, final_result.get("creator_clone_strategy") or {}, source="batch_distill_creator_clone_fallback")
             final_payload.update({"status": "fallback", "result": final_result, "error_code": error.code, "message": error.message})
             warnings.append(f"最终汇总失败：{error.code}：{error.message}")
@@ -2980,6 +3032,110 @@ def render_creator_clone_markdown(result: dict) -> str:
     return "\n".join(lines)
 
 
+def render_creator_clone_html_report(markdown: str, title: str = "创作者蒸馏报告") -> str:
+    """Render the Markdown report as a portable, browser-readable HTML file."""
+    lines: list[str] = []
+    in_list = False
+
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            lines.append("</ul>")
+            in_list = False
+
+    for raw_line in str(markdown or "").splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            close_list()
+            continue
+        if line.startswith("### "):
+            close_list()
+            lines.append(f"<h3>{html.escape(line[4:].strip())}</h3>")
+            continue
+        if line.startswith("## "):
+            close_list()
+            lines.append(f"<h2>{html.escape(line[3:].strip())}</h2>")
+            continue
+        if line.startswith("# "):
+            close_list()
+            lines.append(f"<h1>{html.escape(line[2:].strip())}</h1>")
+            continue
+        if line.startswith("- "):
+            if not in_list:
+                lines.append("<ul>")
+                in_list = True
+            lines.append(f"<li>{html.escape(line[2:].strip())}</li>")
+            continue
+        close_list()
+        lines.append(f"<p>{html.escape(line)}</p>")
+    close_list()
+    safe_title = html.escape(title or "创作者蒸馏报告")
+    body = "\n".join(lines)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{safe_title}</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #111827;
+      background: #f8fafc;
+    }}
+    body {{
+      margin: 0;
+      padding: 32px 16px;
+    }}
+    main {{
+      max-width: 920px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+      padding: clamp(24px, 5vw, 56px);
+    }}
+    h1 {{ font-size: clamp(28px, 5vw, 44px); margin: 0 0 28px; }}
+    h2 {{ margin-top: 34px; border-top: 1px solid #eef2f7; padding-top: 26px; }}
+    h3 {{ margin-top: 22px; color: #334155; }}
+    p, li {{ line-height: 1.8; font-size: 16px; }}
+    ul {{ padding-left: 1.25rem; }}
+    li + li {{ margin-top: 8px; }}
+  </style>
+</head>
+<body>
+  <main>
+    {body}
+  </main>
+</body>
+</html>
+"""
+
+
+def write_creator_clone_report_files(output_dir: Path, result: dict) -> None:
+    markdown = render_creator_clone_markdown(result)
+    (output_dir / "creator_clone.md").write_text(markdown, encoding="utf-8")
+    (output_dir / "creator_clone.html").write_text(render_creator_clone_html_report(markdown), encoding="utf-8")
+
+
+def ensure_creator_clone_html_report(set_id: str) -> Path:
+    output_dir = creator_clone_dir(set_id)
+    html_path = output_dir / "creator_clone.html"
+    if html_path.is_file():
+        return html_path
+    result = load_creator_clone_result(set_id)
+    if result:
+        write_creator_clone_report_files(output_dir, result)
+        return html_path
+    markdown_path = output_dir / "creator_clone.md"
+    if markdown_path.is_file():
+        html_path.write_text(render_creator_clone_html_report(markdown_path.read_text(encoding="utf-8")), encoding="utf-8")
+        return html_path
+    raise AppError(ErrorCode.CASE_BUILD_FAILED, "网页报告尚未生成。")
+
+
 def export_paths(set_id: str) -> dict:
     base = creator_clone_dir(set_id)
     return {
@@ -2990,6 +3146,7 @@ def export_paths(set_id: str) -> dict:
         "distill_prompt_micro_md": str(base / "distill_prompt_micro.md"),
         "creator_clone_result_json": str(base / "creator_clone_result.json"),
         "creator_clone_md": str(base / "creator_clone.md"),
+        "creator_clone_html": str(base / "creator_clone.html"),
         "batch_distill_manifest_json": str(base / "batch_distill" / "manifest.json"),
         "batch_final_report_md": str(base / "batch_distill" / "final_report.md"),
     }

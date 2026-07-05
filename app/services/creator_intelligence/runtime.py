@@ -127,8 +127,8 @@ def _runtime_next_action(workflow: dict[str, Any]) -> dict[str, Any]:
         return {
             "state": "EXPORT_READY",
             "command": "export_report",
-            "label": "下一步：下载报告",
-            "summary": "创作者蒸馏报告已生成，可下载报告或复制规则继续使用。",
+            "label": "下一步：查看报告",
+            "summary": "创作者蒸馏报告已生成，可打开网页报告或复制规则继续使用。",
             "disabled": False,
         }
     return {
@@ -407,6 +407,12 @@ class CreatorRuntimeEngine:
         workflow_action = WorkflowAction(action)
         payload = dict(payload or {})
         intent = WorkflowIntent.from_action(workflow_action, payload)
+        if (
+            self.workflow_engine.state == WorkflowState.DONE
+            and workflow_action in {WorkflowAction.MARK_EVIDENCE_READY, WorkflowAction.START_DISTILLATION}
+        ):
+            self.strategy_output = {}
+            self.workflow_engine.has_strategy_output = False
         if workflow_action == WorkflowAction.MARK_EVIDENCE_READY:
             self.behavior_model = self.execution_layer.extract_behavior_model(
                 self.workflow_engine.project,
@@ -493,6 +499,10 @@ class CreatorRuntimeEngine:
             return CreatorRuntimeDispatchResult(sample_set=sample_set, state=engine.state)
 
         if workflow_action == WorkflowAction.START_DISTILLATION:
+            if engine.workflow_engine.state == WorkflowState.DONE:
+                engine.strategy_output = {}
+                engine.workflow_engine.has_strategy_output = False
+                engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY, persist=True, debug={"source": "dispatch_sample_set"})
             if engine.workflow_engine.state == WorkflowState.SAMPLE_SELECTED:
                 engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY, persist=True, debug={"source": "dispatch_sample_set"})
             engine.dispatch(workflow_action)

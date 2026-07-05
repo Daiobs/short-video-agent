@@ -1300,6 +1300,25 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         selected_samples = _selected_clone_samples(sample_set, selected_for_engine)
         execution_plan = build_distill_execution_plan(selected_samples, batch_size=max_samples, final_timeout_seconds=settings.llm_timeout_seconds)
 
+        def progress(value: int, message: str, phase: dict | None = None) -> None:
+            current = db.get(Job, job_id)
+            if not current:
+                return
+            intelligence = creator_intelligence_payload_for_sample_set(sample_set)
+            _set_job(
+                current,
+                "running",
+                max(1, min(99, int(value))),
+                message,
+                result={
+                    "set": sample_set.to_dict(),
+                    "creator_intelligence": intelligence,
+                    "execution_plan": execution_plan,
+                    "distill_phase": _distill_phase_payload(phase, execution_plan=execution_plan, message=message),
+                },
+            )
+            db.commit()
+
         job = db.get(Job, job_id)
         if job:
             _set_job(
@@ -1335,24 +1354,24 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                 _set_job(
                     job,
                     "running",
-                    45,
-                    "调用大模型蒸馏创作者规则",
+                    35,
+                    "进入大模型蒸馏准备阶段",
                     result={
                         "set": sample_set.to_dict(),
                         "creator_intelligence": intelligence,
                         "execution_plan": execution_plan,
                         "distill_phase": _distill_phase_payload(
                             {
-                                "current_phase": "final_reduce",
-                                "current_phase_label": "单批大模型蒸馏",
+                                "current_phase": "distill_prepare",
+                                "current_phase_label": "准备蒸馏",
                                 "phase_index": 2,
-                                "phase_count": 3,
+                                "phase_count": 6,
                                 "timeout_seconds": int(settings.llm_timeout_seconds),
                                 "execution_plan": execution_plan,
-                                "diagnostic": "如果长时间停留在这里，通常是网关排队、模型生成较慢或返回 JSON 过长。",
+                                "diagnostic": "接下来会生成 Prompt、调用大模型、解析结果并写入报告。",
                             },
                             execution_plan=execution_plan,
-                            message="调用大模型蒸馏创作者规则",
+                            message="进入大模型蒸馏准备阶段",
                         ),
                     },
                 )
@@ -1363,14 +1382,19 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                 distill_mode=distill_mode,
                 include_case_reports=include_case_reports,
                 max_samples=max_samples,
+                progress=progress,
             )
             job = db.get(Job, job_id)
             if job:
-                intelligence = CreatorRuntimeEngine.dispatch_sample_set(
+                CreatorRuntimeEngine.dispatch_sample_set(
                     sample_set.set_id,
                     WorkflowAction.COMPLETE_DISTILLATION,
                     strategy_output=(result.get("result") or {}).get("creator_clone_strategy") or {},
-                ).creator_intelligence
+                )
+                intelligence = creator_intelligence_payload_for_sample_set(
+                    sample_set,
+                    (result.get("result") or {}).get("creator_clone_strategy"),
+                )
                 _set_job(
                     job,
                     "success",
@@ -1513,15 +1537,18 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         job = db.get(Job, job_id)
         if job:
             message = "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型"
-            intelligence = (
+            if result.get("result"):
                 CreatorRuntimeEngine.dispatch_sample_set(
                     sample_set.set_id,
                     WorkflowAction.COMPLETE_DISTILLATION,
                     strategy_output=(result.get("result") or {}).get("creator_clone_strategy") or {},
-                ).creator_intelligence
-                if result.get("result")
-                else creator_intelligence_payload_for_sample_set(sample_set)
-            )
+                )
+                intelligence = creator_intelligence_payload_for_sample_set(
+                    sample_set,
+                    (result.get("result") or {}).get("creator_clone_strategy"),
+                )
+            else:
+                intelligence = creator_intelligence_payload_for_sample_set(sample_set)
             _set_job(
                 job,
                 "success",

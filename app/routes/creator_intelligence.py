@@ -42,6 +42,7 @@ def project_payload_for_sample_set(
         "workflow": workflow or intelligence.get("workflow") or {},
         "behavior_model": behavior_payload or intelligence.get("behavior_model") or None,
         "strategy_output": strategy_payload if strategy_payload is not None else {},
+        "result": intelligence.get("result") or {},
         "runtime_state": runtime_state or CreatorRuntimeEngine.from_sample_set(sample_set).state.to_dict(),
         "exports": export_paths(sample_set.set_id),
     }
