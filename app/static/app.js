@@ -5019,6 +5019,10 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
   renderCreatorCloneNextAction();
 }
 
+function hasCreatorCloneResultPayload(result) {
+  return Boolean(result && typeof result === "object" && Object.keys(result).length);
+}
+
 async function hydrateCreatorCloneReportFromSet(setId, options = {}) {
   if (!setId) {
     return null;
@@ -5027,7 +5031,17 @@ async function hydrateCreatorCloneReportFromSet(setId, options = {}) {
   const payload = await readJsonResponse(response);
   currentCloneSetId = payload.set?.set_id || currentCloneSetId;
   applyCreatorIntelligencePayload(payload);
-  renderCreatorCloneResult(payload.result || null, payload.set, payload.prompt || "", payload.exports || {}, {
+  const fallbackPayload = options.fallbackPayload || {};
+  const result = hasCreatorCloneResultPayload(payload.result)
+    ? payload.result
+    : hasCreatorCloneResultPayload(fallbackPayload.result)
+      ? fallbackPayload.result
+      : hasCreatorCloneResultPayload(currentCreatorRuntimeReport)
+        ? currentCreatorRuntimeReport
+        : null;
+  const prompt = payload.prompt || fallbackPayload.prompt || "";
+  const exportsPayload = payload.exports || fallbackPayload.exports || {};
+  renderCreatorCloneResult(result, payload.set || fallbackPayload.set, prompt, exportsPayload, {
     scroll: options.scroll === true,
   });
   return payload;
@@ -5114,17 +5128,20 @@ async function pollCreatorCloneDistillJob(jobId) {
     if (setId) {
       currentCloneSetId = setId;
       rememberRecentCreatorCloneSetId(setId);
+    }
+    applyCreatorCloneDistillPayload(resultPayload);
+    if (setId) {
       try {
-        await hydrateCreatorCloneReportFromSet(setId, {scroll: true});
+        await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});
         profileScanStatus.textContent = resultPayload.batch_distill?.batch_count
           ? `分批蒸馏完成：${formatNumber(resultPayload.batch_distill.batch_count)} 个批次，已生成总汇总。`
           : "创作者蒸馏完成。";
         return;
       } catch (error) {
-        profileScanStatus.textContent = `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告同步失败，正在使用任务结果兜底渲染。"}`;
+        profileScanStatus.textContent = `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告文件同步失败，已使用任务结果直接渲染。"}`;
+        return;
       }
     }
-    applyCreatorCloneDistillPayload(resultPayload);
     return;
   }
   if (job.status === "failed") {

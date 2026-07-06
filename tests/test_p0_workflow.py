@@ -563,8 +563,9 @@ def test_home_uses_versioned_static_assets() -> None:
         script.index("async function pollCreatorCloneDistillJob") : script.index("// Creator Clone: distillation")
     ]
     assert "applyCreatorCloneDistillPayload(resultPayload);" in poll_distill
-    assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: true});" in poll_distill
-    assert "使用任务结果兜底渲染" in poll_distill
+    assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});" in poll_distill
+    assert "报告文件同步失败，已使用任务结果直接渲染。" in poll_distill
+    assert "function hasCreatorCloneResultPayload" in script
     assert "function profileScanMaxPagesForCount" in script
     assert "max_pages: profilePayload.max_pages" in script
     assert "function useRecommendedProfileSamples" in script
@@ -634,7 +635,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function showCreatorCloneExportStage" in script
     assert "currentCreatorCloneSetId()" in script
     assert 'workflowState === "DONE"' in script
-    assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: true});" in script
+    assert "fallbackPayload: resultPayload" in script
     assert 'targetStage === "export"' in script
     assert "await showCreatorCloneExportStage({scroll: true});" in script
     assert "function creatorCloneStageUnavailableReason" in script
