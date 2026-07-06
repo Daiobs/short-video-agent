@@ -1136,6 +1136,83 @@ function creatorCloneResultFromStrategyOutput(strategy = {}) {
   };
 }
 
+function qualityLabelFromScore(score) {
+  if (score === undefined || score === null || score === "") {
+    return "待评估";
+  }
+  const numeric = Number(score);
+  if (Number.isNaN(numeric)) {
+    return "待评估";
+  }
+  if (numeric >= 85) return "高可信";
+  if (numeric >= 70) return "可用，建议复核";
+  if (numeric >= 50) return "低置信，需要补证据";
+  return "占位/降级报告";
+}
+
+function creatorReportDiagnosticsFromResult(result = {}, overview = {}) {
+  const quality = result.report_quality || {};
+  const batch = result.batch_distill || {};
+  const counts = overview.understanding_counts || result.sample_overview?.understanding_counts || {};
+  const evidence = result.creator_report_view_model?.evidence_counts || {};
+  const selectedCount = Number(evidence.selected_count ?? overview.selected_count ?? result.sample_overview?.selected_count ?? 0);
+  const sampleCount = Number(evidence.sample_count ?? overview.sample_count ?? result.sample_overview?.sample_count ?? 0);
+  const score = quality.quality_score ?? quality.score;
+  const warnings = compactReportList(result.warnings, overview.warnings, result.sample_overview?.warnings).map(formatReportValue);
+  const batchCount = Number(batch.batch_count || 0);
+  const finalRecovery = batch.final_reduce_recovery || "";
+  const isPromptOnly = !result.summary || result.summary === "创作者蒸馏完成。";
+  const isFallback = Boolean(finalRecovery) || warnings.some((item) => item.includes("本地汇总") || item.includes("Reduce 未完成") || item.includes("最终汇总失败"));
+  let sourceLabel = "大模型单次拆解";
+  if (isFallback) {
+    sourceLabel = "本地批次汇总 / 降级";
+  } else if (batchCount) {
+    sourceLabel = `分批大模型汇总（${batchCount} 批）`;
+  } else if (selectedCount >= 2) {
+    sourceLabel = "大模型 Map-Reduce";
+  } else if (isPromptOnly) {
+    sourceLabel = "Prompt-only / 待分析";
+  }
+  const coverage = {
+    video: Number(evidence.with_video ?? overview.with_video ?? 0),
+    keyframes: Number(evidence.with_keyframes ?? overview.with_keyframes ?? 0),
+    asr: Number(evidence.with_asr ?? overview.with_asr ?? 0),
+    ocr: Number(evidence.with_ocr ?? overview.with_ocr ?? 0),
+    comments: Number(evidence.with_comments ?? overview.with_comments ?? 0),
+  };
+  const missing = [
+    ["video", "视频"],
+    ["keyframes", "关键帧"],
+    ["asr", "ASR"],
+    ["ocr", "OCR"],
+    ["comments", "评论"],
+  ].filter(([key]) => selectedCount && !coverage[key]).map(([, label]) => label);
+  return {
+    source_label: sourceLabel,
+    is_fallback: isFallback || isPromptOnly,
+    fallback_reason: isFallback
+      ? (batch.final_reduce_error_code ? `最终 Reduce 失败：${batch.final_reduce_error_code}` : "最终汇总未完整返回，已使用批次摘要或本地规则兜底。")
+      : isPromptOnly
+        ? "未拿到可用大模型结果。"
+        : "",
+    quality_label: qualityLabelFromScore(score),
+    quality_score: score ?? 0,
+    selected_count: selectedCount,
+    sample_count: sampleCount,
+    understanding: {
+      full: Number(counts.full || evidence.understanding_full || 0),
+      partial: Number(counts.partial || evidence.understanding_partial || 0),
+      metadata_only: Number(counts.metadata_only || evidence.understanding_metadata_only || 0),
+    },
+    coverage,
+    coverage_text: selectedCount
+      ? `视频 ${formatNumber(coverage.video)}/${formatNumber(selectedCount)} · 关键帧 ${formatNumber(coverage.keyframes)}/${formatNumber(selectedCount)} · ASR ${formatNumber(coverage.asr)}/${formatNumber(selectedCount)} · OCR ${formatNumber(coverage.ocr)}/${formatNumber(selectedCount)} · 评论 ${formatNumber(coverage.comments)}/${formatNumber(selectedCount)}`
+      : "尚未选择样本",
+    missing_evidence_labels: missing,
+    notes: warnings.slice(0, 4),
+  };
+}
+
 function formatReportValue(value) {
   if (typeof value === "string") {
     const text = value.trim();
@@ -4296,6 +4373,9 @@ function creatorReportViewModelFromResult(result = {}, overview = {}, templateLa
     viewModel.headline = compactReportHeadline(viewModel.headline || result.summary, 120) || truncateReportText(viewModel.headline || "", 120);
     viewModel.summary = compactPublicReportText(viewModel.summary || result.summary) || truncateReportText(viewModel.summary || result.summary || "", 240);
     viewModel.technical_notes = normalizeItems(viewModel.technical_notes).filter(isMeaningfulReportText).slice(0, 6);
+    viewModel.value_upgrade = viewModel.value_upgrade && typeof viewModel.value_upgrade === "object" ? {...viewModel.value_upgrade} : {};
+    viewModel.value_upgrade.quality = viewModel.value_upgrade.quality || result.report_quality || {};
+    viewModel.value_upgrade.diagnostics = viewModel.value_upgrade.diagnostics || creatorReportDiagnosticsFromResult(result, overview);
     return viewModel;
   }
   const strategy = creatorStrategyFromResult(result) || {};
@@ -4347,6 +4427,10 @@ function creatorReportViewModelFromResult(result = {}, overview = {}, templateLa
       anti_patterns: nonTechnicalReportList(strategy.anti_patterns, spec.anti_patterns).slice(0, 6),
     },
     technical_notes: technicalReportNotes(overview.warnings, result.next_actions, result.evidence_gaps),
+    value_upgrade: {
+      quality: result.report_quality || {},
+      diagnostics: creatorReportDiagnosticsFromResult(result, overview),
+    },
   };
 }
 
@@ -4683,16 +4767,47 @@ function renderCreatorReportLowConfidence(valueUpgrade = {}) {
   `;
 }
 
+function renderCreatorReportDiagnostics(valueUpgrade = {}, quality = {}) {
+  const diagnostics = valueUpgrade.diagnostics || {};
+  if (!diagnostics.source_label && !diagnostics.coverage_text && !diagnostics.quality_label) {
+    return "";
+  }
+  const score = diagnostics.quality_score ?? quality.quality_score ?? quality.score;
+  const missing = normalizeItems(diagnostics.missing_evidence_labels).slice(0, 5);
+  return `
+    <div class="creator-report-diagnostics">
+      <div class="creator-report-diagnostic-grid">
+        <article>
+          <span>报告来源</span>
+          <strong>${escapeHtml(diagnostics.source_label || "待确认")}</strong>
+        </article>
+        <article>
+          <span>质量判断</span>
+          <strong>${escapeHtml(diagnostics.quality_label || qualityLabelFromScore(score))}${score !== undefined && score !== null ? ` · ${formatNumber(score)}/100` : ""}</strong>
+        </article>
+        <article class="wide">
+          <span>证据覆盖</span>
+          <strong>${escapeHtml(diagnostics.coverage_text || "暂无证据覆盖统计")}</strong>
+        </article>
+      </div>
+      ${diagnostics.is_fallback && diagnostics.fallback_reason ? `<p class="creator-report-source-warning">${escapeHtml(diagnostics.fallback_reason)}</p>` : ""}
+      ${missing.length ? `<p class="muted compact-copy">优先补齐：${escapeHtml(missing.join("、"))}</p>` : ""}
+    </div>
+  `;
+}
+
 function renderCreatorReportQualitySummary(valueUpgrade = {}) {
   const quality = valueUpgrade.quality || {};
   const score = quality.quality_score ?? quality.score;
   const missing = normalizeItems(quality.missing_evidence).slice(0, 4);
   const warnings = normalizeItems(quality.warnings).slice(0, 3);
-  if (score === undefined && !missing.length && !warnings.length) {
+  const diagnostics = renderCreatorReportDiagnostics(valueUpgrade, quality);
+  if (score === undefined && !missing.length && !warnings.length && !diagnostics) {
     return "";
   }
   return `
     <div class="creator-report-quality-summary">
+      ${diagnostics}
       ${score !== undefined ? `<p><strong>报告质量：</strong>${formatNumber(score)} / 100</p>` : ""}
       ${missing.length ? `<h5>缺少的证据或落地项</h5>${renderPublicList(missing)}` : ""}
       ${warnings.length ? `<h5>质量提醒</h5>${renderPublicList(warnings)}` : ""}

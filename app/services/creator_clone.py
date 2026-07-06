@@ -894,6 +894,8 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
 - 报告价值要按三层组织：观察=这个账号做了什么；解释=为什么这些内容有效；执行=下一条怎么拍/怎么写/怎么验证。
 - summary 必须是 2-4 句高密度中文，直接回答“这个账号靠什么跑通，下一条最该复刻什么”。
 - transferable_formulas 必须是可拍摄的结构，不要只写抽象概念；candidate_ideas 必须是可执行选题，不要空标题。
+- 美拍/COS/颜值/摄影出片类账号必须输出拍摄动作级结论：0-1 秒第一眼吸引点、妆造/服装/发型/道具、镜头距离/俯仰角/光线颜色、动作变化、标题话题点击理由、安全复刻边界。
+- 对这类账号的 transferable_formulas 必须包含：首帧画面、人物动作、妆造或场景、标题话题、期望验证指标和不要照搬的风险。
 - 每个核心策略尽量引用 sample_id/title/metric/evidence_level；低证据结论必须标记 low_confidence 或写进 evidence_gaps。
 - {creator_clone_strategy_prompt_contract()}
 
@@ -932,6 +934,8 @@ def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list
 要求：
 - 只根据证据推断，不确定就写进 evidence_gaps。
 - 美拍/COS/颜值类样本重点看视觉吸引、人物人设、动作节奏、标题话题和互动引导。
+- 美拍/COS/颜值/摄影出片类不能只写“氛围感好”：必须拆成首帧、眼神/姿态、妆造服化、镜头距离/角度/光线、动作节奏、标题话题、互动承接和安全复刻边界。
+- transferable_formulas 要能指导拍摄现场执行：首帧怎么摆、镜头怎么动、人物做什么、标题怎么写、看哪项指标验证。
 - 输出要短而有用，但不能只给一句摘要。至少覆盖定位、流量来源、表达模式、可复用公式、候选选题和自检规则。
 - summary 必须直接告诉用户“这个账号靠什么起量、下一条应复刻什么结构”。
 - 不要返回空壳公式或空壳选题；无法确认就写 evidence_gaps。
@@ -1256,6 +1260,7 @@ def build_reduce_distill_prompt(
 - 美拍/COS/颜值类优先归纳：第一眼吸引、人物人设、动作节奏、妆造/光线/构图、标题话题和互动引导。
 - 输出要可执行，不要只写摘要。每个核心数组尽量给 3-6 条，必须说明“为什么有效 / 适用场景 / 风险边界”。
 - 不要把擦边、美拍、COS 账号硬套成鸡汤/教学脚本；如果主要流量来自人物、颜值、氛围、服化或姿态，要把这些作为创作规律写清楚。
+- 对美拍/COS/摄影出片类账号，公式必须写成“首帧/镜头动作/妆造场景/标题话题/验证指标/风险边界”的拍摄动作结构，不能只给抽象人设标签。
 - 主报告会按“核心判断、流量来源、可复刻公式、下一批怎么拍、发布前自检”展示；请优先让这些字段有内容。
 - 不要输出空壳公式、空壳选题、空壳规则；证据不足就写 evidence_gaps。
 - 报告按“观察/解释/执行”三层思考：观察账号做了什么，解释为什么有效，执行下一条怎么拍/怎么写/怎么验证。
@@ -1308,6 +1313,7 @@ def build_micro_reduce_distill_prompt(
 - 证据不足写进 evidence_gaps。
 - 高赞/高评/高分享/高收藏要分开解释：高赞看情绪/身份共鸣，高评看参与钩子，高分享看转发理由，高收藏看模板/复看价值。
 - 美拍/COS/颜值类重点输出视觉吸引、人物人设、动作节奏、妆造/光线/构图、标题话题、互动引导；不要硬套文案鸡汤结构。
+- 对美拍/COS/摄影出片类账号，至少输出 3 条拍摄动作公式，每条都要包含首帧、人物动作、镜头或光线、标题话题、验证指标和风险边界。
 - transferable_formulas 至少给 3 个，candidate_ideas 至少给 5 个，creator_clone_spec.self_check_rubric 至少给 5 条；如果证据不足，也要写出“低置信度规则”。
 - 每个公式必须能直接指导下一条怎么拍；每个选题必须能直接变成一个标题/拍摄方向。
 - 不要输出空壳公式、空壳选题、空壳规则；证据不足就写 evidence_gaps。
@@ -2064,6 +2070,8 @@ def build_final_creator_clone_reduce_prompt(
 - 每个可执行模块尽量给 5-10 条高密度结论；结论必须能追溯到分层、证据矩阵或 batch 摘要。
 - 最终网页主报告会按“核心判断、流量来源、可复刻公式、下一批怎么拍、发布前自检”展示；请让 summary、transferable_formulas、candidate_ideas、creator_clone_spec.self_check_rubric 尤其完整。
 - 不要输出空壳公式、空壳选题、空壳规则；证据不足就写 evidence_gaps。
+- 如果账号属于美拍/COS/摄影出片/颜值类，最终报告要围绕“第一眼吸引、人物人设、妆造服化、镜头角度、动作节奏、标题话题、互动验证、安全边界”组织，不要降级成泛文案或鸡汤模板。
+- 每个 transferable_formula 都要可直接拍摄：首帧画面、动作变化、镜头/光线/场景、标题话题、预期强项指标和风险边界缺一不可。
 - {creator_clone_strategy_prompt_contract()}
 
 返回 JSON 字段：
@@ -2494,6 +2502,102 @@ def _action_items_for_report(content_profile: str, result: dict, formulas: list[
     return ["下一条先复刻最高互动样本的开头承诺，再替换为自己的场景和角色。"]
 
 
+def _report_quality_label(score: int | float | None) -> str:
+    if score is None:
+        return "待评估"
+    try:
+        numeric = float(score)
+    except (TypeError, ValueError):
+        return "待评估"
+    if numeric >= 85:
+        return "高可信"
+    if numeric >= 70:
+        return "可用，建议复核"
+    if numeric >= 50:
+        return "低置信，需要补证据"
+    return "占位/降级报告"
+
+
+def _report_generation_diagnostics(result: dict, selected_samples: list[CloneSample], sample_set: CloneSampleSet, report_quality: dict) -> dict:
+    evidence_counts = _creator_report_evidence_counts(selected_samples, sample_set)
+    batch = result.get("batch_distill") if isinstance(result.get("batch_distill"), dict) else {}
+    warnings = _report_text_values(
+        result.get("warnings"),
+        (result.get("sample_overview") or {}).get("warnings") if isinstance(result.get("sample_overview"), dict) else [],
+        limit=8,
+        item_limit=180,
+        exclude_technical=False,
+    )
+    final_recovery = str(batch.get("final_reduce_recovery") or "").strip()
+    final_error = str(batch.get("final_reduce_error_code") or batch.get("error_code") or "").strip()
+    batch_count = int(batch.get("batch_count") or 0)
+    selected_count = len(selected_samples)
+    score = report_quality.get("quality_score", report_quality.get("score"))
+    is_prompt_only = not result.get("summary") or result.get("summary") == "创作者蒸馏完成。"
+    is_fallback = bool(final_recovery) or any("本地汇总" in item or "Reduce 未完成" in item or "最终汇总失败" in item for item in warnings)
+    if is_fallback:
+        source_label = "本地批次汇总 / 降级"
+    elif batch_count:
+        source_label = f"分批大模型汇总（{batch_count} 批）"
+    elif selected_count >= 2:
+        source_label = "大模型 Map-Reduce"
+    elif is_prompt_only:
+        source_label = "Prompt-only / 待分析"
+    else:
+        source_label = "大模型单次拆解"
+
+    if is_fallback and final_error:
+        fallback_reason = f"最终 Reduce 失败：{final_error}"
+    elif is_fallback:
+        fallback_reason = "最终汇总未完整返回，已使用批次摘要或本地规则兜底。"
+    elif is_prompt_only:
+        fallback_reason = "未拿到可用大模型结果。"
+    else:
+        fallback_reason = ""
+
+    coverage = {
+        "video": evidence_counts.get("with_video", 0),
+        "keyframes": evidence_counts.get("with_keyframes", 0),
+        "asr": evidence_counts.get("with_asr", 0),
+        "ocr": evidence_counts.get("with_ocr", 0),
+        "comments": evidence_counts.get("with_comments", 0),
+    }
+    missing = [
+        label
+        for key, label in [
+            ("video", "视频"),
+            ("keyframes", "关键帧"),
+            ("asr", "ASR"),
+            ("ocr", "OCR"),
+            ("comments", "评论"),
+        ]
+        if selected_count and coverage.get(key, 0) == 0
+    ]
+    return {
+        "source_label": source_label,
+        "is_fallback": is_fallback or is_prompt_only,
+        "fallback_reason": fallback_reason,
+        "quality_label": _report_quality_label(score),
+        "quality_score": score if score is not None else 0,
+        "selected_count": selected_count,
+        "sample_count": len(sample_set.samples),
+        "understanding": {
+            "full": evidence_counts.get("understanding_full", 0),
+            "partial": evidence_counts.get("understanding_partial", 0),
+            "metadata_only": evidence_counts.get("understanding_metadata_only", 0),
+        },
+        "coverage": coverage,
+        "coverage_text": (
+            f"视频 {coverage['video']}/{selected_count} · 关键帧 {coverage['keyframes']}/{selected_count} · "
+            f"ASR {coverage['asr']}/{selected_count} · OCR {coverage['ocr']}/{selected_count} · 评论 {coverage['comments']}/{selected_count}"
+            if selected_count
+            else "尚未选择样本"
+        ),
+        "missing_evidence_labels": missing,
+        "notes": warnings[:4],
+    }
+
+
 def _report_value_upgrade(
     *,
     result: dict,
@@ -2511,6 +2615,7 @@ def _report_value_upgrade(
     segments = result.get("performance_segments") if isinstance(result.get("performance_segments"), dict) else {}
     evidence_gaps = _report_text_values(result.get("evidence_gaps"), limit=8, item_limit=160, exclude_technical=False)
     report_quality = result.get("report_quality") if isinstance(result.get("report_quality"), dict) else {}
+    diagnostics = _report_generation_diagnostics(result, selected_samples, sample_set, report_quality)
     sample_refs = _sample_evidence_refs(selected_samples, segments)
     low_confidence = _low_confidence_flags(selected_samples, evidence_gaps, report_quality)
     actions = _action_items_for_report(effective_profile, result, formulas, ideas)
@@ -2553,6 +2658,7 @@ def _report_value_upgrade(
             "missing_evidence": report_quality.get("missing_evidence") or [],
             "checks": report_quality.get("checks") or {},
         },
+        "diagnostics": diagnostics,
     }
 
 
@@ -2903,7 +3009,9 @@ def batch_distill_creator_clone(
                 "batch_count": len(batch_results),
                 "selected_count": len(selected_samples),
                 "batch_size": max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES)),
+                "final_status": "success",
             }
+            final_result["creator_report_view_model"] = build_creator_report_view_model(final_result, sample_set, selected_samples)
             _write_json(final_result_path, final_result)
             final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
             _write_json(output_dir / "creator_clone_result.json", final_result)
@@ -2931,6 +3039,7 @@ def batch_distill_creator_clone(
                 "final_reduce_recovery": "local_fallback",
                 "final_reduce_error_code": error.code,
             }
+            final_result["creator_report_view_model"] = build_creator_report_view_model(final_result, sample_set, selected_samples)
             _write_json(final_result_path, final_result)
             final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
             _write_json(output_dir / "creator_clone_result.json", final_result)
@@ -3060,6 +3169,7 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
         "with_keyframes": sum(1 for sample in selected_samples if sample.has_frames),
         "with_asr": sum(1 for sample in selected_samples if sample.has_asr),
         "with_ocr": sum(1 for sample in selected_samples if sample.has_ocr),
+        "with_comments": sum(1 for sample in selected_samples if sample.has_comments),
     }
     report_quality = validate_creator_report_quality(
         result["creator_clone_strategy"],

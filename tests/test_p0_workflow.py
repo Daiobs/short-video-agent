@@ -507,6 +507,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderCreatorCloneNextAction" in script
     assert "function runCreatorCloneNextAction" in script
     assert "function runCreatorCloneImportStep" in script
+    assert ".creator-report-diagnostics" in stylesheet
+    assert ".creator-report-diagnostic-grid" in stylesheet
+    assert ".creator-report-source-warning" in stylesheet
     import_step = script.split("async function runCreatorCloneImportStep()", 1)[1].split("async function syncCreatorCloneWorkflowSelection", 1)[0]
     assert 'await scanProfile("public");' in import_step
     assert "scanProfileWithLocalChrome()" not in import_step
@@ -928,6 +931,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "profileAutoAnalyze" not in script
     assert "样本证据完整度" in script
     assert "证据覆盖" in script
+    assert "creatorReportDiagnosticsFromResult" in script
+    assert "报告来源" in script
+    assert "质量判断" in script
+    assert "优先补齐" in script
+    assert "分批大模型汇总" in script
     assert "evidence-chip" in script
     assert "asr_status" in script
     assert "ocr_status" in script
@@ -10122,6 +10130,10 @@ def test_creator_clone_prompt_marks_metadata_only_samples() -> None:
     assert "甜美 COS 账号" in prompt
     assert "follower_count" in prompt
     assert "图文/照片样本只能推断封面、标题、视觉承诺和静态构图" in prompt
+    assert "0-1 秒第一眼吸引点" in prompt
+    assert "镜头距离/俯仰角/光线颜色" in prompt
+    assert "安全复刻边界" in prompt
+    assert "期望验证指标" in prompt
     assert "CreatorCloneResult" not in prompt
     assert "creator_clone_spec" in prompt
 
@@ -10300,6 +10312,10 @@ def test_creator_clone_report_view_model_exposes_value_upgrade_evidence_and_gaps
     assert value_upgrade["sample_evidence"][0]["metric"] == "like_count"
     assert value_upgrade["low_confidence"] is True
     assert any("缺少 ASR/OCR/评论" in item for item in value_upgrade["evidence_gaps"])
+    assert value_upgrade["diagnostics"]["source_label"] == "大模型 Map-Reduce"
+    assert value_upgrade["diagnostics"]["quality_label"]
+    assert value_upgrade["diagnostics"]["coverage"]["keyframes"] == 1
+    assert "ASR" in value_upgrade["diagnostics"]["missing_evidence_labels"]
     assert normalized["report_quality"]["checks"]["has_sample_evidence"] is True
     assert normalized["report_quality"]["quality_score"] > 0
 
