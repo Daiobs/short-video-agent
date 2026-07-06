@@ -169,6 +169,10 @@ let profileChromeAvailable = false;
 let creatorCloneEnrichmentRunning = false;
 let creatorCloneDistillRunning = false;
 let creatorCloneNextActionRunning = false;
+let activeProfileBuildJobId = "";
+let activeProfileBuildJobStatus = "";
+let activeProfileBuildJobUpdatedAt = "";
+let activeProfileBuildLastResult = null;
 let creatorCloneSelectionSyncTimer = 0;
 let profileStageView = "import";
 let currentCloneProfileFingerprint = "";
@@ -404,6 +408,9 @@ async function restoreRecentProfileBuildJob(setId) {
     });
     placeJobCard("profile");
     renderJobStatus(job, "恢复素材包队列");
+    if (job.status === "running" || job.status === "pending") {
+      setActiveProfileBuildJob(job);
+    }
     if (job.result_json && Object.keys(job.result_json).length) {
       renderProfileQueue(job.result_json);
     } else {
@@ -414,9 +421,12 @@ async function restoreRecentProfileBuildJob(setId) {
       }))});
     }
     if (job.status === "running" || job.status === "pending") {
+      setActiveProfileBuildJob(job);
       setProfileStageView("enrich", {scroll: false});
       setCreatorCloneEnrichmentLocked(true);
-      profileScanStatus.textContent = "已恢复正在运行的证据富化队列；请等待进度更新，不需要重新点击。";
+      profileScanStatus.textContent = isProfileBuildJobStale(job)
+        ? "已恢复上次证据富化队列，但任务较长时间没有更新；如果进度不再变化，可重新点击富化，已有素材包会复用。"
+        : "已恢复正在运行的证据富化队列；刷新页面不会取消后台任务，请等待进度更新，不需要重新点击。";
       pollProfileQueue(job.id).finally(() => {
         setCreatorCloneEnrichmentLocked(false);
         updateCreatorCloneSelectionStatus();
@@ -424,6 +434,7 @@ async function restoreRecentProfileBuildJob(setId) {
       });
       return true;
     }
+    clearActiveProfileBuildJob(job.id);
     if (job.status === "success") {
       if (job.result_json?.set) {
         refreshProfilePoolFromSet(job.result_json.set);
@@ -596,6 +607,7 @@ function resetCreatorClonePoolForNewProfile({clearInput = true} = {}) {
   runtimeSampleRows = [];
   profileSelectedKeys = new Set();
   profileScanPayload = null;
+  clearActiveProfileBuildJob();
   clearCreatorCloneRenderedReport();
   currentCreatorIntelligenceProject = null;
   currentCreatorIntelligenceStrategy = null;
@@ -796,6 +808,40 @@ function renderJobStatus(job, fallbackMessage = "") {
   jobMessage.className = `job-message ${job.status === "failed" ? "failed" : job.status === "success" ? "success" : ""}`;
   jobMessage.textContent = `${job.status || "running"} · ${job.progress || 0}% · ${job.message || fallbackMessage || ""}`;
   renderJobPhase(job);
+}
+
+function isProfileBuildJobActive() {
+  return Boolean(activeProfileBuildJobId && ["pending", "running"].includes(activeProfileBuildJobStatus));
+}
+
+function profileBuildJobAgeSeconds(job = {}) {
+  const updatedAt = job.updated_at || activeProfileBuildJobUpdatedAt || "";
+  const updatedTime = updatedAt ? Date.parse(updatedAt) : 0;
+  if (!updatedTime || Number.isNaN(updatedTime)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor((Date.now() - updatedTime) / 1000));
+}
+
+function isProfileBuildJobStale(job = {}) {
+  return ["pending", "running"].includes(job.status || activeProfileBuildJobStatus)
+    && profileBuildJobAgeSeconds(job) >= 600;
+}
+
+function setActiveProfileBuildJob(job = {}) {
+  activeProfileBuildJobId = isSafeJobId(job.id) ? job.id : activeProfileBuildJobId;
+  activeProfileBuildJobStatus = job.status || activeProfileBuildJobStatus || "running";
+  activeProfileBuildJobUpdatedAt = job.updated_at || activeProfileBuildJobUpdatedAt || new Date().toISOString();
+}
+
+function clearActiveProfileBuildJob(jobId = "") {
+  if (jobId && activeProfileBuildJobId && jobId !== activeProfileBuildJobId) {
+    return;
+  }
+  activeProfileBuildJobId = "";
+  activeProfileBuildJobStatus = "";
+  activeProfileBuildJobUpdatedAt = "";
+  activeProfileBuildLastResult = null;
 }
 
 function setCreatorCloneDistillButtonsLocked(locked) {
@@ -2125,7 +2171,13 @@ function updateCreatorCloneSelectionStatus() {
     creatorCloneBatchDistillButton.disabled = Boolean(batchDisabledReason);
     creatorCloneBatchDistillButton.title = batchDisabledReason || `将 ${selected.length} 条样本按每 ${CREATOR_CLONE_MAX_DISTILL_SAMPLES} 条一批蒸馏并汇总`;
   }
-  renderProfileEnrichmentPlan(selected, buildable);
+  if (isProfileBuildJobActive()) {
+    if (activeProfileBuildLastResult) {
+      renderProfileEvidenceQueueProgress(activeProfileBuildLastResult);
+    }
+  } else {
+    renderProfileEnrichmentPlan(selected, buildable);
+  }
   renderProfileDistillReadiness(selected);
   renderCreatorCloneOverview(profileScanPayload?.summary || cloneSummaryFromSet(profileScanPayload?.set) || {});
 }
@@ -2272,6 +2324,12 @@ function renderProfileEvidenceQueueProgress(result = {}) {
   const failedCount = Number(result.failed_count || 0);
   const totalTarget = downloadableCount || selectedCount || 0;
   const notes = normalizeItems(pipelineSummary.notes).slice(-2);
+  const runningNote = isProfileBuildJobActive()
+    ? "页面刷新不会取消正在运行的后台富化任务；刷新后会自动恢复队列轮询。"
+    : "";
+  const staleNote = isProfileBuildJobActive() && isProfileBuildJobStale()
+    ? "任务已较长时间没有进度更新，可能是服务重启或后台任务中断；可重新点击富化，已生成的素材包会优先复用。"
+    : "";
   profileEvidenceStatus.classList.toggle("warning", Boolean(failedCount));
   profileEvidenceStatus.innerHTML = `
     <div class="enrichment-plan-head">
@@ -2286,6 +2344,8 @@ function renderProfileEvidenceQueueProgress(result = {}) {
       <div><dt>OCR</dt><dd>${formatNumber(ocrCount)}</dd></div>
       <div><dt>可蒸馏</dt><dd>${formatNumber(readyCount)}</dd></div>
     </dl>
+    ${runningNote ? `<p class="compact-copy">${escapeHtml(runningNote)}</p>` : ""}
+    ${staleNote ? `<p class="compact-copy warning-text">${escapeHtml(staleNote)}</p>` : ""}
     ${notes.length ? `<ul class="profile-queue-note-list">${notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}
   `;
 }
@@ -3530,6 +3590,7 @@ function mergeProfileQueueItems(items) {
 
 function renderProfileQueue(result) {
   const items = normalizeItems(result.items);
+  activeProfileBuildLastResult = result || {};
   revealProfileQueueCard();
   mergeProfileQueueItems(items);
   renderProfileEvidenceQueueProgress(result);
@@ -3667,9 +3728,13 @@ async function pollProfileQueue(jobId) {
   const response = await fetch(`/api/jobs/${jobId}`, {cache: "no-store"});
   const payload = await readJsonResponse(response);
   const job = payload.job;
+  if (job.status === "pending" || job.status === "running") {
+    setActiveProfileBuildJob(job);
+  }
   renderJobStatus(job);
   renderProfileQueue(job.result_json || {});
   if (job.status === "success") {
+    clearActiveProfileBuildJob(job.id);
     renderJobStatus(job);
     if (job.result_json?.set) {
       refreshProfilePoolFromSet(job.result_json.set);
@@ -3693,6 +3758,7 @@ async function pollProfileQueue(jobId) {
     return;
   }
   if (job.status === "failed") {
+    clearActiveProfileBuildJob(job.id);
     jobMessage.className = "job-message failed";
     jobMessage.textContent = `${job.error_code || "ERROR"}：${job.message || "任务失败"}`;
     updateCreatorCloneSelectionStatus();
@@ -3776,6 +3842,7 @@ async function buildSelectedProfileQueue() {
       }),
     });
     const payload = await readJsonResponse(response);
+    setActiveProfileBuildJob({id: payload.job_id, status: "running", updated_at: new Date().toISOString()});
     rememberRecentProfileBuildState({
       setId: currentCloneSetId,
       jobId: payload.job_id,
@@ -3786,6 +3853,7 @@ async function buildSelectedProfileQueue() {
       : `已保存 ${payload.selected_count} 条参考样本；这些样本不下载视频，可直接进入大模型蒸馏。`;
     await pollProfileQueue(payload.job_id);
   } catch (error) {
+    clearActiveProfileBuildJob();
     jobMessage.className = "job-message failed";
     jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "队列创建失败"}`;
     profileScanStatus.textContent = jobMessage.textContent;

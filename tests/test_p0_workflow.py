@@ -1004,6 +1004,12 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "可复刻创作公式" in script
     assert "不要照搬 / 风险边界" in script
     assert "lockedProfileNavigationStage" in script
+    assert "activeProfileBuildJobId" in script
+    assert "function isProfileBuildJobActive" in script
+    assert "renderProfileEnrichmentPlan(selected, buildable)" in script
+    assert "页面刷新不会取消正在运行的后台富化任务" in script
+    assert "可能是服务重启或后台任务中断" in script
+    assert "已生成的素材包会优先复用" in script
     assert "证据富化正在运行，完成后会自动进入下一步" in script
     assert "大模型蒸馏正在运行，完成后会自动进入报告页" in script
     assert "creatorCloneOverviewFromSet" in script

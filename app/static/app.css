@@ -1633,6 +1633,10 @@ button:disabled {
     color: #92400e;
 }
 
+.warning-text {
+    color: #a16207;
+}
+
 .enrichment-plan-head {
     display: grid;
     gap: 4px;
