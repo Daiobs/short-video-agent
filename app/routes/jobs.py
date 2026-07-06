@@ -39,6 +39,7 @@ from app.services.creator_clone import (
     update_sample_set_with_case_artifacts,
 )
 from app.services.creator_intelligence import CreatorRuntimeEngine, WorkflowAction
+from app.services.runtime_settings import effective_llm_settings
 
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -363,7 +364,29 @@ def _run_download_and_build_case_job(job_id: str, aweme_id: str, candidate_id: s
     except Exception as error:
         job = db.get(Job, job_id)
         if job:
-            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.CASE_BUILD_FAILED)
+            message = str(error)[:500]
+            result_payload = None
+            if "sample_set" in locals():
+                try:
+                    runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                        sample_set.set_id,
+                        WorkflowAction.MARK_EVIDENCE_READY,
+                        job_state={
+                            "status": "failed",
+                            "error_code": ErrorCode.CASE_BUILD_FAILED,
+                            "message": message,
+                            "job_id": job_id,
+                        },
+                    )
+                    result_payload = {
+                        "ok": False,
+                        "error_code": ErrorCode.CASE_BUILD_FAILED,
+                        "message": message,
+                        "creator_intelligence": runtime_result.creator_intelligence,
+                    }
+                except Exception:
+                    result_payload = None
+            _set_job(job, "failed", job.progress, message, result=result_payload, error_code=ErrorCode.CASE_BUILD_FAILED)
             db.commit()
     finally:
         db.close()
@@ -642,9 +665,14 @@ def _is_profile_queue_downloadable(item: dict) -> bool:
     return bool(str(item.get("aweme_id") or "").strip()) and str(item.get("media_type") or "unknown") not in {"image", "text"}
 
 
-def _profile_queue_result(items: list[dict]) -> dict:
+def _profile_queue_result(items: list[dict], sample_set_id: str = "", selected_sample_ids: list[str] | None = None) -> dict:
     counts = _profile_queue_counts(items)
-    return {"items": items, **counts, "pipeline_summary": _profile_pipeline_summary(items)}
+    result = {"items": items, **counts, "pipeline_summary": _profile_pipeline_summary(items)}
+    if sample_set_id:
+        result["set"] = {"set_id": sample_set_id}
+    if selected_sample_ids:
+        result["selected_sample_ids"] = selected_sample_ids
+    return result
 
 
 def _profile_pipeline_summary(items: list[dict]) -> dict:
@@ -977,12 +1005,14 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
         )
         for index, item in enumerate(raw_items)
     ]
+    def queue_result() -> dict:
+        return _profile_queue_result(queue_items, sample_set_id=sample_set_id, selected_sample_ids=selected_sample_ids)
 
     db = SessionLocal()
     try:
         job = db.get(Job, job_id)
         if job:
-            _set_job(job, "running", 1, "素材包队列开始", result=_profile_queue_result(queue_items))
+            _set_job(job, "running", 1, "素材包队列开始", result=queue_result())
             db.commit()
 
         total = max(1, len(queue_items))
@@ -998,7 +1028,7 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                         "running",
                         _profile_queue_total_progress(index, total, 1.0),
                         f"已保留参考样本 {index + 1}/{total}",
-                        result=_profile_queue_result(queue_items),
+                        result=queue_result(),
                     )
                     db.commit()
                 continue
@@ -1052,7 +1082,7 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                             "running",
                             min(98, int(((index + 1) / total) * 95)),
                             f"已处理 {index + 1}/{total}",
-                            result=_profile_queue_result(queue_items),
+                            result=queue_result(),
                         )
                         db.commit()
                     continue
@@ -1066,7 +1096,7 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                         "running",
                         _profile_queue_total_progress(index, total, 0.12),
                         item["message"],
-                        result=_profile_queue_result(queue_items),
+                        result=queue_result(),
                     )
                     db.commit()
 
@@ -1082,7 +1112,7 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                         "running",
                         _profile_queue_total_progress(index, total, 0.35),
                         item["message"],
-                        result=_profile_queue_result(queue_items),
+                        result=queue_result(),
                     )
                     db.commit()
 
@@ -1098,7 +1128,7 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                         "running",
                         _profile_queue_total_progress(index, total, 0.58),
                         item["message"],
-                        result=_profile_queue_result(queue_items),
+                        result=queue_result(),
                     )
                     db.commit()
 
@@ -1140,11 +1170,11 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
                     "running",
                     _profile_queue_total_progress(index, total, 1.0),
                     f"已处理 {index + 1}/{total}",
-                    result=_profile_queue_result(queue_items),
+                    result=queue_result(),
                 )
                 db.commit()
 
-        final_result = _profile_queue_result(queue_items)
+        final_result = queue_result()
         updated_sample_set = None
         creator_intelligence = None
         if sample_set_id and selected_sample_ids:
@@ -1190,7 +1220,30 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
     except Exception as error:
         job = db.get(Job, job_id)
         if job:
-            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.PROFILE_BUILD_ITEM_FAILED)
+            message = str(error)[:500]
+            result_payload = None
+            if "sample_set" in locals():
+                try:
+                    runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                        sample_set.set_id,
+                        WorkflowAction.MARK_EVIDENCE_READY,
+                        job_state={
+                            "status": "failed",
+                            "error_code": ErrorCode.PROFILE_BUILD_ITEM_FAILED,
+                            "message": message,
+                            "job_id": job_id,
+                            "batch": True,
+                        },
+                    )
+                    result_payload = {
+                        "ok": False,
+                        "error_code": ErrorCode.PROFILE_BUILD_ITEM_FAILED,
+                        "message": message,
+                        "creator_intelligence": runtime_result.creator_intelligence,
+                    }
+                except Exception:
+                    result_payload = None
+            _set_job(job, "failed", job.progress, message, result=result_payload, error_code=ErrorCode.PROFILE_BUILD_ITEM_FAILED)
             db.commit()
     finally:
         db.close()
@@ -1298,7 +1351,13 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         )
         sample_set = runtime_result.sample_set or sample_set
         selected_samples = _selected_clone_samples(sample_set, selected_for_engine)
-        execution_plan = build_distill_execution_plan(selected_samples, batch_size=max_samples, final_timeout_seconds=settings.llm_timeout_seconds)
+        llm_settings = effective_llm_settings()
+        execution_plan = build_distill_execution_plan(
+            selected_samples,
+            batch_size=max_samples,
+            single_timeout_seconds=float(llm_settings.get("timeout_seconds") or settings.llm_timeout_seconds),
+            final_timeout_seconds=float(llm_settings.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
+        )
 
         def progress(value: int, message: str, phase: dict | None = None) -> None:
             current = db.get(Job, job_id)
@@ -1366,7 +1425,10 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                                 "current_phase_label": "准备蒸馏",
                                 "phase_index": 2,
                                 "phase_count": 6,
-                                "timeout_seconds": int(settings.llm_timeout_seconds),
+                                "timeout_seconds": int(
+                                    (execution_plan.get("timeout_policy") or {}).get("recommended_batch_timeout_seconds")
+                                    or settings.llm_timeout_seconds
+                                ),
                                 "execution_plan": execution_plan,
                                 "diagnostic": "接下来会生成 Prompt、调用大模型、解析结果并写入报告。",
                             },
@@ -1386,15 +1448,15 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
             )
             job = db.get(Job, job_id)
             if job:
-                CreatorRuntimeEngine.dispatch_sample_set(
+                result_execution_plan = result.get("execution_plan") or execution_plan
+                runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
                     sample_set.set_id,
                     WorkflowAction.COMPLETE_DISTILLATION,
                     strategy_output=(result.get("result") or {}).get("creator_clone_strategy") or {},
+                    job_state={"status": "success", "message": "创作者蒸馏完成", "job_id": job_id},
                 )
-                intelligence = creator_intelligence_payload_for_sample_set(
-                    sample_set,
-                    (result.get("result") or {}).get("creator_clone_strategy"),
-                )
+                intelligence = runtime_result.creator_intelligence
+                intelligence["result"] = result.get("result") or {}
                 _set_job(
                     job,
                     "success",
@@ -1404,7 +1466,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                         "ok": True,
                         **result,
                         "creator_intelligence": intelligence,
-                        "execution_plan": execution_plan,
+                        "execution_plan": result_execution_plan,
                         "distill_phase": _distill_phase_payload(
                             {
                                 "current_phase": "complete",
@@ -1412,9 +1474,9 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                                 "phase_index": 3,
                                 "phase_count": 3,
                                 "status": "success",
-                                "execution_plan": execution_plan,
+                                "execution_plan": result_execution_plan,
                             },
-                            execution_plan=execution_plan,
+                            execution_plan=result_execution_plan,
                             message="创作者蒸馏完成",
                         ),
                     },
@@ -1431,6 +1493,19 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
             )
             job = db.get(Job, job_id)
             if job:
+                runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                    sample_set.set_id,
+                    WorkflowAction.MARK_EVIDENCE_READY,
+                    job_state={
+                        "status": "prompt_only",
+                        "recovery": "prompt_only",
+                        "error_code": error.code,
+                        "message": error.message,
+                        "job_id": job_id,
+                    },
+                )
+                intelligence = runtime_result.creator_intelligence
+                intelligence["result"] = {}
                 _set_job(
                     job,
                     "success",
@@ -1442,7 +1517,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                         "error_code": error.code,
                         "message": error.message,
                         **prompt_payload,
-                        "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set),
+                        "creator_intelligence": intelligence,
                         "execution_plan": execution_plan,
                         "distill_phase": _distill_phase_payload(
                             {
@@ -1463,7 +1538,28 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
     except AppError as error:
         job = db.get(Job, job_id)
         if job:
-            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            result_payload = None
+            if "sample_set" in locals():
+                try:
+                    runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                        sample_set.set_id,
+                        WorkflowAction.MARK_EVIDENCE_READY,
+                        job_state={
+                            "status": "failed",
+                            "error_code": error.code,
+                            "message": error.message,
+                            "job_id": job_id,
+                        },
+                    )
+                    result_payload = {
+                        "ok": False,
+                        "error_code": error.code,
+                        "message": error.message,
+                        "creator_intelligence": runtime_result.creator_intelligence,
+                    }
+                except Exception:
+                    result_payload = None
+            _set_job(job, "failed", job.progress, error.message, result=result_payload, error_code=error.code)
             db.commit()
     except Exception as error:
         job = db.get(Job, job_id)
@@ -1495,7 +1591,13 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         )
         sample_set = runtime_result.sample_set or sample_set
         selected_samples = _selected_clone_samples(sample_set, selected_for_engine)
-        execution_plan = build_distill_execution_plan(selected_samples, batch_size=batch_size, final_timeout_seconds=settings.llm_final_reduce_timeout_seconds)
+        llm_settings = effective_llm_settings()
+        execution_plan = build_distill_execution_plan(
+            selected_samples,
+            batch_size=batch_size,
+            single_timeout_seconds=float(llm_settings.get("timeout_seconds") or settings.llm_timeout_seconds),
+            final_timeout_seconds=float(llm_settings.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
+        )
 
         def progress(value: int, message: str, phase: dict | None = None) -> None:
             current = db.get(Job, job_id)
@@ -1538,17 +1640,33 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         if job:
             message = "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型"
             if result.get("result"):
-                CreatorRuntimeEngine.dispatch_sample_set(
+                runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
                     sample_set.set_id,
                     WorkflowAction.COMPLETE_DISTILLATION,
                     strategy_output=(result.get("result") or {}).get("creator_clone_strategy") or {},
+                    job_state={
+                        "status": "success",
+                        "message": message,
+                        "job_id": job_id,
+                        "batch": True,
+                    },
                 )
-                intelligence = creator_intelligence_payload_for_sample_set(
-                    sample_set,
-                    (result.get("result") or {}).get("creator_clone_strategy"),
-                )
+                intelligence = runtime_result.creator_intelligence
+                intelligence["result"] = result.get("result") or {}
             else:
-                intelligence = creator_intelligence_payload_for_sample_set(sample_set)
+                runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                    sample_set.set_id,
+                    WorkflowAction.MARK_EVIDENCE_READY,
+                    job_state={
+                        "status": "prompt_only",
+                        "recovery": "prompt_only",
+                        "message": message,
+                        "job_id": job_id,
+                        "batch": True,
+                    },
+                )
+                intelligence = runtime_result.creator_intelligence
+                intelligence["result"] = {}
             _set_job(
                 job,
                 "success",
@@ -1575,7 +1693,29 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
     except AppError as error:
         job = db.get(Job, job_id)
         if job:
-            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            result_payload = None
+            if "sample_set" in locals():
+                try:
+                    runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                        sample_set.set_id,
+                        WorkflowAction.MARK_EVIDENCE_READY,
+                        job_state={
+                            "status": "failed",
+                            "error_code": error.code,
+                            "message": error.message,
+                            "job_id": job_id,
+                            "batch": True,
+                        },
+                    )
+                    result_payload = {
+                        "ok": False,
+                        "error_code": error.code,
+                        "message": error.message,
+                        "creator_intelligence": runtime_result.creator_intelligence,
+                    }
+                except Exception:
+                    result_payload = None
+            _set_job(job, "failed", job.progress, error.message, result=result_payload, error_code=error.code)
             db.commit()
     except Exception as error:
         job = db.get(Job, job_id)
@@ -1601,6 +1741,19 @@ def _create_job(job_type: str, message: str) -> Job:
         db.commit()
         db.refresh(job)
         return job
+    finally:
+        db.close()
+
+
+def _seed_job_result(job_id: str, result: dict) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if not job:
+            return
+        job.result_json = json.dumps(result, ensure_ascii=False)
+        job.updated_at = utc_now()
+        db.commit()
     finally:
         db.close()
 
@@ -1647,6 +1800,31 @@ def get_recent_profile_build_cases_job(sample_set_id: str = ""):
                     continue
             return {"ok": True, "job": _job_response_payload(job)}
         return error_response(AppError("JOB_NOT_FOUND", "没有找到最近的素材包队列。"), status_code=404)
+    finally:
+        db.close()
+
+
+@router.get("/creator-clone-distill/recent")
+def get_recent_creator_clone_distill_job(sample_set_id: str = ""):
+    db = SessionLocal()
+    try:
+        jobs = (
+            db.query(Job)
+            .filter(Job.type.in_(["creator-clone-distill", "creator-clone-batch-distill"]))
+            .filter(Job.status == "success")
+            .order_by(Job.updated_at.desc())
+            .limit(20)
+            .all()
+        )
+        for job in jobs:
+            result = job.result()
+            result_set_id = str((result.get("set") or {}).get("set_id") or "")
+            if sample_set_id and result_set_id != sample_set_id:
+                continue
+            if not result_set_id:
+                continue
+            return {"ok": True, "job": _job_response_payload(job)}
+        return error_response(AppError("JOB_NOT_FOUND", "没有找到最近的创作者蒸馏报告。"), status_code=404)
     finally:
         db.close()
 
@@ -1698,6 +1876,20 @@ def profile_build_cases_job(payload: ProfileBuildCasesJobRequest, background_tas
             )
         )
     job = _create_job("profile-build-cases", "等待生成素材包队列")
+    _seed_job_result(
+        job.id,
+        {
+            "set": {"set_id": payload.sample_set_id} if payload.sample_set_id else {},
+            "items": queued_items,
+            "selected_sample_ids": selected_sample_ids,
+            "pipeline_summary": {
+                "selected_count": selected_count,
+                "downloadable_count": downloadable_count,
+                "reference_only_count": max(0, selected_count - downloadable_count),
+                "notes": ["队列已创建，等待后台开始处理。"],
+            },
+        },
+    )
     background_tasks.add_task(
         _run_profile_build_cases_job,
         job.id,

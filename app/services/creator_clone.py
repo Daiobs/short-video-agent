@@ -13,6 +13,7 @@ import csv
 import html
 import io
 import json
+import math
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -38,11 +39,11 @@ from app.services.creator_intelligence import (
     CreatorCloneStrategy,
     CreatorRuntimeEngine,
     ExecutionLayer,
-    WorkflowAction,
     project_from_clone_selection,
 )
 from app.services.creator_intelligence.memory import CreatorMemoryGraph
 from app.services.creator_intelligence.models import validate_creator_clone_schema as validate_creator_clone_strategy_schema
+from app.services.creator_intelligence.report_quality import validate_creator_report_quality
 
 
 VALID_SOURCE_TYPES = {"douyin", "xhs", "bili", "local", "manual", "unknown"}
@@ -262,7 +263,7 @@ def build_sample_set(
             )
             samples.extend(samples_from_profile_result(result))
             warnings.extend(result.warnings)
-            warnings.append("公开主页扫描优先执行；仅使用平台公开返回的数据，不登录、不使用 Cookie、不绕风控。")
+            warnings.append("主页扫描已通过统一 profile pipeline 执行；本机配置 Cookie 时会优先尝试 Cookie API，失败后再回退公开页面扫描。")
         except AppError as error:
             if not (manual_links.strip() or structured_items.strip() or case_ids.strip()):
                 raise
@@ -862,6 +863,8 @@ def creator_clone_strategy_prompt_contract() -> str:
         "- 不要输出空壳对象，例如 {\"name\":\"\",\"when_to_use\":\"\"}；如果没有证据，请用空数组 []，并把原因写进 evidence_gaps。\n"
         "- transferable_formulas 每条必须包含 name/when_to_use/beat_structure/expected_metric_strength/risks 中至少 3 个有效字段。\n"
         "- candidate_ideas 每条必须包含 title/formula_used/why_worth_trying/production_requirements 中至少 3 个有效字段。\n"
+        "- 核心策略、公式和选题尽量绑定证据字段：sample_id/title/metric/metric_value/evidence_level。无法绑定时写 low_confidence: true 或放入 evidence_gaps。\n"
+        "- next_actions 必须包含可执行动作，至少覆盖拍摄/脚本或标题/封面中的两个维度。\n"
         "- 如果证据不足，也要返回完整 schema，用空数组表达未知，不要输出自由文本替代 JSON。\n"
         f"{json.dumps({'creator_clone_strategy': schema}, ensure_ascii=False, indent=2)}"
     )
@@ -888,8 +891,12 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
 - 必须区分 video / image / text / mixed / unknown：视频样本才能推断镜头节奏、动作和口播；图文/照片样本只能推断封面、标题、视觉承诺和静态构图；unknown 样本只能作为元数据参考。
 - 区分高赞、高评论、高分享、高收藏和弱样本；没有数据时用空数组。
 - 输出要适合后续在网页可视化展示，主报告会按：核心判断、流量来源、可复刻公式、下一批怎么拍、发布前自检 来呈现。
+- 报告价值要按三层组织：观察=这个账号做了什么；解释=为什么这些内容有效；执行=下一条怎么拍/怎么写/怎么验证。
 - summary 必须是 2-4 句高密度中文，直接回答“这个账号靠什么跑通，下一条最该复刻什么”。
 - transferable_formulas 必须是可拍摄的结构，不要只写抽象概念；candidate_ideas 必须是可执行选题，不要空标题。
+- 美拍/COS/颜值/摄影出片类账号必须输出拍摄动作级结论：0-1 秒第一眼吸引点、妆造/服装/发型/道具、镜头距离/俯仰角/光线颜色、动作变化、标题话题点击理由、安全复刻边界。
+- 对这类账号的 transferable_formulas 必须包含：首帧画面、人物动作、妆造或场景、标题话题、期望验证指标和不要照搬的风险。
+- 每个核心策略尽量引用 sample_id/title/metric/evidence_level；低证据结论必须标记 low_confidence 或写进 evidence_gaps。
 - {creator_clone_strategy_prompt_contract()}
 
 蒸馏模式：{distill_mode}
@@ -927,6 +934,8 @@ def build_lite_distill_prompt(sample_set: CloneSampleSet, selected_samples: list
 要求：
 - 只根据证据推断，不确定就写进 evidence_gaps。
 - 美拍/COS/颜值类样本重点看视觉吸引、人物人设、动作节奏、标题话题和互动引导。
+- 美拍/COS/颜值/摄影出片类不能只写“氛围感好”：必须拆成首帧、眼神/姿态、妆造服化、镜头距离/角度/光线、动作节奏、标题话题、互动承接和安全复刻边界。
+- transferable_formulas 要能指导拍摄现场执行：首帧怎么摆、镜头怎么动、人物做什么、标题怎么写、看哪项指标验证。
 - 输出要短而有用，但不能只给一句摘要。至少覆盖定位、流量来源、表达模式、可复用公式、候选选题和自检规则。
 - summary 必须直接告诉用户“这个账号靠什么起量、下一条应复刻什么结构”。
 - 不要返回空壳公式或空壳选题；无法确认就写 evidence_gaps。
@@ -1251,8 +1260,11 @@ def build_reduce_distill_prompt(
 - 美拍/COS/颜值类优先归纳：第一眼吸引、人物人设、动作节奏、妆造/光线/构图、标题话题和互动引导。
 - 输出要可执行，不要只写摘要。每个核心数组尽量给 3-6 条，必须说明“为什么有效 / 适用场景 / 风险边界”。
 - 不要把擦边、美拍、COS 账号硬套成鸡汤/教学脚本；如果主要流量来自人物、颜值、氛围、服化或姿态，要把这些作为创作规律写清楚。
+- 对美拍/COS/摄影出片类账号，公式必须写成“首帧/镜头动作/妆造场景/标题话题/验证指标/风险边界”的拍摄动作结构，不能只给抽象人设标签。
 - 主报告会按“核心判断、流量来源、可复刻公式、下一批怎么拍、发布前自检”展示；请优先让这些字段有内容。
 - 不要输出空壳公式、空壳选题、空壳规则；证据不足就写 evidence_gaps。
+- 报告按“观察/解释/执行”三层思考：观察账号做了什么，解释为什么有效，执行下一条怎么拍/怎么写/怎么验证。
+- 核心策略、公式和选题尽量绑定 sample_id/title/metric/evidence_level；无法绑定的判断必须标记 low_confidence 或写入 evidence_gaps。
 - {creator_clone_strategy_prompt_contract()}
 
 返回 JSON 字段：
@@ -1301,9 +1313,12 @@ def build_micro_reduce_distill_prompt(
 - 证据不足写进 evidence_gaps。
 - 高赞/高评/高分享/高收藏要分开解释：高赞看情绪/身份共鸣，高评看参与钩子，高分享看转发理由，高收藏看模板/复看价值。
 - 美拍/COS/颜值类重点输出视觉吸引、人物人设、动作节奏、妆造/光线/构图、标题话题、互动引导；不要硬套文案鸡汤结构。
+- 对美拍/COS/摄影出片类账号，至少输出 3 条拍摄动作公式，每条都要包含首帧、人物动作、镜头或光线、标题话题、验证指标和风险边界。
 - transferable_formulas 至少给 3 个，candidate_ideas 至少给 5 个，creator_clone_spec.self_check_rubric 至少给 5 条；如果证据不足，也要写出“低置信度规则”。
 - 每个公式必须能直接指导下一条怎么拍；每个选题必须能直接变成一个标题/拍摄方向。
 - 不要输出空壳公式、空壳选题、空壳规则；证据不足就写 evidence_gaps。
+- 报告按“观察/解释/执行”三层思考：先说账号做了什么，再解释为什么有效，最后给下一条拍摄/文案/标题/封面/验证动作。
+- 核心公式、选题和策略尽量绑定 sample_id/title/metric/evidence_level；无法绑定的判断必须标记 low_confidence 或写入 evidence_gaps。
 - {creator_clone_strategy_prompt_contract()}
 
 返回 JSON：
@@ -1710,27 +1725,6 @@ def _drop_empty_prompt_values(value):
     return value if _is_meaningful_report_text(value) else ""
 
 
-def _record_creator_runtime_state(sample_set: CloneSampleSet, strategy_output: dict[str, Any] | None, *, source: str) -> None:
-    try:
-        engine = CreatorRuntimeEngine.from_sample_set(sample_set)
-        if engine.workflow_engine.state.value == "SAMPLE_SELECTED":
-            engine.dispatch(WorkflowAction.MARK_EVIDENCE_READY, persist=True, debug={"source": source})
-        if strategy_output:
-            if engine.workflow_engine.state.value == "EVIDENCE_READY":
-                engine.dispatch(WorkflowAction.START_DISTILLATION, persist=True, debug={"source": source})
-            engine.dispatch(
-                WorkflowAction.COMPLETE_DISTILLATION,
-                {"strategy_output": strategy_output},
-                persist=True,
-                debug={"source": source},
-            )
-        else:
-            engine.persist(WorkflowAction.MARK_EVIDENCE_READY, {"source": source}, debug={"source": source})
-    except Exception:
-        # Runtime state recording must never make a finished distillation fail.
-        return
-
-
 def distill_creator_clone(
     sample_set: CloneSampleSet,
     selected_sample_ids: list[str],
@@ -1761,7 +1755,6 @@ def distill_creator_clone(
     if not llm_is_configured():
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
 
-    llm = get_llm_provider()
     execution_layer = ExecutionLayer()
     report_progress(42, "正在生成样本摘要和蒸馏 Prompt", {"current_phase": "prompt_build", "current_phase_label": "生成 Prompt"})
     # Keep the web path to one external LLM call. Per-sample LLM Map calls are
@@ -1782,9 +1775,38 @@ def distill_creator_clone(
     if use_micro_reduce:
         (output_dir / "distill_prompt_micro.md").write_text(prompt, encoding="utf-8")
         warnings.append("三条及以上样本默认使用 micro reduce，以提高当前大模型网关的成功率。")
-    report_progress(58, "蒸馏 Prompt 已写入，准备调用大模型", {"current_phase": "prompt_ready", "current_phase_label": "Prompt 就绪"})
+    effective_llm = effective_llm_settings()
+    execution_plan = build_distill_execution_plan(
+        selected_samples,
+        batch_size=max_samples,
+        single_timeout_seconds=float(effective_llm.get("timeout_seconds") or settings.llm_timeout_seconds),
+        final_timeout_seconds=float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
+        prompt_chars=len(prompt),
+    )
+    llm_timeout = int(execution_plan["timeout_policy"]["recommended_batch_timeout_seconds"])
+    llm = get_llm_provider(timeout_seconds=llm_timeout)
+    report_progress(
+        58,
+        f"蒸馏 Prompt 已写入，准备调用大模型，最长等待 {llm_timeout} 秒",
+        {
+            "current_phase": "prompt_ready",
+            "current_phase_label": "Prompt 就绪",
+            "timeout_seconds": llm_timeout,
+            "execution_plan": execution_plan,
+        },
+    )
     try:
-        report_progress(68, "正在等待大模型返回蒸馏 JSON", {"current_phase": "llm_wait", "current_phase_label": "等待大模型"})
+        report_progress(
+            68,
+            "正在等待大模型返回蒸馏 JSON",
+            {
+                "current_phase": "llm_wait",
+                "current_phase_label": "等待大模型",
+                "timeout_seconds": llm_timeout,
+                "execution_plan": execution_plan,
+                "diagnostic": "如果停留在这里，通常是网关排队、模型生成较慢，或 prompt 较长导致首字节/生成耗时增加。",
+            },
+        )
         result = execution_layer.generate_creator_clone(llm, prompt, []).to_dict()
     except AppError as error:
         if use_map_reduce and error.code in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID}:
@@ -1824,11 +1846,11 @@ def distill_creator_clone(
     _write_json(output_dir / "creator_clone_result.json", normalized)
     report_progress(94, "正在写入 Markdown / HTML 报告", {"current_phase": "write_report", "current_phase_label": "写入报告"})
     write_creator_clone_report_files(output_dir, normalized)
-    _record_creator_runtime_state(sample_set, normalized.get("creator_clone_strategy") or {}, source="distill_creator_clone")
     return {
         "set": sample_set.to_dict(),
         "result": normalized,
         "exports": export_paths(sample_set.set_id),
+        "execution_plan": execution_plan,
         "warnings": warnings,
         "map_reduce": {
             "enabled": use_map_reduce,
@@ -1906,6 +1928,8 @@ def build_distill_execution_plan(
     *,
     batch_size: int = MAX_DISTILL_SAMPLES,
     final_timeout_seconds: float | None = None,
+    single_timeout_seconds: float | None = None,
+    prompt_chars: int | None = None,
 ) -> dict:
     selected_count = len(selected_samples)
     normalized_batch_size = max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES))
@@ -1925,16 +1949,44 @@ def build_distill_execution_plan(
         strategy = "hierarchical_reduce"
         strategy_label = "大样本：分层汇总，保留批次中间结果"
 
-    configured_timeout = float(final_timeout_seconds or settings.llm_final_reduce_timeout_seconds)
-    duration_factor = min(300.0, total_duration * 0.08) if durations else 0.0
-    count_factor = selected_count * (4.0 if selected_count > MAX_DISTILL_SAMPLES else 2.0)
-    recommended_timeout = int(max(configured_timeout, 120.0 + count_factor + duration_factor))
+    configured_single_timeout = float(single_timeout_seconds or settings.llm_timeout_seconds)
+    configured_final_timeout = float(final_timeout_seconds or settings.llm_final_reduce_timeout_seconds)
+    known_duration_minutes = total_duration / 60.0 if durations else 0.0
+    prompt_k = max(0.0, float(prompt_chars or 0) / 1000.0)
+    duration_complexity = min(420.0, math.log1p(known_duration_minutes) * 45.0) if durations else 0.0
+    sample_complexity = min(360.0, selected_count * 2.5)
+    batch_complexity = batch_count * 75.0
+    prompt_complexity = prompt_k * 8.0
+    enrichment_timeout = int(min(1800.0, 120.0 + selected_count * 20.0 + known_duration_minutes * 15.0))
+    batch_prompt_complexity = prompt_complexity / max(1, batch_count)
+    recommended_single_timeout = int(
+        min(
+            1200.0,
+            max(
+                configured_single_timeout,
+                180.0
+                + min(selected_count, normalized_batch_size) * 20.0
+                + batch_prompt_complexity
+                + min(180.0, duration_complexity / max(1, batch_count)),
+            ),
+        )
+    )
+    recommended_final_timeout = int(
+        min(
+            2400.0,
+            max(
+                configured_final_timeout,
+                300.0 + batch_complexity + prompt_complexity + sample_complexity + duration_complexity,
+            ),
+        )
+    )
     return {
         "strategy": strategy,
         "strategy_label": strategy_label,
         "selected_count": selected_count,
         "batch_size": normalized_batch_size,
         "batch_count": batch_count,
+        "prompt_chars": int(prompt_chars or 0),
         "duration": {
             "known_count": len(durations),
             "total_seconds": total_duration,
@@ -1942,8 +1994,29 @@ def build_distill_execution_plan(
             "source": "case ffprobe.json" if durations else "unknown",
         },
         "timeout_policy": {
-            "recommended_final_reduce_timeout_seconds": recommended_timeout,
-            "configured_final_reduce_timeout_seconds": int(configured_timeout),
+            "recommended_enrichment_timeout_seconds": enrichment_timeout,
+            "recommended_batch_timeout_seconds": recommended_single_timeout,
+            "recommended_final_reduce_timeout_seconds": recommended_final_timeout,
+            "configured_batch_timeout_seconds": int(configured_single_timeout),
+            "configured_final_reduce_timeout_seconds": int(configured_final_timeout),
+            "basis": {
+                "selected_count": selected_count,
+                "batch_count": batch_count,
+                "known_video_duration_seconds": total_duration,
+                "prompt_chars": int(prompt_chars or 0),
+                "components_seconds": {
+                    "base_final": 300,
+                    "batch_complexity": round(batch_complexity, 2),
+                    "prompt_complexity": round(prompt_complexity, 2),
+                    "sample_complexity": round(sample_complexity, 2),
+                    "duration_complexity": round(duration_complexity, 2),
+                },
+                "rules": [
+                    "富化预算 = 120s + 样本数*20s + 已知视频分钟数*15s，上限 1800s",
+                    "单批蒸馏预算 = 180s + 批内样本数*20s + 分摊Prompt复杂度 + 分摊时长复杂度，上限 1200s",
+                    "最终汇总预算 = 300s + 批次数复杂度 + Prompt复杂度 + 样本复杂度 + 时长复杂度，上限 2400s",
+                ],
+            },
             "phase_diagnostics": [
                 {"phase": "connect", "meaning": "网络连接、DNS、TLS 或网关入口耗时"},
                 {"phase": "first_byte", "meaning": "请求已发出但还没收到模型/网关首字节，通常是排队或上游阻塞"},
@@ -1997,6 +2070,8 @@ def build_final_creator_clone_reduce_prompt(
 - 每个可执行模块尽量给 5-10 条高密度结论；结论必须能追溯到分层、证据矩阵或 batch 摘要。
 - 最终网页主报告会按“核心判断、流量来源、可复刻公式、下一批怎么拍、发布前自检”展示；请让 summary、transferable_formulas、candidate_ideas、creator_clone_spec.self_check_rubric 尤其完整。
 - 不要输出空壳公式、空壳选题、空壳规则；证据不足就写 evidence_gaps。
+- 如果账号属于美拍/COS/摄影出片/颜值类，最终报告要围绕“第一眼吸引、人物人设、妆造服化、镜头角度、动作节奏、标题话题、互动验证、安全边界”组织，不要降级成泛文案或鸡汤模板。
+- 每个 transferable_formula 都要可直接拍摄：首帧画面、动作变化、镜头/光线/场景、标题话题、预期强项指标和风险边界缺一不可。
 - {creator_clone_strategy_prompt_contract()}
 
 返回 JSON 字段：
@@ -2166,11 +2241,15 @@ def _report_item_text(item: Any, *, item_limit: int = 160) -> str:
         title = (
             item.get("name")
             or item.get("title")
+            or item.get("pattern")
             or item.get("formula")
             or item.get("template")
             or item.get("idea")
+            or item.get("dimension")
             or item.get("summary")
             or item.get("point")
+            or item.get("text")
+            or item.get("content")
             or ""
         )
         detail_labels = {
@@ -2185,6 +2264,12 @@ def _report_item_text(item: Any, *, item_limit: int = 160) -> str:
             "production_requirements": "制作要求",
             "expected_metric_strength": "强项",
             "likely_strength": "强度",
+            "action": "动作",
+            "evidence": "证据",
+            "metric": "指标",
+            "metric_value": "数值",
+            "evidence_level": "证据等级",
+            "low_confidence": "低置信",
             "risks": "风险",
         }
         details: list[str] = []
@@ -2310,6 +2395,273 @@ def _segment_briefs_for_report(segments: dict, limit: int = 4) -> list[str]:
     return rows
 
 
+def _metric_label(metric_key: str) -> str:
+    return {
+        "like_count": "点赞",
+        "comment_count": "评论",
+        "share_count": "分享",
+        "collect_count": "收藏",
+        "engagement_score": "综合互动",
+    }.get(metric_key or "", metric_key or "互动")
+
+
+def _sample_evidence_refs(selected_samples: list[CloneSample], segments: dict, limit: int = 6) -> list[dict]:
+    sample_by_id = {
+        key: sample
+        for sample in selected_samples
+        for key in (sample.sample_id, sample.aweme_id, sample.case_id)
+        if key
+    }
+    rows: list[dict] = []
+    seen: set[str] = set()
+
+    def add_sample(sample: CloneSample, metric_key: str = "engagement_score", reason: str = "代表样本") -> None:
+        key = sample.sample_id or sample.aweme_id or sample.case_id
+        if not key or key in seen:
+            return
+        seen.add(key)
+        rows.append(
+            {
+                "sample_id": sample.sample_id,
+                "title": _truncate_text(sample.title or sample.desc or sample.source_url or "未命名样本", 80),
+                "metric": metric_key,
+                "metric_label": _metric_label(metric_key),
+                "metric_value": _metric_value(sample, metric_key),
+                "evidence_level": sample.understanding_level,
+                "media_type": sample.media_type,
+                "reason": reason,
+            }
+        )
+
+    for key, reason in [
+        ("highest_like_samples", "高赞代表，通常支撑情绪/身份共鸣判断"),
+        ("highest_comment_samples", "高评代表，通常支撑参与钩子判断"),
+        ("highest_share_samples", "高分享代表，通常支撑转发理由判断"),
+        ("highest_collect_samples", "高收藏代表，通常支撑模板/复看价值判断"),
+    ]:
+        for item in segments.get(key) or []:
+            if not isinstance(item, dict):
+                continue
+            sample = sample_by_id.get(item.get("sample_id")) or sample_by_id.get(item.get("aweme_id")) or sample_by_id.get(item.get("case_id"))
+            if sample:
+                add_sample(sample, str(item.get("metric") or "engagement_score"), reason)
+            if len(rows) >= limit:
+                return rows
+    for sample in sorted(selected_samples, key=lambda item: item.engagement_score, reverse=True):
+        add_sample(sample, "engagement_score", "综合互动靠前，作为策略证据样本")
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _low_confidence_flags(selected_samples: list[CloneSample], evidence_gaps: list[str], report_quality: dict | None = None) -> list[str]:
+    total = len(selected_samples)
+    if not total:
+        return ["未选择样本，所有结论均为低置信。"]
+    flags: list[str] = []
+    metadata_only = sum(1 for sample in selected_samples if sample.understanding_level == "metadata_only")
+    with_frames = sum(1 for sample in selected_samples if sample.has_frames)
+    with_asr = sum(1 for sample in selected_samples if sample.has_asr)
+    with_ocr = sum(1 for sample in selected_samples if sample.has_ocr)
+    with_comments = sum(1 for sample in selected_samples if sample.has_comments)
+    if metadata_only >= max(1, total // 2):
+        flags.append("半数以上样本仅有元数据：镜头、动作、口播和评论动机需要低置信处理。")
+    if with_frames < max(1, total // 2):
+        flags.append("关键帧覆盖不足：视觉风格和首帧钩子判断需要人工复核。")
+    if with_asr == 0:
+        flags.append("没有 ASR：不要把口播节奏或台词结构当成确定结论。")
+    if with_ocr == 0:
+        flags.append("没有 OCR：封面字、字幕结构和画面文字策略只能作为假设。")
+    if with_comments == 0:
+        flags.append("没有评论：用户需求、争议点和评论钩子只能作为推断。")
+    for gap in evidence_gaps[:3]:
+        text = str(gap or "").strip()
+        if text and text not in flags:
+            flags.append(text)
+    for gap in (report_quality or {}).get("missing_evidence") or []:
+        text = str(gap or "").strip()
+        if text and text not in flags:
+            flags.append(text)
+    return flags[:8]
+
+
+def _action_items_for_report(content_profile: str, result: dict, formulas: list[str], ideas: list[str]) -> list[str]:
+    actions = _report_text_values(result.get("next_actions"), limit=5, item_limit=140)
+    if actions:
+        return actions[:6]
+    if ideas:
+        return [f"围绕「{idea}」先写 1 个标题、1 个首帧画面和 3 个镜头动作，再小样测试。" for idea in ideas[:3]]
+    if formulas:
+        return [f"用「{formula}」做下一条：保留结构，替换人物、场景、标题和互动钩子。" for formula in formulas[:3]]
+    if content_profile in {"beauty_cos", "photo_beauty"}:
+        return [
+            "下一条先定首帧：人物脸/眼神/姿态必须在 0-1 秒出现。",
+            "拍摄时准备 3 个动作版本，分别测试甜美、冷感和反差表达。",
+            "标题用人物气质或出片承诺给点击理由，避免只写泛泛标签。",
+        ]
+    return ["下一条先复刻最高互动样本的开头承诺，再替换为自己的场景和角色。"]
+
+
+def _report_quality_label(score: int | float | None) -> str:
+    if score is None:
+        return "待评估"
+    try:
+        numeric = float(score)
+    except (TypeError, ValueError):
+        return "待评估"
+    if numeric >= 85:
+        return "高可信"
+    if numeric >= 70:
+        return "可用，建议复核"
+    if numeric >= 50:
+        return "低置信，需要补证据"
+    return "占位/降级报告"
+
+
+def _report_generation_diagnostics(result: dict, selected_samples: list[CloneSample], sample_set: CloneSampleSet, report_quality: dict) -> dict:
+    evidence_counts = _creator_report_evidence_counts(selected_samples, sample_set)
+    batch = result.get("batch_distill") if isinstance(result.get("batch_distill"), dict) else {}
+    warnings = _report_text_values(
+        result.get("warnings"),
+        (result.get("sample_overview") or {}).get("warnings") if isinstance(result.get("sample_overview"), dict) else [],
+        limit=8,
+        item_limit=180,
+        exclude_technical=False,
+    )
+    final_recovery = str(batch.get("final_reduce_recovery") or "").strip()
+    final_error = str(batch.get("final_reduce_error_code") or batch.get("error_code") or "").strip()
+    batch_count = int(batch.get("batch_count") or 0)
+    selected_count = len(selected_samples)
+    score = report_quality.get("quality_score", report_quality.get("score"))
+    is_prompt_only = not result.get("summary") or result.get("summary") == "创作者蒸馏完成。"
+    is_fallback = bool(final_recovery) or any("本地汇总" in item or "Reduce 未完成" in item or "最终汇总失败" in item for item in warnings)
+    if is_fallback:
+        source_label = "本地批次汇总 / 降级"
+    elif batch_count:
+        source_label = f"分批大模型汇总（{batch_count} 批）"
+    elif selected_count >= 2:
+        source_label = "大模型 Map-Reduce"
+    elif is_prompt_only:
+        source_label = "Prompt-only / 待分析"
+    else:
+        source_label = "大模型单次拆解"
+
+    if is_fallback and final_error:
+        fallback_reason = f"最终 Reduce 失败：{final_error}"
+    elif is_fallback:
+        fallback_reason = "最终汇总未完整返回，已使用批次摘要或本地规则兜底。"
+    elif is_prompt_only:
+        fallback_reason = "未拿到可用大模型结果。"
+    else:
+        fallback_reason = ""
+
+    coverage = {
+        "video": evidence_counts.get("with_video", 0),
+        "keyframes": evidence_counts.get("with_keyframes", 0),
+        "asr": evidence_counts.get("with_asr", 0),
+        "ocr": evidence_counts.get("with_ocr", 0),
+        "comments": evidence_counts.get("with_comments", 0),
+    }
+    missing = [
+        label
+        for key, label in [
+            ("video", "视频"),
+            ("keyframes", "关键帧"),
+            ("asr", "ASR"),
+            ("ocr", "OCR"),
+            ("comments", "评论"),
+        ]
+        if selected_count and coverage.get(key, 0) == 0
+    ]
+    return {
+        "source_label": source_label,
+        "is_fallback": is_fallback or is_prompt_only,
+        "fallback_reason": fallback_reason,
+        "quality_label": _report_quality_label(score),
+        "quality_score": score if score is not None else 0,
+        "selected_count": selected_count,
+        "sample_count": len(sample_set.samples),
+        "understanding": {
+            "full": evidence_counts.get("understanding_full", 0),
+            "partial": evidence_counts.get("understanding_partial", 0),
+            "metadata_only": evidence_counts.get("understanding_metadata_only", 0),
+        },
+        "coverage": coverage,
+        "coverage_text": (
+            f"视频 {coverage['video']}/{selected_count} · 关键帧 {coverage['keyframes']}/{selected_count} · "
+            f"ASR {coverage['asr']}/{selected_count} · OCR {coverage['ocr']}/{selected_count} · 评论 {coverage['comments']}/{selected_count}"
+            if selected_count
+            else "尚未选择样本"
+        ),
+        "missing_evidence_labels": missing,
+        "notes": warnings[:4],
+    }
+
+
+def _report_value_upgrade(
+    *,
+    result: dict,
+    sample_set: CloneSampleSet,
+    selected_samples: list[CloneSample],
+    effective_profile: str,
+    positioning_text: str,
+    summary: str,
+    formulas: list[str],
+    ideas: list[str],
+    repeatable_patterns: list[str],
+    traffic_signals: list[str],
+    hooks: list[str],
+) -> dict:
+    segments = result.get("performance_segments") if isinstance(result.get("performance_segments"), dict) else {}
+    evidence_gaps = _report_text_values(result.get("evidence_gaps"), limit=8, item_limit=160, exclude_technical=False)
+    report_quality = result.get("report_quality") if isinstance(result.get("report_quality"), dict) else {}
+    diagnostics = _report_generation_diagnostics(result, selected_samples, sample_set, report_quality)
+    sample_refs = _sample_evidence_refs(selected_samples, segments)
+    low_confidence = _low_confidence_flags(selected_samples, evidence_gaps, report_quality)
+    actions = _action_items_for_report(effective_profile, result, formulas, ideas)
+    observation = _report_text_values(
+        positioning_text,
+        summary,
+        traffic_signals,
+        repeatable_patterns,
+        limit=7,
+        item_limit=150,
+    )
+    explanation = _report_text_values(
+        hooks,
+        result.get("thinking_patterns"),
+        formulas,
+        limit=7,
+        item_limit=150,
+    )
+    return {
+        "observation": {
+            "title": "观察：这个账号做了什么",
+            "bullets": observation or [f"{sample_set.creator_name or sample_set.title or '该账号'} 已选 {len(selected_samples)} 条样本用于蒸馏。"],
+        },
+        "explanation": {
+            "title": "解释：为什么这些内容有效",
+            "bullets": explanation or ["先根据高互动样本判断用户停留、点赞、评论或转发的触发点。"],
+        },
+        "execution": {
+            "title": "执行：下一条怎么拍 / 怎么写 / 怎么验证",
+            "bullets": actions[:7],
+            "next_content_suggestions": ideas[:6],
+        },
+        "sample_evidence": sample_refs,
+        "low_confidence": bool(low_confidence),
+        "low_confidence_reasons": low_confidence,
+        "evidence_gaps": evidence_gaps,
+        "quality": {
+            "quality_score": report_quality.get("quality_score", report_quality.get("score", 0)),
+            "warnings": report_quality.get("warnings") or [],
+            "missing_evidence": report_quality.get("missing_evidence") or [],
+            "checks": report_quality.get("checks") or {},
+        },
+        "diagnostics": diagnostics,
+    }
+
+
 def _derive_formula_fallbacks(content_profile: str, result: dict) -> list[str]:
     if content_profile == "photo_beauty":
         return [
@@ -2378,6 +2730,27 @@ def build_creator_report_view_model(result: dict, sample_set: CloneSampleSet, se
 
     validation = _report_text_values(strategy.get("validation_rules"), spec.get("self_check_rubric"), limit=6, item_limit=130)
     anti_patterns = _report_text_values(strategy.get("anti_patterns"), spec.get("anti_patterns"), limit=6, item_limit=130)
+    metric_signals = _segment_briefs_for_report(segments)
+    hooks = _report_text_values(
+        strategy.get("hooks"),
+        patterns.get("opening_hooks"),
+        thinking.get("tension_sources"),
+        positioning.get("audience_promise"),
+        limit=6,
+        item_limit=130,
+    )
+    repeatable_patterns = _report_text_values(
+        result.get("topic_buckets"),
+        patterns.get("visual_style"),
+        patterns.get("scene_order"),
+        patterns.get("subtitle_voice"),
+        spec.get("expression_rules"),
+        spec.get("visual_rules"),
+        spec.get("structure_rules"),
+        limit=6,
+        item_limit=130,
+    )
+    next_actions = _report_text_values(result.get("next_actions"), result.get("topic_buckets"), limit=5, item_limit=120)
     technical_notes = _report_text_values(
         (result.get("sample_overview") or {}).get("warnings"),
         result.get("next_actions"),
@@ -2413,34 +2786,30 @@ def build_creator_report_view_model(result: dict, sample_set: CloneSampleSet, se
                 ),
             },
             "traffic_sources": {
-                "metric_signals": _segment_briefs_for_report(segments),
-                "hooks": _report_text_values(
-                    strategy.get("hooks"),
-                    patterns.get("opening_hooks"),
-                    thinking.get("tension_sources"),
-                    positioning.get("audience_promise"),
-                    limit=6,
-                    item_limit=130,
-                ),
+                "metric_signals": metric_signals,
+                "hooks": hooks,
             },
             "formulas": formulas[:5],
-            "repeatable_patterns": _report_text_values(
-                result.get("topic_buckets"),
-                patterns.get("visual_style"),
-                patterns.get("scene_order"),
-                patterns.get("subtitle_voice"),
-                spec.get("expression_rules"),
-                spec.get("visual_rules"),
-                spec.get("structure_rules"),
-                limit=6,
-                item_limit=130,
-            ),
+            "repeatable_patterns": repeatable_patterns,
             "next_ideas": ideas[:6],
-            "next_actions": _report_text_values(result.get("next_actions"), result.get("topic_buckets"), limit=5, item_limit=120),
+            "next_actions": next_actions,
             "checklist": validation[:6],
             "anti_patterns": anti_patterns[:6],
         },
         "technical_notes": technical_notes,
+        "value_upgrade": _report_value_upgrade(
+            result=result,
+            sample_set=sample_set,
+            selected_samples=selected_samples,
+            effective_profile=effective_profile,
+            positioning_text=positioning_text,
+            summary=summary,
+            formulas=formulas,
+            ideas=ideas,
+            repeatable_patterns=repeatable_patterns,
+            traffic_signals=metric_signals,
+            hooks=hooks,
+        ),
     }
 
 
@@ -2490,9 +2859,12 @@ def batch_distill_creator_clone(
         )
 
     batch_results: list[dict] = []
-    llm = get_llm_provider() if llm_is_configured() else None
-    if not llm:
+    llm_configured = llm_is_configured()
+    if not llm_configured:
         warnings.append("大模型未配置，已生成分批蒸馏 Prompt 和最终汇总 Prompt。")
+    effective_llm = effective_llm_settings()
+    configured_batch_timeout = float(effective_llm.get("timeout_seconds") or settings.llm_timeout_seconds)
+    configured_final_timeout = float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds)
 
     for index, chunk in enumerate(chunks, start=1):
         batch_id = f"batch_{index:03d}"
@@ -2503,10 +2875,18 @@ def batch_distill_creator_clone(
         markdown_path = batch_dir / f"{batch_id}.md"
         prompt_path.write_text(prompt, encoding="utf-8")
         _write_json(batch_dir / f"{batch_id}_map_summaries.json", map_summaries)
+        batch_plan = build_distill_execution_plan(
+            chunk,
+            batch_size=batch_size,
+            single_timeout_seconds=configured_batch_timeout,
+            final_timeout_seconds=configured_final_timeout,
+            prompt_chars=len(prompt),
+        )
+        batch_timeout = int(batch_plan["timeout_policy"]["recommended_batch_timeout_seconds"])
         batch_progress = 10 + int((index - 1) / max(1, len(chunks)) * 65)
         report_progress(
             batch_progress,
-            f"正在蒸馏批次 {index}/{len(chunks)}",
+            f"正在蒸馏批次 {index}/{len(chunks)}，最长等待 {batch_timeout} 秒",
             {
                 "current_phase": "batch_reduce",
                 "current_phase_label": "分批大模型蒸馏",
@@ -2515,7 +2895,10 @@ def batch_distill_creator_clone(
                 "batch_id": batch_id,
                 "batch_count": len(chunks),
                 "sample_count": len(chunk),
+                "timeout_seconds": batch_timeout,
                 "status": "running",
+                "execution_plan": batch_plan,
+                "diagnostic": "批次 timeout 由批内样本数、已知视频时长和本批 Prompt 体积共同决定。",
             },
         )
         batch_payload = {
@@ -2528,11 +2911,14 @@ def batch_distill_creator_clone(
             "markdown_path": str(markdown_path),
             "status": "prompt_only",
             "summary": "",
-            "error_code": "LLM_NOT_CONFIGURED" if not llm else "",
+            "error_code": "LLM_NOT_CONFIGURED" if not llm_configured else "",
+            "timeout_seconds": batch_timeout,
+            "execution_plan": batch_plan,
         }
-        if llm:
+        if llm_configured:
             try:
-                raw_result = ExecutionLayer().generate_creator_clone(llm, prompt, []).to_dict()
+                batch_llm = get_llm_provider(timeout_seconds=batch_timeout)
+                raw_result = ExecutionLayer().generate_creator_clone(batch_llm, prompt, []).to_dict()
                 normalized = normalize_creator_clone_result(raw_result, sample_set, chunk, warnings=[])
                 _write_json(result_path, normalized)
                 markdown_path.write_text(render_creator_clone_markdown(normalized), encoding="utf-8")
@@ -2584,13 +2970,18 @@ def batch_distill_creator_clone(
         "prompt_path": str(final_prompt_path),
         "result_path": str(final_result_path),
         "markdown_path": str(final_markdown_path),
-        "error_code": "LLM_NOT_CONFIGURED" if not llm else "",
+        "error_code": "LLM_NOT_CONFIGURED" if not llm_configured else "",
     }
     final_result = None
-    effective_llm = effective_llm_settings()
-    final_timeout = float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds)
     final_max_output_tokens = int(effective_llm.get("final_reduce_max_output_tokens") or settings.llm_final_reduce_max_output_tokens)
-    execution_plan = build_distill_execution_plan(selected_samples, batch_size=batch_size, final_timeout_seconds=final_timeout)
+    execution_plan = build_distill_execution_plan(
+        selected_samples,
+        batch_size=batch_size,
+        single_timeout_seconds=configured_batch_timeout,
+        final_timeout_seconds=configured_final_timeout,
+        prompt_chars=len(final_prompt),
+    )
+    final_timeout = int(execution_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"])
     report_progress(
         82,
         f"正在汇总所有批次，最长等待 {int(final_timeout)} 秒",
@@ -2606,7 +2997,7 @@ def batch_distill_creator_clone(
             "diagnostic": "如果长时间停留在这里，通常是网关排队、模型生成较慢或最终 JSON 过长。",
         },
     )
-    if llm:
+    if llm_configured:
         try:
             final_llm = get_llm_provider(
                 timeout_seconds=final_timeout,
@@ -2618,12 +3009,13 @@ def batch_distill_creator_clone(
                 "batch_count": len(batch_results),
                 "selected_count": len(selected_samples),
                 "batch_size": max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES)),
+                "final_status": "success",
             }
+            final_result["creator_report_view_model"] = build_creator_report_view_model(final_result, sample_set, selected_samples)
             _write_json(final_result_path, final_result)
             final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
             _write_json(output_dir / "creator_clone_result.json", final_result)
             write_creator_clone_report_files(output_dir, final_result)
-            _record_creator_runtime_state(sample_set, final_result.get("creator_clone_strategy") or {}, source="batch_distill_creator_clone")
             final_payload.update({"status": "success", "result": final_result, "error_code": ""})
             report_progress(
                 95,
@@ -2647,11 +3039,11 @@ def batch_distill_creator_clone(
                 "final_reduce_recovery": "local_fallback",
                 "final_reduce_error_code": error.code,
             }
+            final_result["creator_report_view_model"] = build_creator_report_view_model(final_result, sample_set, selected_samples)
             _write_json(final_result_path, final_result)
             final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
             _write_json(output_dir / "creator_clone_result.json", final_result)
             write_creator_clone_report_files(output_dir, final_result)
-            _record_creator_runtime_state(sample_set, final_result.get("creator_clone_strategy") or {}, source="batch_distill_creator_clone_fallback")
             final_payload.update({"status": "fallback", "result": final_result, "error_code": error.code, "message": error.message})
             warnings.append(f"最终汇总失败：{error.code}：{error.message}")
             report_progress(
@@ -2763,6 +3155,31 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
         for key in creator_clone_schema()["performance_segments"]
     }
     result["creator_clone_strategy"] = normalize_creator_clone_strategy(result)
+    evidence_summary = {
+        "selected_count": len(selected_samples),
+        "evidence_ready_count": sum(
+            1
+            for sample in selected_samples
+            if sample.understanding_level in {"full", "partial"}
+            or sample.has_frames
+            or sample.has_asr
+            or sample.has_ocr
+            or sample.has_comments
+        ),
+        "with_keyframes": sum(1 for sample in selected_samples if sample.has_frames),
+        "with_asr": sum(1 for sample in selected_samples if sample.has_asr),
+        "with_ocr": sum(1 for sample in selected_samples if sample.has_ocr),
+        "with_comments": sum(1 for sample in selected_samples if sample.has_comments),
+    }
+    report_quality = validate_creator_report_quality(
+        result["creator_clone_strategy"],
+        evidence_summary=evidence_summary,
+        report_context=result,
+    ).to_dict()
+    result["report_quality"] = report_quality
+    result["warnings"] = list(result.get("warnings") or [])
+    result["warnings"].extend(report_quality.get("warnings") or [])
+    result["warnings"].extend(report_quality.get("evidence_warnings") or [])
     result["creator_report_view_model"] = build_creator_report_view_model(result, sample_set, selected_samples)
     return result
 
@@ -2937,96 +3354,75 @@ def creator_clone_schema() -> dict:
 
 def render_creator_clone_markdown(result: dict) -> str:
     positioning = result.get("creator_positioning") or {}
-    spec = result.get("creator_clone_spec") or {}
     content_profile = result.get("content_profile") or {}
     strategy = result.get("creator_clone_strategy") or {}
     view_model = result.get("creator_report_view_model") if isinstance(result.get("creator_report_view_model"), dict) else {}
     sections = view_model.get("sections") if isinstance(view_model.get("sections"), dict) else {}
+    value_upgrade = view_model.get("value_upgrade") if isinstance(view_model.get("value_upgrade"), dict) else {}
+    observation = value_upgrade.get("observation") if isinstance(value_upgrade.get("observation"), dict) else {}
+    explanation = value_upgrade.get("explanation") if isinstance(value_upgrade.get("explanation"), dict) else {}
+    execution = value_upgrade.get("execution") if isinstance(value_upgrade.get("execution"), dict) else {}
+    quality = value_upgrade.get("quality") if isinstance(value_upgrade.get("quality"), dict) else {}
+    evidence_rows = [
+        f"{item.get('title') or '代表样本'}（{item.get('metric_label') or item.get('metric') or '互动'} {item.get('metric_value') or 0}；证据 {item.get('evidence_level') or 'unknown'}；{item.get('sample_id') or ''}）"
+        for item in value_upgrade.get("sample_evidence") or []
+        if isinstance(item, dict)
+    ]
     lines = [
         "# 创作者蒸馏报告",
         "",
         f"## 0. 核心摘要\n\n{view_model.get('summary') or result.get('summary') or ''}",
         "",
-        "## 1. 核心判断",
+        "## 1. 观察：这个账号做了什么",
         "",
         f"- 定位：{view_model.get('headline') or strategy.get('positioning') or positioning.get('what_the_creator_sells') or ''}",
         f"- 观众承诺：{positioning.get('audience_promise') or ''}",
         f"- 隐藏类型：{positioning.get('hidden_genre') or ''}",
         f"- 观众假设：{positioning.get('audience_assumption') or ''}",
         "",
-        "## 2. 流量来源与内容策略",
+        _markdown_list(observation.get("bullets") or (sections.get("core_judgment") or {}).get("bullets")),
         "",
-        _markdown_list((sections.get("traffic_sources") or {}).get("hooks") or strategy.get("content_strategy")),
+        "## 2. 解释：为什么这些内容有效",
         "",
-        "### 开头钩子",
+        _markdown_list(explanation.get("bullets") or (sections.get("traffic_sources") or {}).get("hooks") or strategy.get("content_strategy")),
         "",
-        _markdown_list(strategy.get("hooks")),
+        "### 样本证据",
         "",
-        "## 3. 可复用公式",
+        _markdown_list(evidence_rows),
+        "",
+        "## 3. 执行：下一条怎么拍 / 怎么写 / 怎么验证",
+        "",
+        _markdown_list(execution.get("bullets") or sections.get("next_actions")),
+        "",
+        "### 下一条内容建议",
+        "",
+        _markdown_list(execution.get("next_content_suggestions") or sections.get("next_ideas") or strategy.get("idea_bank")),
+        "",
+        "## 4. 可复刻结构",
         "",
         _markdown_list(sections.get("formulas") or strategy.get("templates")),
         "",
-        "## 4. 下一批候选选题",
+        "### 共性创作要素",
         "",
-        _markdown_list(sections.get("next_ideas") or strategy.get("idea_bank")),
+        _markdown_list(sections.get("repeatable_patterns")),
         "",
-        "## 5. 发布前自检",
+        "## 5. 置信度与证据缺口",
         "",
-        _markdown_list(sections.get("checklist") or strategy.get("validation_rules")),
+        f"- 报告质量：{quality.get('quality_score', (result.get('report_quality') or {}).get('quality_score', ''))} / 100",
         "",
-        "## 6. 不可照搬 / 反模式",
+        "### 低置信提示",
         "",
-        _markdown_list(strategy.get("anti_patterns")),
+        _markdown_list(value_upgrade.get("low_confidence_reasons") or result.get("evidence_gaps")),
+        "",
+        "### Evidence Gaps",
+        "",
+        _markdown_list(value_upgrade.get("evidence_gaps") or result.get("evidence_gaps")),
         "",
         "## Analysis Template",
         "",
         f"- Requested: {content_profile.get('requested_label') or content_profile.get('requested') or ''}",
         f"- Effective: {content_profile.get('effective_label') or content_profile.get('effective') or ''}",
         f"- Guidance: {content_profile.get('guidance') or ''}",
-        "",
-        "## Creator Positioning",
-        "",
-        f"- What the creator sells: {positioning.get('what_the_creator_sells') or ''}",
-        f"- Audience promise: {positioning.get('audience_promise') or ''}",
-        f"- Hidden genre: {positioning.get('hidden_genre') or ''}",
-        f"- Audience assumption: {positioning.get('audience_assumption') or ''}",
-        "",
-        "## Topic Buckets",
-        "",
-        _markdown_list(result.get("topic_buckets")),
-        "",
-        "## Transferable Formulas",
-        "",
-        _markdown_list(result.get("transferable_formulas")),
-        "",
-        "## Creator Distillation Rules",
-        "",
-        f"- Taste: {spec.get('taste') or ''}",
-        f"- Caption voice: {spec.get('caption_voice') or ''}",
-        "",
-        "### Topic Rules",
-        "",
-        _markdown_list(spec.get("topic_selection_rules")),
-        "",
-        "### Anti-patterns",
-        "",
-        _markdown_list(spec.get("anti_patterns")),
-        "",
-        "## Candidate Ideas",
-        "",
-        _markdown_list(result.get("candidate_ideas")),
-        "",
-        "## Evidence Gaps",
-        "",
-        _markdown_list(result.get("evidence_gaps")),
-        "",
-        "## Next Actions",
-        "",
-        _markdown_list(result.get("next_actions")),
-        "",
-        "## Performance Segments",
-        "",
-        _markdown_list(result.get("performance_segments")),
         "",
     ]
     return "\n".join(lines)

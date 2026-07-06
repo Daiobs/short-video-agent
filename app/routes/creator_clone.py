@@ -241,10 +241,17 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
                 include_case_reports=payload.include_case_reports,
                 max_samples=payload.max_samples,
             )
+            runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                sample_set.set_id,
+                WorkflowAction.COMPLETE_DISTILLATION,
+                strategy_output=(result.get("result") or {}).get("creator_clone_strategy") or {},
+            )
+            intelligence = runtime_result.creator_intelligence
+            intelligence["result"] = result.get("result") or {}
             return {
                 "ok": True,
                 **result,
-                "creator_intelligence": creator_intelligence_payload_for_sample_set(sample_set, (result.get("result") or {}).get("creator_clone_strategy")),
+                "creator_intelligence": intelligence,
             }
         except AppError as error:
             if error.code not in RECOVERABLE_DISTILL_ERROR_CODES:
@@ -255,6 +262,18 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
                 distill_mode=payload.distill_mode,
                 include_case_reports=payload.include_case_reports,
             )
+            runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
+                sample_set.set_id,
+                WorkflowAction.MARK_EVIDENCE_READY,
+                job_state={
+                    "status": "prompt_only",
+                    "recovery": "prompt_only",
+                    "error_code": error.code,
+                    "message": error.message,
+                },
+            )
+            intelligence = runtime_result.creator_intelligence
+            intelligence["result"] = {}
             return JSONResponse(
                 status_code=400,
                 content={
@@ -263,6 +282,7 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
                     "message": error.message,
                     "recovery": "prompt_only",
                     **prompt_payload,
+                    "creator_intelligence": intelligence,
                 },
             )
     except AppError as error:

@@ -38,8 +38,9 @@ _RUNTIME_STEP_META = {
 }
 
 
-def _runtime_next_action(workflow: dict[str, Any]) -> dict[str, Any]:
+def _runtime_next_action(workflow: dict[str, Any], job_state: dict[str, Any] | None = None) -> dict[str, Any]:
     state = str(workflow.get("state") or WorkflowState.IMPORT.value)
+    job_state = dict(job_state or {})
     intent = workflow.get("next_intent") if isinstance(workflow.get("next_intent"), dict) else {}
     intent_action = str(intent.get("action") or "")
     intent_payload = intent.get("payload") if isinstance(intent.get("payload"), dict) else {}
@@ -116,6 +117,14 @@ def _runtime_next_action(workflow: dict[str, Any]) -> dict[str, Any]:
             "disabled": False,
         }
     if state == WorkflowState.DISTILLING.value:
+        if str(job_state.get("status") or "") in {"failed", "fallback", "prompt_only"}:
+            return {
+                "state": "DISTILL_RETRY_READY",
+                "command": runtime_action_command_for_selected_count(selected_count),
+                "label": "下一步：重新大模型蒸馏",
+                "summary": str(job_state.get("message") or "上一次蒸馏未完成，可检查配置后重试。"),
+                "disabled": False,
+            }
         return {
             "state": "DISTILLING",
             "command": "wait",
@@ -127,7 +136,7 @@ def _runtime_next_action(workflow: dict[str, Any]) -> dict[str, Any]:
         return {
             "state": "EXPORT_READY",
             "command": "export_report",
-            "label": "下一步：查看报告",
+            "label": "下一步：下载报告",
             "summary": "创作者蒸馏报告已生成，可打开网页报告或复制规则继续使用。",
             "disabled": False,
         }
@@ -176,7 +185,7 @@ class CreatorRuntimeState:
 
     def primary_action(self) -> dict[str, Any]:
         workflow = self.workflow_dict()
-        return _runtime_next_action(workflow)
+        return _runtime_next_action(workflow, self.job_state)
 
     def state_summary(self) -> dict[str, Any]:
         workflow = self.workflow_dict()
@@ -468,6 +477,7 @@ class CreatorRuntimeEngine:
         *,
         selected_sample_ids: list[str] | None = None,
         strategy_output: dict[str, Any] | None = None,
+        job_state: dict[str, Any] | None = None,
     ) -> CreatorRuntimeDispatchResult:
         from app.services.creator_clone import (
             load_sample_set,
@@ -477,13 +487,13 @@ class CreatorRuntimeEngine:
 
         workflow_action = WorkflowAction(action)
         sample_set = load_sample_set(set_id)
-        engine = cls.from_sample_set(sample_set, strategy_output=strategy_output)
+        engine = cls.from_sample_set(sample_set, strategy_output=strategy_output, job_state=job_state)
 
         if workflow_action == WorkflowAction.SELECT_SAMPLES:
             selected = normalize_sample_set_selected_ids(sample_set, selected_sample_ids or [])
             engine.dispatch(workflow_action, {"selected_sample_ids": selected})
             sample_set = update_sample_set_selection(set_id, selected)
-            engine = cls.from_sample_set(sample_set, strategy_output={})
+            engine = cls.from_sample_set(sample_set, strategy_output={}, job_state=job_state)
             if engine.workflow_engine.state == WorkflowState.EVIDENCE_READY and engine.behavior_model is None:
                 engine.behavior_model = engine.execution_layer.extract_behavior_model(
                     engine.project,
