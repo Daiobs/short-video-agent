@@ -863,6 +863,8 @@ def creator_clone_strategy_prompt_contract() -> str:
         "- 不要输出空壳对象，例如 {\"name\":\"\",\"when_to_use\":\"\"}；如果没有证据，请用空数组 []，并把原因写进 evidence_gaps。\n"
         "- transferable_formulas 每条必须包含 name/when_to_use/beat_structure/expected_metric_strength/risks 中至少 3 个有效字段。\n"
         "- candidate_ideas 每条必须包含 title/formula_used/why_worth_trying/production_requirements 中至少 3 个有效字段。\n"
+        "- 核心策略、公式和选题尽量绑定证据字段：sample_id/title/metric/metric_value/evidence_level。无法绑定时写 low_confidence: true 或放入 evidence_gaps。\n"
+        "- next_actions 必须包含可执行动作，至少覆盖拍摄/脚本或标题/封面中的两个维度。\n"
         "- 如果证据不足，也要返回完整 schema，用空数组表达未知，不要输出自由文本替代 JSON。\n"
         f"{json.dumps({'creator_clone_strategy': schema}, ensure_ascii=False, indent=2)}"
     )
@@ -889,8 +891,10 @@ def build_distill_prompt(sample_set: CloneSampleSet, selected_samples: list[Clon
 - 必须区分 video / image / text / mixed / unknown：视频样本才能推断镜头节奏、动作和口播；图文/照片样本只能推断封面、标题、视觉承诺和静态构图；unknown 样本只能作为元数据参考。
 - 区分高赞、高评论、高分享、高收藏和弱样本；没有数据时用空数组。
 - 输出要适合后续在网页可视化展示，主报告会按：核心判断、流量来源、可复刻公式、下一批怎么拍、发布前自检 来呈现。
+- 报告价值要按三层组织：观察=这个账号做了什么；解释=为什么这些内容有效；执行=下一条怎么拍/怎么写/怎么验证。
 - summary 必须是 2-4 句高密度中文，直接回答“这个账号靠什么跑通，下一条最该复刻什么”。
 - transferable_formulas 必须是可拍摄的结构，不要只写抽象概念；candidate_ideas 必须是可执行选题，不要空标题。
+- 每个核心策略尽量引用 sample_id/title/metric/evidence_level；低证据结论必须标记 low_confidence 或写进 evidence_gaps。
 - {creator_clone_strategy_prompt_contract()}
 
 蒸馏模式：{distill_mode}
@@ -1254,6 +1258,8 @@ def build_reduce_distill_prompt(
 - 不要把擦边、美拍、COS 账号硬套成鸡汤/教学脚本；如果主要流量来自人物、颜值、氛围、服化或姿态，要把这些作为创作规律写清楚。
 - 主报告会按“核心判断、流量来源、可复刻公式、下一批怎么拍、发布前自检”展示；请优先让这些字段有内容。
 - 不要输出空壳公式、空壳选题、空壳规则；证据不足就写 evidence_gaps。
+- 报告按“观察/解释/执行”三层思考：观察账号做了什么，解释为什么有效，执行下一条怎么拍/怎么写/怎么验证。
+- 核心策略、公式和选题尽量绑定 sample_id/title/metric/evidence_level；无法绑定的判断必须标记 low_confidence 或写入 evidence_gaps。
 - {creator_clone_strategy_prompt_contract()}
 
 返回 JSON 字段：
@@ -1305,6 +1311,8 @@ def build_micro_reduce_distill_prompt(
 - transferable_formulas 至少给 3 个，candidate_ideas 至少给 5 个，creator_clone_spec.self_check_rubric 至少给 5 条；如果证据不足，也要写出“低置信度规则”。
 - 每个公式必须能直接指导下一条怎么拍；每个选题必须能直接变成一个标题/拍摄方向。
 - 不要输出空壳公式、空壳选题、空壳规则；证据不足就写 evidence_gaps。
+- 报告按“观察/解释/执行”三层思考：先说账号做了什么，再解释为什么有效，最后给下一条拍摄/文案/标题/封面/验证动作。
+- 核心公式、选题和策略尽量绑定 sample_id/title/metric/evidence_level；无法绑定的判断必须标记 low_confidence 或写入 evidence_gaps。
 - {creator_clone_strategy_prompt_contract()}
 
 返回 JSON：
@@ -2225,11 +2233,15 @@ def _report_item_text(item: Any, *, item_limit: int = 160) -> str:
         title = (
             item.get("name")
             or item.get("title")
+            or item.get("pattern")
             or item.get("formula")
             or item.get("template")
             or item.get("idea")
+            or item.get("dimension")
             or item.get("summary")
             or item.get("point")
+            or item.get("text")
+            or item.get("content")
             or ""
         )
         detail_labels = {
@@ -2244,6 +2256,12 @@ def _report_item_text(item: Any, *, item_limit: int = 160) -> str:
             "production_requirements": "制作要求",
             "expected_metric_strength": "强项",
             "likely_strength": "强度",
+            "action": "动作",
+            "evidence": "证据",
+            "metric": "指标",
+            "metric_value": "数值",
+            "evidence_level": "证据等级",
+            "low_confidence": "低置信",
             "risks": "风险",
         }
         details: list[str] = []
@@ -2369,6 +2387,175 @@ def _segment_briefs_for_report(segments: dict, limit: int = 4) -> list[str]:
     return rows
 
 
+def _metric_label(metric_key: str) -> str:
+    return {
+        "like_count": "点赞",
+        "comment_count": "评论",
+        "share_count": "分享",
+        "collect_count": "收藏",
+        "engagement_score": "综合互动",
+    }.get(metric_key or "", metric_key or "互动")
+
+
+def _sample_evidence_refs(selected_samples: list[CloneSample], segments: dict, limit: int = 6) -> list[dict]:
+    sample_by_id = {
+        key: sample
+        for sample in selected_samples
+        for key in (sample.sample_id, sample.aweme_id, sample.case_id)
+        if key
+    }
+    rows: list[dict] = []
+    seen: set[str] = set()
+
+    def add_sample(sample: CloneSample, metric_key: str = "engagement_score", reason: str = "代表样本") -> None:
+        key = sample.sample_id or sample.aweme_id or sample.case_id
+        if not key or key in seen:
+            return
+        seen.add(key)
+        rows.append(
+            {
+                "sample_id": sample.sample_id,
+                "title": _truncate_text(sample.title or sample.desc or sample.source_url or "未命名样本", 80),
+                "metric": metric_key,
+                "metric_label": _metric_label(metric_key),
+                "metric_value": _metric_value(sample, metric_key),
+                "evidence_level": sample.understanding_level,
+                "media_type": sample.media_type,
+                "reason": reason,
+            }
+        )
+
+    for key, reason in [
+        ("highest_like_samples", "高赞代表，通常支撑情绪/身份共鸣判断"),
+        ("highest_comment_samples", "高评代表，通常支撑参与钩子判断"),
+        ("highest_share_samples", "高分享代表，通常支撑转发理由判断"),
+        ("highest_collect_samples", "高收藏代表，通常支撑模板/复看价值判断"),
+    ]:
+        for item in segments.get(key) or []:
+            if not isinstance(item, dict):
+                continue
+            sample = sample_by_id.get(item.get("sample_id")) or sample_by_id.get(item.get("aweme_id")) or sample_by_id.get(item.get("case_id"))
+            if sample:
+                add_sample(sample, str(item.get("metric") or "engagement_score"), reason)
+            if len(rows) >= limit:
+                return rows
+    for sample in sorted(selected_samples, key=lambda item: item.engagement_score, reverse=True):
+        add_sample(sample, "engagement_score", "综合互动靠前，作为策略证据样本")
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _low_confidence_flags(selected_samples: list[CloneSample], evidence_gaps: list[str], report_quality: dict | None = None) -> list[str]:
+    total = len(selected_samples)
+    if not total:
+        return ["未选择样本，所有结论均为低置信。"]
+    flags: list[str] = []
+    metadata_only = sum(1 for sample in selected_samples if sample.understanding_level == "metadata_only")
+    with_frames = sum(1 for sample in selected_samples if sample.has_frames)
+    with_asr = sum(1 for sample in selected_samples if sample.has_asr)
+    with_ocr = sum(1 for sample in selected_samples if sample.has_ocr)
+    with_comments = sum(1 for sample in selected_samples if sample.has_comments)
+    if metadata_only >= max(1, total // 2):
+        flags.append("半数以上样本仅有元数据：镜头、动作、口播和评论动机需要低置信处理。")
+    if with_frames < max(1, total // 2):
+        flags.append("关键帧覆盖不足：视觉风格和首帧钩子判断需要人工复核。")
+    if with_asr == 0:
+        flags.append("没有 ASR：不要把口播节奏或台词结构当成确定结论。")
+    if with_ocr == 0:
+        flags.append("没有 OCR：封面字、字幕结构和画面文字策略只能作为假设。")
+    if with_comments == 0:
+        flags.append("没有评论：用户需求、争议点和评论钩子只能作为推断。")
+    for gap in evidence_gaps[:3]:
+        text = str(gap or "").strip()
+        if text and text not in flags:
+            flags.append(text)
+    for gap in (report_quality or {}).get("missing_evidence") or []:
+        text = str(gap or "").strip()
+        if text and text not in flags:
+            flags.append(text)
+    return flags[:8]
+
+
+def _action_items_for_report(content_profile: str, result: dict, formulas: list[str], ideas: list[str]) -> list[str]:
+    actions = _report_text_values(result.get("next_actions"), limit=5, item_limit=140)
+    if actions:
+        return actions[:6]
+    if ideas:
+        return [f"围绕「{idea}」先写 1 个标题、1 个首帧画面和 3 个镜头动作，再小样测试。" for idea in ideas[:3]]
+    if formulas:
+        return [f"用「{formula}」做下一条：保留结构，替换人物、场景、标题和互动钩子。" for formula in formulas[:3]]
+    if content_profile in {"beauty_cos", "photo_beauty"}:
+        return [
+            "下一条先定首帧：人物脸/眼神/姿态必须在 0-1 秒出现。",
+            "拍摄时准备 3 个动作版本，分别测试甜美、冷感和反差表达。",
+            "标题用人物气质或出片承诺给点击理由，避免只写泛泛标签。",
+        ]
+    return ["下一条先复刻最高互动样本的开头承诺，再替换为自己的场景和角色。"]
+
+
+def _report_value_upgrade(
+    *,
+    result: dict,
+    sample_set: CloneSampleSet,
+    selected_samples: list[CloneSample],
+    effective_profile: str,
+    positioning_text: str,
+    summary: str,
+    formulas: list[str],
+    ideas: list[str],
+    repeatable_patterns: list[str],
+    traffic_signals: list[str],
+    hooks: list[str],
+) -> dict:
+    segments = result.get("performance_segments") if isinstance(result.get("performance_segments"), dict) else {}
+    evidence_gaps = _report_text_values(result.get("evidence_gaps"), limit=8, item_limit=160, exclude_technical=False)
+    report_quality = result.get("report_quality") if isinstance(result.get("report_quality"), dict) else {}
+    sample_refs = _sample_evidence_refs(selected_samples, segments)
+    low_confidence = _low_confidence_flags(selected_samples, evidence_gaps, report_quality)
+    actions = _action_items_for_report(effective_profile, result, formulas, ideas)
+    observation = _report_text_values(
+        positioning_text,
+        summary,
+        traffic_signals,
+        repeatable_patterns,
+        limit=7,
+        item_limit=150,
+    )
+    explanation = _report_text_values(
+        hooks,
+        result.get("thinking_patterns"),
+        formulas,
+        limit=7,
+        item_limit=150,
+    )
+    return {
+        "observation": {
+            "title": "观察：这个账号做了什么",
+            "bullets": observation or [f"{sample_set.creator_name or sample_set.title or '该账号'} 已选 {len(selected_samples)} 条样本用于蒸馏。"],
+        },
+        "explanation": {
+            "title": "解释：为什么这些内容有效",
+            "bullets": explanation or ["先根据高互动样本判断用户停留、点赞、评论或转发的触发点。"],
+        },
+        "execution": {
+            "title": "执行：下一条怎么拍 / 怎么写 / 怎么验证",
+            "bullets": actions[:7],
+            "next_content_suggestions": ideas[:6],
+        },
+        "sample_evidence": sample_refs,
+        "low_confidence": bool(low_confidence),
+        "low_confidence_reasons": low_confidence,
+        "evidence_gaps": evidence_gaps,
+        "quality": {
+            "quality_score": report_quality.get("quality_score", report_quality.get("score", 0)),
+            "warnings": report_quality.get("warnings") or [],
+            "missing_evidence": report_quality.get("missing_evidence") or [],
+            "checks": report_quality.get("checks") or {},
+        },
+    }
+
+
 def _derive_formula_fallbacks(content_profile: str, result: dict) -> list[str]:
     if content_profile == "photo_beauty":
         return [
@@ -2437,6 +2624,27 @@ def build_creator_report_view_model(result: dict, sample_set: CloneSampleSet, se
 
     validation = _report_text_values(strategy.get("validation_rules"), spec.get("self_check_rubric"), limit=6, item_limit=130)
     anti_patterns = _report_text_values(strategy.get("anti_patterns"), spec.get("anti_patterns"), limit=6, item_limit=130)
+    metric_signals = _segment_briefs_for_report(segments)
+    hooks = _report_text_values(
+        strategy.get("hooks"),
+        patterns.get("opening_hooks"),
+        thinking.get("tension_sources"),
+        positioning.get("audience_promise"),
+        limit=6,
+        item_limit=130,
+    )
+    repeatable_patterns = _report_text_values(
+        result.get("topic_buckets"),
+        patterns.get("visual_style"),
+        patterns.get("scene_order"),
+        patterns.get("subtitle_voice"),
+        spec.get("expression_rules"),
+        spec.get("visual_rules"),
+        spec.get("structure_rules"),
+        limit=6,
+        item_limit=130,
+    )
+    next_actions = _report_text_values(result.get("next_actions"), result.get("topic_buckets"), limit=5, item_limit=120)
     technical_notes = _report_text_values(
         (result.get("sample_overview") or {}).get("warnings"),
         result.get("next_actions"),
@@ -2472,34 +2680,30 @@ def build_creator_report_view_model(result: dict, sample_set: CloneSampleSet, se
                 ),
             },
             "traffic_sources": {
-                "metric_signals": _segment_briefs_for_report(segments),
-                "hooks": _report_text_values(
-                    strategy.get("hooks"),
-                    patterns.get("opening_hooks"),
-                    thinking.get("tension_sources"),
-                    positioning.get("audience_promise"),
-                    limit=6,
-                    item_limit=130,
-                ),
+                "metric_signals": metric_signals,
+                "hooks": hooks,
             },
             "formulas": formulas[:5],
-            "repeatable_patterns": _report_text_values(
-                result.get("topic_buckets"),
-                patterns.get("visual_style"),
-                patterns.get("scene_order"),
-                patterns.get("subtitle_voice"),
-                spec.get("expression_rules"),
-                spec.get("visual_rules"),
-                spec.get("structure_rules"),
-                limit=6,
-                item_limit=130,
-            ),
+            "repeatable_patterns": repeatable_patterns,
             "next_ideas": ideas[:6],
-            "next_actions": _report_text_values(result.get("next_actions"), result.get("topic_buckets"), limit=5, item_limit=120),
+            "next_actions": next_actions,
             "checklist": validation[:6],
             "anti_patterns": anti_patterns[:6],
         },
         "technical_notes": technical_notes,
+        "value_upgrade": _report_value_upgrade(
+            result=result,
+            sample_set=sample_set,
+            selected_samples=selected_samples,
+            effective_profile=effective_profile,
+            positioning_text=positioning_text,
+            summary=summary,
+            formulas=formulas,
+            ideas=ideas,
+            repeatable_patterns=repeatable_patterns,
+            traffic_signals=metric_signals,
+            hooks=hooks,
+        ),
     }
 
 
@@ -2860,6 +3064,7 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
     report_quality = validate_creator_report_quality(
         result["creator_clone_strategy"],
         evidence_summary=evidence_summary,
+        report_context=result,
     ).to_dict()
     result["report_quality"] = report_quality
     result["warnings"] = list(result.get("warnings") or [])
@@ -3039,96 +3244,75 @@ def creator_clone_schema() -> dict:
 
 def render_creator_clone_markdown(result: dict) -> str:
     positioning = result.get("creator_positioning") or {}
-    spec = result.get("creator_clone_spec") or {}
     content_profile = result.get("content_profile") or {}
     strategy = result.get("creator_clone_strategy") or {}
     view_model = result.get("creator_report_view_model") if isinstance(result.get("creator_report_view_model"), dict) else {}
     sections = view_model.get("sections") if isinstance(view_model.get("sections"), dict) else {}
+    value_upgrade = view_model.get("value_upgrade") if isinstance(view_model.get("value_upgrade"), dict) else {}
+    observation = value_upgrade.get("observation") if isinstance(value_upgrade.get("observation"), dict) else {}
+    explanation = value_upgrade.get("explanation") if isinstance(value_upgrade.get("explanation"), dict) else {}
+    execution = value_upgrade.get("execution") if isinstance(value_upgrade.get("execution"), dict) else {}
+    quality = value_upgrade.get("quality") if isinstance(value_upgrade.get("quality"), dict) else {}
+    evidence_rows = [
+        f"{item.get('title') or '代表样本'}（{item.get('metric_label') or item.get('metric') or '互动'} {item.get('metric_value') or 0}；证据 {item.get('evidence_level') or 'unknown'}；{item.get('sample_id') or ''}）"
+        for item in value_upgrade.get("sample_evidence") or []
+        if isinstance(item, dict)
+    ]
     lines = [
         "# 创作者蒸馏报告",
         "",
         f"## 0. 核心摘要\n\n{view_model.get('summary') or result.get('summary') or ''}",
         "",
-        "## 1. 核心判断",
+        "## 1. 观察：这个账号做了什么",
         "",
         f"- 定位：{view_model.get('headline') or strategy.get('positioning') or positioning.get('what_the_creator_sells') or ''}",
         f"- 观众承诺：{positioning.get('audience_promise') or ''}",
         f"- 隐藏类型：{positioning.get('hidden_genre') or ''}",
         f"- 观众假设：{positioning.get('audience_assumption') or ''}",
         "",
-        "## 2. 流量来源与内容策略",
+        _markdown_list(observation.get("bullets") or (sections.get("core_judgment") or {}).get("bullets")),
         "",
-        _markdown_list((sections.get("traffic_sources") or {}).get("hooks") or strategy.get("content_strategy")),
+        "## 2. 解释：为什么这些内容有效",
         "",
-        "### 开头钩子",
+        _markdown_list(explanation.get("bullets") or (sections.get("traffic_sources") or {}).get("hooks") or strategy.get("content_strategy")),
         "",
-        _markdown_list(strategy.get("hooks")),
+        "### 样本证据",
         "",
-        "## 3. 可复用公式",
+        _markdown_list(evidence_rows),
+        "",
+        "## 3. 执行：下一条怎么拍 / 怎么写 / 怎么验证",
+        "",
+        _markdown_list(execution.get("bullets") or sections.get("next_actions")),
+        "",
+        "### 下一条内容建议",
+        "",
+        _markdown_list(execution.get("next_content_suggestions") or sections.get("next_ideas") or strategy.get("idea_bank")),
+        "",
+        "## 4. 可复刻结构",
         "",
         _markdown_list(sections.get("formulas") or strategy.get("templates")),
         "",
-        "## 4. 下一批候选选题",
+        "### 共性创作要素",
         "",
-        _markdown_list(sections.get("next_ideas") or strategy.get("idea_bank")),
+        _markdown_list(sections.get("repeatable_patterns")),
         "",
-        "## 5. 发布前自检",
+        "## 5. 置信度与证据缺口",
         "",
-        _markdown_list(sections.get("checklist") or strategy.get("validation_rules")),
+        f"- 报告质量：{quality.get('quality_score', (result.get('report_quality') or {}).get('quality_score', ''))} / 100",
         "",
-        "## 6. 不可照搬 / 反模式",
+        "### 低置信提示",
         "",
-        _markdown_list(strategy.get("anti_patterns")),
+        _markdown_list(value_upgrade.get("low_confidence_reasons") or result.get("evidence_gaps")),
+        "",
+        "### Evidence Gaps",
+        "",
+        _markdown_list(value_upgrade.get("evidence_gaps") or result.get("evidence_gaps")),
         "",
         "## Analysis Template",
         "",
         f"- Requested: {content_profile.get('requested_label') or content_profile.get('requested') or ''}",
         f"- Effective: {content_profile.get('effective_label') or content_profile.get('effective') or ''}",
         f"- Guidance: {content_profile.get('guidance') or ''}",
-        "",
-        "## Creator Positioning",
-        "",
-        f"- What the creator sells: {positioning.get('what_the_creator_sells') or ''}",
-        f"- Audience promise: {positioning.get('audience_promise') or ''}",
-        f"- Hidden genre: {positioning.get('hidden_genre') or ''}",
-        f"- Audience assumption: {positioning.get('audience_assumption') or ''}",
-        "",
-        "## Topic Buckets",
-        "",
-        _markdown_list(result.get("topic_buckets")),
-        "",
-        "## Transferable Formulas",
-        "",
-        _markdown_list(result.get("transferable_formulas")),
-        "",
-        "## Creator Distillation Rules",
-        "",
-        f"- Taste: {spec.get('taste') or ''}",
-        f"- Caption voice: {spec.get('caption_voice') or ''}",
-        "",
-        "### Topic Rules",
-        "",
-        _markdown_list(spec.get("topic_selection_rules")),
-        "",
-        "### Anti-patterns",
-        "",
-        _markdown_list(spec.get("anti_patterns")),
-        "",
-        "## Candidate Ideas",
-        "",
-        _markdown_list(result.get("candidate_ideas")),
-        "",
-        "## Evidence Gaps",
-        "",
-        _markdown_list(result.get("evidence_gaps")),
-        "",
-        "## Next Actions",
-        "",
-        _markdown_list(result.get("next_actions")),
-        "",
-        "## Performance Segments",
-        "",
-        _markdown_list(result.get("performance_segments")),
         "",
     ]
     return "\n".join(lines)

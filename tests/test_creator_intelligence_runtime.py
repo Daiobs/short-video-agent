@@ -330,3 +330,78 @@ def test_report_quality_validator_flags_empty_and_weak_reports() -> None:
     assert "templates" in weak["missing_fields"]
     assert "content_strategy" in weak["weak_fields"]
     assert weak["evidence_warnings"]
+
+
+def test_report_quality_validator_scores_empty_template_and_strong_reports() -> None:
+    empty = validate_creator_report_quality(
+        {},
+        evidence_summary={"selected_count": 3, "evidence_ready_count": 0, "with_keyframes": 0},
+    ).to_dict()
+    template_like = validate_creator_report_quality(
+        {
+            "positioning": "账号定位稳定",
+            "content_strategy": ["持续输出垂直内容"],
+            "hooks": ["用强钩子开头"],
+            "templates": [{"name": "通用模板", "beat_structure": ["开头", "中段", "结尾"]}],
+            "anti_patterns": ["避免跑题"],
+            "idea_bank": [{"title": "新选题"}],
+            "validation_rules": ["检查内容是否垂直"],
+        },
+        evidence_summary={"selected_count": 3, "evidence_ready_count": 3, "with_keyframes": 3, "with_asr": 1, "with_ocr": 1},
+    ).to_dict()
+    strong = validate_creator_report_quality(
+        {
+            "positioning": "粉色少御 COS 近景视觉，用首帧人物眼神和妆造承诺抓停留。",
+            "content_strategy": [
+                {
+                    "text": "保留高赞样本的 0-1 秒近景给脸，再替换成新服装和新背景测试。",
+                    "sample_id": "sample_a",
+                    "title": "粉色近景回头杀",
+                    "metric": "like_count",
+                    "metric_value": 120000,
+                    "evidence_level": "partial",
+                },
+                "标题写人物气质 + 场景承诺，封面首帧直接展示眼神和姿态，脚本文案用一句反差描述承接动作。",
+            ],
+            "hooks": ["开头 1 秒给人物脸、眼神、手势动作，标题补充反差。"],
+            "templates": [
+                {
+                    "name": "近景眼神钩子",
+                    "when_to_use": "新妆造或新角色上线时使用",
+                    "beat_structure": ["首帧给脸", "手势动作", "标题承诺", "评论验证"],
+                    "sample_id": "sample_a",
+                    "title": "粉色近景回头杀",
+                    "metric": "like_count",
+                    "evidence_level": "partial",
+                },
+                {
+                    "name": "服化反差钩子",
+                    "beat_structure": ["封面展示服装", "镜头拉近", "动作变化", "话题标签"],
+                },
+            ],
+            "anti_patterns": ["不要只复制擦边姿势，要保留安全人设和妆造统一。"],
+            "idea_bank": [
+                {
+                    "title": "新粉色妆造回头杀",
+                    "formula_used": "近景眼神钩子",
+                    "why_worth_trying": "复用高赞首帧吸引",
+                    "production_requirements": "准备近景镜头、封面图、标题 A/B 测试。",
+                },
+                {"title": "冷感服装三动作测试", "production_requirements": "同场景拍 3 个动作并比较评论。"},
+            ],
+            "validation_rules": ["发布前检查首帧人物是否清晰，标题是否有点击理由，脚本文案是否承接动作，封面是否能单独成立。"],
+        },
+        evidence_summary={"selected_count": 3, "evidence_ready_count": 3, "with_keyframes": 3, "with_asr": 1, "with_ocr": 1},
+    ).to_dict()
+
+    assert empty["ok"] is False
+    assert empty["quality_score"] < template_like["quality_score"] < strong["quality_score"]
+    assert template_like["missing_evidence"]
+    assert template_like["checks"]["has_sample_evidence"] is False
+    assert strong["ok"] is True
+    assert strong["missing_evidence"] == []
+    assert strong["checks"]["has_action_verbs"] is True
+    assert strong["checks"]["has_sample_evidence"] is True
+    assert strong["checks"]["has_executable_ideas"] is True
+    assert strong["checks"]["has_shooting_advice"] is True
+    assert strong["checks"]["has_title_advice"] is True

@@ -563,7 +563,8 @@ def test_home_uses_versioned_static_assets() -> None:
         script.index("async function pollCreatorCloneDistillJob") : script.index("// Creator Clone: distillation")
     ]
     assert "applyCreatorCloneDistillPayload(resultPayload);" in poll_distill
-    assert "await hydrateCreatorCloneReportFromSet(resultPayload.set.set_id, {scroll: false});" in poll_distill
+    assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: true});" in poll_distill
+    assert "使用任务结果兜底渲染" in poll_distill
     assert "function profileScanMaxPagesForCount" in script
     assert "max_pages: profilePayload.max_pages" in script
     assert "function useRecommendedProfileSamples" in script
@@ -633,7 +634,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function showCreatorCloneExportStage" in script
     assert "currentCreatorCloneSetId()" in script
     assert 'workflowState === "DONE"' in script
-    assert "await hydrateCreatorCloneReportFromSet(resultPayload.set.set_id" in script
+    assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: true});" in script
     assert 'targetStage === "export"' in script
     assert "await showCreatorCloneExportStage({scroll: true});" in script
     assert "function creatorCloneStageUnavailableReason" in script
@@ -991,11 +992,12 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "creator_report_view_model" in script
     assert "isTechnicalReportNote" in script
     assert "创作者蒸馏核心报告" in script
-    assert "核心判断：这个账号为什么能跑通" in script
-    assert "流量来源：用户为什么会停留、点赞、评论或转发" in script
-    assert "可复刻创作公式：下一条照这个结构拍" in script
-    assert "下一批可以怎么拍：选题与执行动作" in script
-    assert "发布前自检：保留有效结构，避开无效模仿" in script
+    assert "观察：这个账号做了什么" in script
+    assert "解释：为什么这些内容有效" in script
+    assert "执行：下一条怎么拍 / 怎么写 / 怎么验证" in script
+    assert "样本证据" in script
+    assert "低置信提示" in script
+    assert "证据缺口" in script
     assert "思维模式" in script
     assert "表达 / 视觉依据" in script
     assert "报告依据：样本、证据完整度和后台细节" in script
@@ -10207,6 +10209,92 @@ def test_creator_clone_auto_detects_photo_beauty_profile_and_public_view_model()
     assert any("低门槛出片公式" in item for item in view_model["sections"]["formulas"])
     assert any("新手用杂牌相机" in item for item in view_model["sections"]["next_ideas"])
     assert any("Reduce" in item for item in view_model["technical_notes"])
+
+
+def test_creator_clone_report_view_model_exposes_value_upgrade_evidence_and_gaps() -> None:
+    sample_set = CloneSampleSet(
+        set_id="clone_test_value_upgrade",
+        title="低证据素材池",
+        source_platform="douyin",
+        samples=[
+            CloneSample(
+                sample_id="sample_meta",
+                title="只有标题的高赞样本",
+                like_count=90000,
+                comment_count=1200,
+                share_count=6000,
+                media_type="video",
+                understanding_level="metadata_only",
+            ),
+            CloneSample(
+                sample_id="sample_partial",
+                title="已有关键帧样本",
+                like_count=50000,
+                comment_count=800,
+                share_count=2000,
+                media_type="video",
+                understanding_level="partial",
+                has_video=True,
+                has_frames=True,
+            ),
+        ],
+    )
+    normalized = normalize_creator_clone_result(
+        {
+            "summary": "账号靠近景人物和标题话题抓停留。",
+            "creator_positioning": {"what_the_creator_sells": "近景人物视觉吸引"},
+            "creator_clone_strategy": {
+                "positioning": "近景人物视觉吸引",
+                "content_strategy": [
+                    {
+                        "text": "拍下一条时保留高赞样本的近景首帧，标题写人物气质。",
+                        "sample_id": "sample_meta",
+                        "title": "只有标题的高赞样本",
+                        "metric": "like_count",
+                        "metric_value": 90000,
+                        "evidence_level": "metadata_only",
+                    }
+                ],
+                "hooks": ["0-1 秒给人物脸和姿态。"],
+                "templates": [
+                    {
+                        "name": "近景首帧模板",
+                        "beat_structure": ["封面给脸", "镜头拉近", "动作变化"],
+                        "sample_id": "sample_meta",
+                        "title": "只有标题的高赞样本",
+                        "metric": "like_count",
+                        "evidence_level": "metadata_only",
+                    },
+                    {"name": "标题话题模板", "beat_structure": ["标题承诺", "封面人物", "评论验证"]},
+                ],
+                "anti_patterns": ["不要照搬高风险表达。"],
+                "idea_bank": [
+                    {
+                        "title": "粉色妆造近景测试",
+                        "formula_used": "近景首帧模板",
+                        "production_requirements": "准备封面首帧、标题和三段动作。",
+                    },
+                    {"title": "冷感回头杀标题 A/B 测试", "production_requirements": "同一镜头改两个标题验证。"},
+                ],
+                "validation_rules": ["检查封面第一眼和标题点击理由。"],
+            },
+            "evidence_gaps": ["缺少 ASR/OCR/评论，人物动作和互动动机低置信。"],
+            "next_actions": ["下一条先拍 3 个近景动作版本，并用两个标题验证点击。"],
+        },
+        sample_set,
+        sample_set.samples,
+    )
+
+    value_upgrade = normalized["creator_report_view_model"]["value_upgrade"]
+    assert value_upgrade["observation"]["title"] == "观察：这个账号做了什么"
+    assert value_upgrade["explanation"]["title"] == "解释：为什么这些内容有效"
+    assert value_upgrade["execution"]["title"] == "执行：下一条怎么拍 / 怎么写 / 怎么验证"
+    assert value_upgrade["sample_evidence"][0]["sample_id"] == "sample_meta"
+    assert value_upgrade["sample_evidence"][0]["metric"] == "like_count"
+    assert value_upgrade["low_confidence"] is True
+    assert any("缺少 ASR/OCR/评论" in item for item in value_upgrade["evidence_gaps"])
+    assert normalized["report_quality"]["checks"]["has_sample_evidence"] is True
+    assert normalized["report_quality"]["quality_score"] > 0
 
 
 def test_creator_clone_distill_execution_plan_scales_large_batches(monkeypatch, tmp_path: Path) -> None:

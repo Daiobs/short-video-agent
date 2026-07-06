@@ -1091,15 +1091,56 @@ function creatorCloneResultFromStrategyOutput(strategy = {}) {
 }
 
 function formatReportValue(value) {
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (/^[{[]/.test(text)) {
+      try {
+        return formatReportValue(JSON.parse(text));
+      } catch {
+        // Keep the original text when a model returned a truncated JSON-looking fragment.
+      }
+    }
+    return text;
+  }
   if (Array.isArray(value)) {
     return value.map(formatReportValue).filter(isMeaningfulReportText).join(" / ");
   }
   if (value && typeof value === "object") {
+    const title = value.name || value.title || value.pattern || value.formula || value.template || value.idea || value.dimension || value.summary || value.point || value.text || value.content || "";
+    const detailMap = [
+      ["description", ""],
+      ["why_it_works", "有效原因"],
+      ["when_to_use", "适用"],
+      ["formula_used", "使用公式"],
+      ["reason", "理由"],
+      ["beat_structure", "结构"],
+      ["beats", "结构"],
+      ["structure", "结构"],
+      ["production_requirements", "制作要求"],
+      ["expected_metric_strength", "强项"],
+      ["likely_strength", "强度"],
+      ["action", "动作"],
+      ["evidence", "证据"],
+      ["metric", "指标"],
+      ["metric_value", "数值"],
+      ["evidence_level", "证据等级"],
+      ["risks", "风险"],
+    ];
+    const details = detailMap
+      .filter(([key]) => publicValueHasContent(value[key]))
+      .map(([key, label]) => {
+        const text = formatReportValue(value[key]);
+        return label ? `${label}：${text}` : text;
+      })
+      .filter(isMeaningfulReportText);
+    if (title || details.length) {
+      return [title, details.join("；")].filter(isMeaningfulReportText).join("：");
+    }
     return Object.entries(value)
       .filter(([, item]) => publicValueHasContent(item))
       .map(([key, item]) => {
         const text = formatReportValue(item);
-        return /^(text|content)$/i.test(key) ? text : `${key}: ${text}`;
+        return /^(text|content)$/i.test(key) ? text : `${key}：${text}`;
       })
       .join("；");
   }
@@ -1109,17 +1150,28 @@ function formatReportValue(value) {
 function cleanPublicReportText(value) {
   return String(value ?? "")
     .replace(/(^|[；;\n])\s*[-*]?\s*text\s*[:：]\s*/gi, "$1")
+    .replace(/^text\s*[:：]\s*/gi, "")
+    .replace(/^dimension\s*[:：]\s*/gi, "")
+    .replace(/([；;，,]\s*)action\s*[:：]\s*/gi, "：")
+    .replace(/^action\s*[:：]\s*/gi, "")
+    .replace(/^["']?\{\\?["']?pattern\\?["']?\s*[:：]\s*\\?["']?/i, "")
+    .replace(/^["']?\{\\?["']?dimension\\?["']?\s*[:：]\s*\\?["']?/i, "")
+    .replace(/\\?["']?\s*,\s*\\?["']?evidence\\?["']?\s*[:：].*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function reportItemPrimaryText(item) {
+  if (typeof item === "string") {
+    return formatReportValue(item);
+  }
   if (!item || typeof item !== "object" || Array.isArray(item)) {
     return formatReportValue(item);
   }
   return (
     item.name
     || item.title
+    || item.pattern
     || item.formula
     || item.summary
     || item.description
@@ -1128,6 +1180,7 @@ function reportItemPrimaryText(item) {
     || item.content
     || item.template
     || item.idea
+    || item.dimension
     || item.why_it_works
     || formatReportValue(item)
   );
@@ -4528,6 +4581,57 @@ function renderCreatorDistillationEvidenceDetails(overview, result, reportViewMo
   `;
 }
 
+function renderCreatorReportSampleEvidence(items = []) {
+  const rows = normalizeItems(items).filter((item) => item && typeof item === "object").slice(0, 6);
+  if (!rows.length) {
+    return '<p class="muted compact-copy">暂无样本证据引用；请优先查看高互动样本并补齐关键帧/ASR/OCR。</p>';
+  }
+  return `
+    <ul class="public-report-list creator-evidence-reference-list">
+      ${rows.map((item) => {
+        const metric = item.metric_label
+          ? `${item.metric_label} ${formatNumber(item.metric_value || 0)}`
+          : item.metric
+            ? `${item.metric} ${formatNumber(item.metric_value || 0)}`
+            : "";
+        const evidence = item.evidence_level ? `证据 ${item.evidence_level}` : "";
+        const meta = [metric, evidence, item.sample_id].filter(Boolean).join(" · ");
+        return `<li><strong>${escapeHtml(item.title || "代表样本")}</strong>${meta ? ` <span class="muted">(${escapeHtml(meta)})</span>` : ""}${item.reason ? `<br><span class="muted">${escapeHtml(item.reason)}</span>` : ""}</li>`;
+      }).join("")}
+    </ul>
+  `;
+}
+
+function renderCreatorReportLowConfidence(valueUpgrade = {}) {
+  const reasons = normalizeItems(valueUpgrade.low_confidence_reasons || valueUpgrade.evidence_gaps).slice(0, 6);
+  if (!valueUpgrade.low_confidence && !reasons.length) {
+    return '<p class="muted compact-copy">当前没有明显低置信提示。</p>';
+  }
+  return `
+    <div class="creator-low-confidence-note">
+      <strong>低置信提示</strong>
+      ${renderPublicList(reasons, "证据不足的结论会在这里显示。")}
+    </div>
+  `;
+}
+
+function renderCreatorReportQualitySummary(valueUpgrade = {}) {
+  const quality = valueUpgrade.quality || {};
+  const score = quality.quality_score ?? quality.score;
+  const missing = normalizeItems(quality.missing_evidence).slice(0, 4);
+  const warnings = normalizeItems(quality.warnings).slice(0, 3);
+  if (score === undefined && !missing.length && !warnings.length) {
+    return "";
+  }
+  return `
+    <div class="creator-report-quality-summary">
+      ${score !== undefined ? `<p><strong>报告质量：</strong>${formatNumber(score)} / 100</p>` : ""}
+      ${missing.length ? `<h5>缺少的证据或落地项</h5>${renderPublicList(missing)}` : ""}
+      ${warnings.length ? `<h5>质量提醒</h5>${renderPublicList(warnings)}` : ""}
+    </div>
+  `;
+}
+
 function renderCreatorDistillationReport(result, overview, templateLabel) {
   const viewModel = creatorReportViewModelFromResult(result, overview, templateLabel);
   const strategy = creatorStrategyFromResult(result) || {};
@@ -4537,28 +4641,16 @@ function renderCreatorDistillationReport(result, overview, templateLabel) {
   const spec = result.creator_clone_spec || {};
   const segments = result.performance_segments || {};
   const sections = viewModel.sections || {};
+  const valueUpgrade = viewModel.value_upgrade || {};
   const positioningText = viewModel.headline || strategy.positioning || positioning.what_the_creator_sells || result.summary || "待补充";
-  const creatorLogic = normalizeItems(sections.core_judgment?.bullets).slice(0, 5);
+  const observation = valueUpgrade.observation || {};
+  const explanation = valueUpgrade.explanation || {};
+  const execution = valueUpgrade.execution || {};
   const repeatablePatterns = normalizeItems(sections.repeatable_patterns).slice(0, 6);
-  const trafficHtml = `
-    ${normalizeItems(sections.traffic_sources?.metric_signals).length ? `
-      <h5>数据里最强的信号</h5>
-      ${renderPublicList(sections.traffic_sources.metric_signals)}
-    ` : ""}
-    <h5>抓停留 / 促互动方式</h5>
-    ${renderPublicList(sections.traffic_sources?.hooks, "暂无明确钩子。")}
-  `;
-  const actionHtml = `
-    <h5>候选选题</h5>
-    ${renderPublicList(sections.next_ideas, "本次没有返回独立选题库，可先基于爆款共性手动生成候选选题。")}
-    <h5>下一步动作</h5>
-    ${renderPublicList(sections.next_actions, "先从最高互动样本中选 3 条，人工复核开头、封面、动作和标题，再生成候选脚本。")}
-  `;
-  const checklistHtml = `
-    <h5>发布前自检</h5>
-    ${renderPublicList(sections.checklist, "暂无自检规则。")}
-    <h5>不要照搬 / 风险边界</h5>
-    ${renderPublicList(sections.anti_patterns, "暂无风险边界。")}
+  const executionBody = `
+    ${renderPublicList(execution.bullets || sections.next_actions, "先从最高互动样本中选 3 条，人工复核开头、封面、动作和标题，再生成候选脚本。")}
+    <h5>下一条内容建议</h5>
+    ${renderPublicList(execution.next_content_suggestions || sections.next_ideas, "本次没有返回独立选题库，可先基于爆款共性手动生成候选选题。")}
   `;
   return `
     <section class="creator-distillation-report" aria-label="创作者蒸馏核心报告">
@@ -4570,24 +4662,31 @@ function renderCreatorDistillationReport(result, overview, templateLabel) {
         positioningText,
       })}
       <div class="public-report-grid creator-distillation-grid creator-decision-grid">
-        ${renderPublicCard("1. 核心判断：这个账号为什么能跑通", `
+        ${renderPublicCard("1. 观察：这个账号做了什么", `
           ${renderPublicFields([
             ["定位", positioningText],
             ["观众承诺", positioning.audience_promise],
             ["隐藏类型", positioning.hidden_genre],
             ["观众假设", positioning.audience_assumption],
           ])}
-          <h5>一句话创作逻辑</h5>
-          ${renderPublicList(creatorLogic, "暂无核心逻辑。")}
+          <h5>稳定出现的内容动作</h5>
+          ${renderPublicList(observation.bullets || sections.core_judgment?.bullets, "暂无观察结论。")}
         `, "featured wide")}
-        ${renderPublicCard("2. 流量来源：用户为什么会停留、点赞、评论或转发", trafficHtml, "featured")}
-        ${renderPublicCard("3. 可复刻创作公式：下一条照这个结构拍", `
+        ${renderPublicCard("2. 解释：为什么这些内容有效", `
+          ${renderPublicList(explanation.bullets || sections.traffic_sources?.hooks, "暂无解释结论。")}
+          <h5>样本证据</h5>
+          ${renderCreatorReportSampleEvidence(valueUpgrade.sample_evidence)}
+        `, "featured")}
+        ${renderPublicCard("3. 执行：下一条怎么拍 / 怎么写 / 怎么验证", executionBody, "featured")}
+        ${renderPublicCard("4. 可复刻结构：保留有效动作，替换具体素材", `
           ${renderPublicList(sections.formulas, "本次没有返回独立公式，建议先从高互动样本中人工提炼 2-3 个可复用拍法。")}
           <h5>共性创作要素</h5>
           ${renderPublicList(repeatablePatterns, "暂无稳定共性。")}
-        `, "featured")}
-        ${renderPublicCard("4. 下一批可以怎么拍：选题与执行动作", actionHtml, "featured")}
-        ${renderPublicCard("5. 发布前自检：保留有效结构，避开无效模仿", checklistHtml)}
+        `)}
+        ${renderPublicCard("5. 置信度与证据缺口", `
+          ${renderCreatorReportLowConfidence(valueUpgrade)}
+          ${renderCreatorReportQualitySummary(valueUpgrade)}
+        `)}
       </div>
       ${renderCreatorDistillationEvidenceDetails(overview, result, viewModel)}
     </section>
@@ -4943,10 +5042,21 @@ async function pollCreatorCloneDistillJob(jobId) {
   if (job.status === "success") {
     renderJobStatus(job);
     const resultPayload = job.result_json || {};
-    applyCreatorCloneDistillPayload(resultPayload);
-    if (resultPayload.set?.set_id) {
-      await hydrateCreatorCloneReportFromSet(resultPayload.set.set_id, {scroll: false});
+    const setId = resultPayload.set?.set_id || "";
+    if (setId) {
+      currentCloneSetId = setId;
+      rememberRecentCreatorCloneSetId(setId);
+      try {
+        await hydrateCreatorCloneReportFromSet(setId, {scroll: true});
+        profileScanStatus.textContent = resultPayload.batch_distill?.batch_count
+          ? `分批蒸馏完成：${formatNumber(resultPayload.batch_distill.batch_count)} 个批次，已生成总汇总。`
+          : "创作者蒸馏完成。";
+        return;
+      } catch (error) {
+        profileScanStatus.textContent = `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告同步失败，正在使用任务结果兜底渲染。"}`;
+      }
     }
+    applyCreatorCloneDistillPayload(resultPayload);
     return;
   }
   if (job.status === "failed") {

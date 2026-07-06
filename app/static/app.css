@@ -4865,3 +4865,25 @@ footer {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
+
+.creator-evidence-reference-list strong {
+    color: var(--ink-strong, #111827);
+}
+
+.creator-low-confidence-note,
+.creator-report-quality-summary {
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    border-radius: 12px;
+    background: rgba(255, 251, 235, 0.72);
+}
+
+.creator-report-quality-summary {
+    border-color: rgba(99, 102, 241, 0.18);
+    background: rgba(238, 242, 255, 0.55);
+}
+
+.creator-report-quality-summary p {
+    margin: 0 0 8px;
+}
