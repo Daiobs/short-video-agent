@@ -2769,8 +2769,20 @@ pre {
     font-size: 18px;
 }
 
+.creator-decision-grid.public-report-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
 .creator-decision-grid .public-report-card {
+    display: block;
+    margin: 0;
     border-radius: 12px;
+}
+
+.creator-decision-grid .public-report-card.wide {
+    grid-column: 1 / -1;
 }
 
 .creator-segment-grid {

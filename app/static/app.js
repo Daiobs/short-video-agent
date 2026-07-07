@@ -5152,6 +5152,31 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
   renderCreatorCloneNextAction();
 }
 
+function safeRenderCreatorCloneResult(result, set, prompt, exports = {}, options = {}) {
+  try {
+    renderCreatorCloneResult(result, set, prompt, exports, options);
+    return true;
+  } catch (error) {
+    console.error("Creator clone report render failed", error);
+    setProfileStageView("export", {scroll: options.scroll === true});
+    creatorCloneResultCard?.classList.remove("hidden");
+    if (creatorStrategyPlanCard) {
+      creatorStrategyPlanCard.classList.add("hidden");
+    }
+    if (creatorCloneResult) {
+      creatorCloneResult.innerHTML = `
+        <section class="public-analysis-hero">
+          <span>REPORT_RENDER_FAILED</span>
+          <strong>报告已生成，但首次渲染失败。请稍后重试或刷新页面恢复完整报告。</strong>
+        </section>
+      `;
+    }
+    profileScanStatus.textContent = "REPORT_RENDER_FAILED：报告已生成，但页面首次渲染失败，请刷新或重新打开报告。";
+    renderCreatorCloneNextAction();
+    return false;
+  }
+}
+
 function renderStrategyPlanItemList(items = [], emptyText = "暂无") {
   const rows = normalizeItems(items).filter(Boolean);
   if (!rows.length) {
@@ -5297,12 +5322,7 @@ async function hydrateRecentCreatorCloneReport(options = {}) {
   }
   currentCloneSetId = setId;
   rememberRecentCreatorCloneSetId(setId);
-  applyCreatorCloneDistillPayload(resultPayload);
-  if (!creatorCloneResult?.innerHTML.trim() || !hasCreatorCloneReportLinkReady()) {
-    await hydrateCreatorCloneReportFromSet(setId, {scroll: options.scroll === true});
-  } else if (options.scroll === true) {
-    creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
-  }
+  await hydrateCreatorCloneReportFromSet(setId, {scroll: options.scroll === true, fallbackPayload: resultPayload});
   return resultPayload;
 }
 
@@ -5349,7 +5369,7 @@ function applyCreatorCloneDistillPayload(payload) {
       : "创作者蒸馏完成。";
   profileScanStatus.textContent = recoveryHint;
   currentCloneSetId = payload.set?.set_id || currentCloneSetId;
-  renderCreatorCloneResult(payload.result || null, payload.set, payload.prompt || "", payload.exports || {});
+  safeRenderCreatorCloneResult(payload.result || null, payload.set, payload.prompt || "", payload.exports || {});
 }
 
 async function pollCreatorCloneDistillJob(jobId) {
@@ -5364,9 +5384,6 @@ async function pollCreatorCloneDistillJob(jobId) {
     if (setId) {
       currentCloneSetId = setId;
       rememberRecentCreatorCloneSetId(setId);
-    }
-    applyCreatorCloneDistillPayload(resultPayload);
-    if (setId) {
       try {
         await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});
         profileScanStatus.textContent = resultPayload.batch_distill?.batch_count
@@ -5374,10 +5391,14 @@ async function pollCreatorCloneDistillJob(jobId) {
           : "创作者蒸馏完成。";
         return;
       } catch (error) {
-        profileScanStatus.textContent = `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告文件同步失败，已使用任务结果直接渲染。"}`;
+        const rendered = safeRenderCreatorCloneResult(resultPayload.result || null, resultPayload.set, resultPayload.prompt || "", resultPayload.exports || {});
+        profileScanStatus.textContent = rendered
+          ? `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告文件同步失败，已使用任务结果直接渲染。"}`
+          : `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告文件同步失败，任务结果渲染也失败，请刷新页面重试。"}`;
         return;
       }
     }
+    applyCreatorCloneDistillPayload(resultPayload);
     return;
   }
   if (job.status === "failed") {

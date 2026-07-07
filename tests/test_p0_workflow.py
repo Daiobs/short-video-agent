@@ -571,6 +571,9 @@ def test_home_uses_versioned_static_assets() -> None:
     ]
     assert "applyCreatorCloneDistillPayload(resultPayload);" in poll_distill
     assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});" in poll_distill
+    assert poll_distill.index("await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});") < poll_distill.rindex("applyCreatorCloneDistillPayload(resultPayload);")
+    assert "function safeRenderCreatorCloneResult" in script
+    assert "REPORT_RENDER_FAILED" in script
     assert "报告文件同步失败，已使用任务结果直接渲染。" in poll_distill
     assert "function hasCreatorCloneResultPayload" in script
     assert "function profileScanMaxPagesForCount" in script
@@ -1041,6 +1044,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".creator-clone-segment-disclosure" in stylesheet
     assert ".creator-distillation-report" in stylesheet
     assert ".creator-segment-grid" in stylesheet
+    assert ".creator-decision-grid.public-report-grid" in stylesheet
+    assert ".creator-decision-grid .public-report-card.wide" in stylesheet
+    assert "grid-column: 1 / -1" in stylesheet
     assert ".profile-main-flow button.locked" in stylesheet
     assert ".profile-main-flow button.viewing" in stylesheet
     assert ".creator-report-evidence-details" in stylesheet
