@@ -12410,3 +12410,39 @@ def test_local_chrome_sample_strips_url_userinfo() -> None:
     payload_text = json.dumps(sample.to_dict(), ensure_ascii=False).lower()
     assert "viewer:password" not in payload_text
     assert "cover_user:cover_pass" not in payload_text
+
+
+def test_creator_strategy_generator_benchmark_doc_covers_three_real_sample_types() -> None:
+    benchmark = Path("docs/creator-strategy-generator-benchmark.md").read_text(encoding="utf-8")
+
+    assert "P5.5" in benchmark
+    assert "COS / 美拍 / 摄影出片账号" in benchmark
+    assert "知识 / 教学账号" in benchmark
+    assert "低证据 / 仅元数据账号" in benchmark
+    assert '```json id="benchmark_schema"' in benchmark
+    for field in [
+        '"case_name"',
+        '"content_profile"',
+        '"report_quality_score"',
+        '"strategy_plan_score"',
+        '"can_directly_shoot"',
+        '"strong_parts"',
+        '"weak_parts"',
+        '"missing_evidence"',
+        '"manual_notes"',
+        '"next_fix_suggestion"',
+    ]:
+        assert field in benchmark
+    for output_field in [
+        "next_topics",
+        "script_templates",
+        "shot_templates",
+        "title_cover_suggestions",
+        "pre_publish_checklist",
+        "low_confidence_notes",
+    ]:
+        assert output_field in benchmark
+    assert "clone_5a048bd3b84b4ef6a2774362089ea407" in benchmark
+    assert "clone_46d5bcfc47104156b73e2beef3ca014b" in benchmark
+    assert "clone_16bbf74e4983411a8392521aa1811101" in benchmark
+    assert "纯知识账号仍需在下一轮补充专门样本" in benchmark
