@@ -944,6 +944,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "下一批选题" in script
     assert "镜头 / 画面模板" in script
     assert "发布前自检" in script
+    assert "当前方案不可直接拍摄" in script
+    assert "低证据方案，仅供补证据和方向参考" in script
+    assert "lowConfidenceNotes.length" in script
+    assert "strategy-plan-warning-copy" in script
+    assert "strategy-plan-review" in script
+    assert "需人工复核" in script
+    assert "strategy-plan-timeline" in script
     assert "报告来源" in script
     assert "质量判断" in script
     assert "优先补齐" in script
@@ -1044,6 +1051,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".creator-clone-segment-disclosure" in stylesheet
     assert ".creator-distillation-report" in stylesheet
     assert ".creator-segment-grid" in stylesheet
+    assert ".creator-strategy-plan-grid .public-report-card.warning" in stylesheet
+    assert ".strategy-plan-warning-copy" in stylesheet
+    assert ".strategy-plan-timeline" in stylesheet
     assert ".creator-decision-grid.public-report-grid" in stylesheet
     assert ".creator-decision-grid .public-report-card.wide" in stylesheet
     assert "grid-column: 1 / -1" in stylesheet

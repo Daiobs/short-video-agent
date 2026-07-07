@@ -137,6 +137,84 @@ def test_creator_strategy_generator_builds_executable_beauty_plan() -> None:
     assert first_shot["camera"]
     assert first_shot["light_scene"]
     assert first_shot["title_topic"]
+    assert first_shot["timeline"]
+    timeline_labels = {step["time"] for step in first_shot["timeline"]}
+    assert {"0-1s", "1-3s", "3s-end"}.issubset(timeline_labels)
+
+
+def test_creator_strategy_generator_replaces_placeholder_next_topics() -> None:
+    plan = generate_creator_strategy_plan(
+        creator_clone_strategy={
+            "positioning": "摄影出片账号",
+            "idea_bank": [
+                {"title": "下一批选题 1"},
+                {"title": "topic 1"},
+                {"title": "新选题"},
+                {"title": "选题方向"},
+                {"title": "未命名选题"},
+            ],
+        },
+        report_view_model={"sections": {"next_ideas": ["下一批选题 2"]}},
+        report_quality={"quality_score": 88},
+        diagnostics={"source_label": "大模型 Map-Reduce", "is_fallback": False},
+        evidence_gaps=[],
+        content_profile="photo_beauty",
+        selected_sample_evidence_summary={"selected_count": 5, "understanding": {"partial": 5}},
+    )
+
+    titles = [item["title"] for item in plan["next_topics"]]
+    assert "下一批选题 1" not in titles
+    assert "下一批选题 2" not in titles
+    assert "topic 1" not in titles
+    assert "新选题" not in titles
+    assert "选题方向" not in titles
+    assert "未命名选题" not in titles
+    assert any("妆造" in title or "首帧" in title or "角色" in title or "场景" in title for title in titles)
+
+
+def test_creator_strategy_generator_uses_concrete_defaults_when_next_ideas_missing() -> None:
+    plan = generate_creator_strategy_plan(
+        creator_clone_strategy={"positioning": "旧报告", "idea_bank": []},
+        report_view_model={},
+        report_quality={"quality_score": 86},
+        diagnostics={"source_label": "大模型 Map-Reduce", "is_fallback": False},
+        evidence_gaps=[],
+        content_profile="knowledge",
+        selected_sample_evidence_summary={"selected_count": 5, "understanding": {"partial": 5}},
+    )
+
+    titles = [item["title"] for item in plan["next_topics"]]
+    assert len(titles) >= 5
+    assert all("下一批选题" not in title for title in titles)
+    assert all(not title.lower().startswith("topic") for title in titles)
+    assert any("问题" in title for title in titles)
+    assert any("步骤" in title or "清单" in title for title in titles)
+
+
+def test_creator_strategy_generator_builds_knowledge_hard_templates() -> None:
+    plan = generate_creator_strategy_plan(
+        creator_clone_strategy={
+            "positioning": "知识教学账号",
+            "templates": [{"name": "泛化旧模板", "beat_structure": ["讲知识"]}],
+        },
+        report_view_model={},
+        report_quality={"quality_score": 91},
+        diagnostics={"source_label": "大模型 Map-Reduce", "is_fallback": False},
+        evidence_gaps=[],
+        content_profile="knowledge",
+        selected_sample_evidence_summary={"selected_count": 8, "understanding": {"partial": 8}},
+    )
+
+    templates_text = json.dumps(plan["script_templates"], ensure_ascii=False)
+    checklist_text = " ".join(plan["pre_publish_checklist"])
+    for keyword in ["问题", "步骤", "案例", "收藏", "结果"]:
+        assert keyword in templates_text or keyword in checklist_text
+    assert "评论" in templates_text
+    assert "开头是否说清楚一个具体问题" in checklist_text
+    assert "是否承诺一个具体结果" in checklist_text
+    assert "是否有 2-5 个清晰步骤" in checklist_text
+    assert "是否有案例、对比、截图、数据或真实场景证明" in checklist_text
+    assert "是否给出收藏理由" in checklist_text
 
 
 def test_creator_strategy_generator_marks_low_confidence_when_report_is_weak() -> None:
@@ -188,7 +266,7 @@ def test_creator_strategy_generator_marks_legacy_report_without_quality_diagnost
 def test_creator_strategy_plan_schema_is_stable() -> None:
     payload = validate_creator_strategy_plan(
         {
-            "next_topics": [{"title": f"topic {index}"} for index in range(5)],
+            "next_topics": [{"title": f"高赞样本结构改写 {index}"} for index in range(5)],
             "script_templates": [{"name": f"script {index}"} for index in range(3)],
             "shot_templates": [{"name": f"shot {index}"} for index in range(3)],
             "title_cover_suggestions": [{"title": f"title {index}"} for index in range(5)],
@@ -206,6 +284,19 @@ def test_creator_strategy_plan_schema_is_stable() -> None:
         "low_confidence_notes",
         "source",
     }
+
+
+def test_creator_strategy_plan_rejects_placeholder_topic_titles() -> None:
+    with pytest.raises(ValueError, match="placeholder"):
+        validate_creator_strategy_plan(
+            {
+                "next_topics": [{"title": "下一批选题 1"} for _ in range(5)],
+                "script_templates": [{"name": f"script {index}"} for index in range(3)],
+                "shot_templates": [{"name": f"shot {index}"} for index in range(3)],
+                "title_cover_suggestions": [{"title": f"title {index}"} for index in range(5)],
+                "pre_publish_checklist": [f"check {index}" for index in range(5)],
+            }
+        )
 
 
 def test_creator_strategy_generate_endpoint_requires_distillation_report() -> None:

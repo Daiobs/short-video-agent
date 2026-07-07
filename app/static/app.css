@@ -4958,6 +4958,21 @@ footer {
     align-items: start;
 }
 
+.creator-strategy-plan-grid .public-report-card.warning {
+    border-color: rgba(245, 158, 11, 0.32);
+    background: #fffbeb;
+}
+
+.creator-strategy-plan-grid .public-report-card.wide {
+    column-span: all;
+}
+
+.strategy-plan-warning-copy {
+    margin: 0 0 8px;
+    color: #92400e;
+    font-weight: 800;
+}
+
 .strategy-plan-list {
     display: grid;
     gap: 10px;
@@ -4976,6 +4991,17 @@ footer {
     margin: 8px 0 0;
     padding-left: 20px;
     color: var(--muted, #6b7280);
+}
+
+.strategy-plan-timeline {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.strategy-plan-timeline strong {
+    margin-right: 6px;
+    color: #1d4ed8;
 }
 
 .strategy-plan-review {
