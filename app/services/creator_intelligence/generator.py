@@ -53,7 +53,7 @@ def generate_creator_strategy_plan(
     gaps = _string_list(evidence_gaps)
     profile = _normalize_profile(content_profile)
     sample_summary = selected_sample_evidence_summary if isinstance(selected_sample_evidence_summary, dict) else {}
-    low_confidence_notes = _low_confidence_notes(quality, diag, gaps, sample_summary)
+    low_confidence_notes = _low_confidence_notes(quality, diag, gaps, sample_summary, has_view_model=bool(report))
     needs_review = bool(low_confidence_notes)
 
     topics = _build_next_topics(profile, strategy, report, needs_review)
@@ -119,12 +119,25 @@ def _quality_score(report_quality: dict) -> int:
         return 0
 
 
-def _low_confidence_notes(report_quality: dict, diagnostics: dict, evidence_gaps: list[str], sample_summary: dict) -> list[str]:
+def _low_confidence_notes(
+    report_quality: dict,
+    diagnostics: dict,
+    evidence_gaps: list[str],
+    sample_summary: dict,
+    *,
+    has_view_model: bool,
+) -> list[str]:
     notes: list[str] = []
     score = _quality_score(report_quality)
     has_score = "quality_score" in report_quality or "score" in report_quality
+    if not has_score:
+        notes.append("报告缺少质量评分，本次创作方案需要人工复核。")
     if has_score and score < LOW_QUALITY_THRESHOLD:
         notes.append(f"报告质量分 {score}/100，下一批方案需要人工复核。")
+    if not diagnostics:
+        notes.append("报告缺少生成诊断，无法确认是否为完整大模型蒸馏结果。")
+    if not has_view_model:
+        notes.append("报告缺少结构化 view model，方案基于压缩策略字段生成。")
     if diagnostics.get("is_fallback"):
         notes.append(str(diagnostics.get("fallback_reason") or "当前报告来自降级或兜底结果，不能当作完整账号规律。"))
     source_label = str(diagnostics.get("source_label") or "")

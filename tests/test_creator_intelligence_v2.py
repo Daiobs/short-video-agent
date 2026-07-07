@@ -162,6 +162,29 @@ def test_creator_strategy_generator_marks_low_confidence_when_report_is_weak() -
     assert any(item.get("requires_review") is True for item in plan["next_topics"])
 
 
+def test_creator_strategy_generator_marks_legacy_report_without_quality_diagnostics_or_view_model() -> None:
+    plan = generate_creator_strategy_plan(
+        creator_clone_strategy={
+            "positioning": "旧报告压缩策略",
+            "hooks": ["首帧给明确承诺"],
+            "idea_bank": [{"title": "复刻高赞开头结构"}],
+        },
+        report_view_model={},
+        report_quality={},
+        diagnostics={},
+        evidence_gaps=[],
+        content_profile="general",
+        selected_sample_evidence_summary={"selected_count": 3, "understanding": {"partial": 3}},
+    )
+
+    assert len(plan["next_topics"]) >= 5
+    assert len(plan["script_templates"]) >= 3
+    assert plan["low_confidence_notes"]
+    assert "报告缺少质量评分，本次创作方案需要人工复核。" in plan["low_confidence_notes"]
+    assert "报告缺少生成诊断，无法确认是否为完整大模型蒸馏结果。" in plan["low_confidence_notes"]
+    assert "报告缺少结构化 view model，方案基于压缩策略字段生成。" in plan["low_confidence_notes"]
+
+
 def test_creator_strategy_plan_schema_is_stable() -> None:
     payload = validate_creator_strategy_plan(
         {
