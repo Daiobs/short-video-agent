@@ -492,6 +492,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "本地工作流预检" in response.text
     assert "本机 Chrome 助手使用提示" in response.text
     assert "创作者蒸馏数据源" in response.text
+    assert "生成下一批创作方案" in response.text
+    assert 'id="creator-strategy-plan-card"' in response.text
+    assert 'id="generate-creator-strategy-button"' in response.text
+    assert 'id="creator-strategy-plan-result"' in response.text
     assert 'id="data-source-status-list"' in response.text
     assert 'id="test-douyin-cookie-button"' in response.text
     assert 'id="douyin-cookie-test-result"' in response.text
@@ -567,6 +571,9 @@ def test_home_uses_versioned_static_assets() -> None:
     ]
     assert "applyCreatorCloneDistillPayload(resultPayload);" in poll_distill
     assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});" in poll_distill
+    assert poll_distill.index("await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});") < poll_distill.rindex("applyCreatorCloneDistillPayload(resultPayload);")
+    assert "function safeRenderCreatorCloneResult" in script
+    assert "REPORT_RENDER_FAILED" in script
     assert "报告文件同步失败，已使用任务结果直接渲染。" in poll_distill
     assert "function hasCreatorCloneResultPayload" in script
     assert "function profileScanMaxPagesForCount" in script
@@ -932,6 +939,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "样本证据完整度" in script
     assert "证据覆盖" in script
     assert "creatorReportDiagnosticsFromResult" in script
+    assert "generateCreatorStrategyPlan" in script
+    assert "/generate-strategy" in script
+    assert "下一批选题" in script
+    assert "镜头 / 画面模板" in script
+    assert "发布前自检" in script
     assert "报告来源" in script
     assert "质量判断" in script
     assert "优先补齐" in script
@@ -1032,6 +1044,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".creator-clone-segment-disclosure" in stylesheet
     assert ".creator-distillation-report" in stylesheet
     assert ".creator-segment-grid" in stylesheet
+    assert ".creator-decision-grid.public-report-grid" in stylesheet
+    assert ".creator-decision-grid .public-report-card.wide" in stylesheet
+    assert "grid-column: 1 / -1" in stylesheet
     assert ".profile-main-flow button.locked" in stylesheet
     assert ".profile-main-flow button.viewing" in stylesheet
     assert ".creator-report-evidence-details" in stylesheet

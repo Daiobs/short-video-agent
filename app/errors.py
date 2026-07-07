@@ -53,6 +53,7 @@ class ErrorCode:
     LOCAL_CHROME_NOT_AVAILABLE = "LOCAL_CHROME_NOT_AVAILABLE"
     LOCAL_CHROME_TAB_NOT_FOUND = "LOCAL_CHROME_TAB_NOT_FOUND"
     LOCAL_CHROME_SCAN_FAILED = "LOCAL_CHROME_SCAN_FAILED"
+    CREATOR_REPORT_NOT_READY = "CREATOR_REPORT_NOT_READY"
 
 
 ERROR_MESSAGES = {
@@ -105,6 +106,7 @@ ERROR_MESSAGES = {
     ErrorCode.LOCAL_CHROME_NOT_AVAILABLE: "未检测到本机 Chrome DevTools。请用 remote debugging 模式打开 Chrome 后重试。",
     ErrorCode.LOCAL_CHROME_TAB_NOT_FOUND: "没有找到已打开的抖音主页标签页。请先在 Chrome 中打开目标主页并登录/过验证。",
     ErrorCode.LOCAL_CHROME_SCAN_FAILED: "本机 Chrome 辅助扫描失败。请确认页面已加载作品列表，并且 Chrome DevTools 可连接。",
+    ErrorCode.CREATOR_REPORT_NOT_READY: "请先完成创作者蒸馏报告。",
 }
 
 

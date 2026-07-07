@@ -16,6 +16,11 @@ from app.services.creator_intelligence.adapters import (
 )
 from app.services.creator_intelligence.cognition import build_behavior_representation
 from app.services.creator_intelligence.execution import ExecutionLayer
+from app.services.creator_intelligence.generator import (
+    CreatorStrategyPlan,
+    generate_creator_strategy_plan,
+    validate_creator_strategy_plan,
+)
 from app.services.creator_intelligence.models import (
     BehaviorRepresentation,
     CreatorCloneStrategy,
@@ -70,6 +75,7 @@ __all__ = [
     "CreatorRuntimeDispatchResult",
     "CreatorRuntimeEngine",
     "CreatorRuntimeState",
+    "CreatorStrategyPlan",
     "CreatorSession",
     "CreatorStateStore",
     "ExecutionLayer",
@@ -82,6 +88,7 @@ __all__ = [
     "behavior_representation_from_dict",
     "build_behavior_representation",
     "creator_project_from_dict",
+    "generate_creator_strategy_plan",
     "project_from_clone_sample_set",
     "project_from_clone_selection",
     "samples_from_browser_dom",
@@ -90,4 +97,5 @@ __all__ = [
     "samples_from_json_csv",
     "samples_from_manual_links",
     "validate_creator_clone_schema",
+    "validate_creator_strategy_plan",
 ]
