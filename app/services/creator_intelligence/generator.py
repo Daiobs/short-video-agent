@@ -6,6 +6,11 @@ from typing import Any
 
 BEAUTY_PROFILES = {"beauty_cos", "photo_beauty"}
 LOW_QUALITY_THRESHOLD = 70
+PLACEHOLDER_TOPIC_TITLES = {
+    "新选题",
+    "选题方向",
+    "未命名选题",
+}
 
 
 @dataclass(frozen=True)
@@ -92,6 +97,8 @@ def validate_creator_strategy_plan(value: dict) -> dict:
     }
     if len(plan["next_topics"]) < 5:
         raise ValueError("next_topics must contain at least 5 items")
+    if any(_is_placeholder_topic_title(item.get("title") or item.get("name") or item.get("text") or "") for item in plan["next_topics"]):
+        raise ValueError("next_topics must not contain placeholder titles")
     if len(plan["script_templates"]) < 3:
         raise ValueError("script_templates must contain at least 3 items")
     if len(plan["shot_templates"]) < 3:
@@ -161,8 +168,15 @@ def _build_next_topics(profile: str, strategy: dict, report: dict, needs_review:
     defaults = _profile_topic_defaults(profile)
     rows = seed_ideas + defaults
     result: list[dict[str, Any]] = []
+    seen_titles: set[str] = set()
     for index, row in enumerate(rows[:8], start=1):
-        title = row.get("title") or row.get("name") or row.get("text") or row.get("value") or f"下一批选题 {index}"
+        title = row.get("title") or row.get("name") or row.get("text") or row.get("value") or ""
+        if _is_placeholder_topic_title(title):
+            row = _profile_topic_default_for_index(profile, index)
+            title = row.get("title") or _fallback_topic(profile, index, needs_review)["title"]
+        if str(title).strip() in seen_titles:
+            continue
+        seen_titles.add(str(title).strip())
         formula = row.get("formula_used") or (
             _item_title(formulas[(index - 1) % len(formulas)]) if formulas else _profile_formula_name(profile)
         )
@@ -183,7 +197,7 @@ def _build_next_topics(profile: str, strategy: dict, report: dict, needs_review:
 def _build_script_templates(profile: str, strategy: dict, report: dict, needs_review: bool) -> list[dict[str, Any]]:
     strategy_items = _dict_or_text_items(strategy.get("content_strategy")) + _dict_or_text_items(strategy.get("templates"))
     defaults = _profile_script_defaults(profile)
-    rows = strategy_items + defaults
+    rows = defaults + strategy_items if profile == "knowledge" else strategy_items + defaults
     result: list[dict[str, Any]] = []
     for index, row in enumerate(rows[:5], start=1):
         name = row.get("name") or row.get("title") or row.get("text") or f"脚本结构 {index}"
@@ -209,6 +223,8 @@ def _build_shot_templates(profile: str, strategy: dict, report: dict, needs_revi
         item["name"] = item.get("name") or f"镜头模板 {index}"
         item["evidence_basis"] = visual_rules[(index - 1) % len(visual_rules)] if visual_rules else "来自视觉/表达规律"
         item["requires_review"] = needs_review
+        if profile in BEAUTY_PROFILES and not item.get("timeline"):
+            item["timeline"] = _beauty_shot_timeline(item)
         result.append(item)
     return _ensure_count(result, 3, lambda idx: _fallback_shot(profile, idx, needs_review))
 
@@ -226,8 +242,8 @@ def _build_title_cover_suggestions(profile: str, strategy: dict, report: dict, n
 
 
 def _build_pre_publish_checklist(profile: str, strategy: dict, report: dict, needs_review: bool) -> list[str]:
-    checks = _text_items(strategy.get("validation_rules")) + _text_items(_section(report, "checklist"))
-    checks.extend(_profile_checklist_defaults(profile))
+    defaults = _profile_checklist_defaults(profile)
+    checks = defaults + _text_items(strategy.get("validation_rules")) + _text_items(_section(report, "checklist")) if profile == "knowledge" else _text_items(strategy.get("validation_rules")) + _text_items(_section(report, "checklist")) + defaults
     if needs_review:
         checks.append("低置信建议必须先人工复核样本证据，不要直接发布。")
     return _unique_strings(checks, limit=8)[:8]
@@ -283,6 +299,20 @@ def _text_items(value: Any) -> list[str]:
 
 def _item_title(item: dict[str, Any]) -> str:
     return str(item.get("name") or item.get("title") or item.get("text") or item.get("formula") or "可复刻公式").strip()
+
+
+def _is_placeholder_topic_title(value: Any) -> bool:
+    text = str(value or "").strip()
+    normalized = text.lower().replace(" ", "")
+    if not normalized:
+        return True
+    if text in PLACEHOLDER_TOPIC_TITLES:
+        return True
+    if normalized.startswith("下一批选题") and normalized.removeprefix("下一批选题").isdigit():
+        return True
+    if normalized.startswith("topic") and normalized.removeprefix("topic").isdigit():
+        return True
+    return False
 
 
 def _unique_strings(values: list[str], limit: int = 8) -> list[str]:
@@ -341,6 +371,13 @@ def _profile_topic_defaults(profile: str) -> list[dict[str, Any]]:
     ]
 
 
+def _profile_topic_default_for_index(profile: str, index: int) -> dict[str, Any]:
+    defaults = _profile_topic_defaults(profile)
+    if not defaults:
+        return _fallback_topic(profile, index, needs_review=True)
+    return dict(defaults[(max(1, index) - 1) % len(defaults)])
+
+
 def _profile_script_defaults(profile: str) -> list[dict[str, Any]]:
     if profile in BEAUTY_PROFILES:
         return [
@@ -350,9 +387,31 @@ def _profile_script_defaults(profile: str) -> list[dict[str, Any]]:
         ]
     if profile == "knowledge":
         return [
-            {"name": "问题-原因-步骤", "beat_structure": ["开头抛问题", "指出错误原因", "给 3 个步骤", "结尾提醒保存"]},
-            {"name": "误区纠正", "beat_structure": ["说出常见错误", "展示后果", "给正确做法", "评论区收集问题"]},
-            {"name": "清单教学", "beat_structure": ["承诺结果", "列清单", "逐条解释", "结尾给保存理由"]},
+            {
+                "name": "问题切入脚本",
+                "beat_structure": ["0-3 秒说清楚具体问题", "点出用户为什么会卡住", "承诺看完能得到一个具体结果", "引出步骤"],
+                "best_for": "高频问题、误区纠正、教程开头",
+            },
+            {
+                "name": "步骤推进脚本",
+                "beat_structure": ["先给总步骤数量", "按 1/2/3 展示操作", "每一步只解决一个动作", "结尾回到结果承诺"],
+                "best_for": "教学、知识、方法论内容",
+            },
+            {
+                "name": "案例证明脚本",
+                "beat_structure": ["展示错误案例或真实场景", "指出关键差异", "给正确示范", "用结果对比证明有效"],
+                "best_for": "需要可信度和证明的教程",
+            },
+            {
+                "name": "收藏理由脚本",
+                "beat_structure": ["开头说明以后会反复用到", "给清单或模板", "补一个注意事项", "结尾明确提醒收藏复看"],
+                "best_for": "清单、模板、避坑、参数类内容",
+            },
+            {
+                "name": "评论承接脚本",
+                "beat_structure": ["引用评论区问题", "回答一个具体场景", "留下可继续追问的分支", "引导评论区补充案例"],
+                "best_for": "系列化知识号和评论驱动选题",
+            },
         ]
     if profile == "emotional_copy":
         return [
@@ -377,12 +436,33 @@ def _profile_script_beats(profile: str) -> list[str]:
     return ["开头承诺", "主体证明", "转折/亮点", "互动收口"]
 
 
+def _beauty_shot_timeline(item: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    name = str((item or {}).get("name") or "")
+    if "妆造" in name:
+        return [
+            {"time": "0-1s", "goal": "首帧给完整造型和脸部识别点", "shot": "近景定住眼神、发型、服装主色"},
+            {"time": "1-3s", "goal": "推进妆造细节", "shot": "让手部、发饰、道具或服装材质进入画面"},
+            {"time": "3s-end", "goal": "回到最有封面感的状态", "shot": "做一个可截图动作，用标题话题承接评论"},
+        ]
+    if "反差" in name:
+        return [
+            {"time": "0-1s", "goal": "先给最好看的成片结果", "shot": "直接展示高完成度脸部/半身成片"},
+            {"time": "1-3s", "goal": "揭示低门槛场景或拍摄过程", "shot": "切普通场景、侧拍或器材动作"},
+            {"time": "3s-end", "goal": "再次兑现出片承诺", "shot": "回到成片，补一句标题式结果承诺"},
+        ]
+    return [
+        {"time": "0-1s", "goal": "第一眼抓停留", "shot": "人物脸、眼神、姿态直接占屏"},
+        {"time": "1-3s", "goal": "给动作变化", "shot": "微转头、抬眼、手势或道具进入画面"},
+        {"time": "3s-end", "goal": "形成截图点和互动理由", "shot": "定格最强表情/姿态，用标题话题收口"},
+    ]
+
+
 def _profile_shot_defaults(profile: str) -> list[dict[str, Any]]:
     if profile in BEAUTY_PROFILES:
         return [
-            {"name": "近景首帧抓停留", "first_frame": "人物脸、眼神、姿态直接占屏", "action": "微转头、抬眼或手势变化", "camera": "近景或半身，轻微俯拍/平拍", "light_scene": "统一服化色调，背景干净", "title_topic": "把人物状态写成点击理由", "validation_metric": "停留率 / 点赞", "risk_boundary": "避免只靠暴露或低俗暗示"},
-            {"name": "妆造细节推进", "first_frame": "先给完整造型", "action": "手部、发饰、道具逐步进入画面", "camera": "近景到中景", "light_scene": "突出妆造颜色和材质", "title_topic": "强调角色/氛围/出片承诺", "validation_metric": "收藏 / 评论点名", "risk_boundary": "不要照搬原角色动作"},
-            {"name": "成片反差证明", "first_frame": "最好看的成片先出现", "action": "切一个拍摄过程动作", "camera": "成片近景 + 过程侧拍", "light_scene": "普通场景与成片光线形成反差", "title_topic": "低成本也能出片", "validation_metric": "收藏 / 分享", "risk_boundary": "不要过度夸大器材效果"},
+            {"name": "近景首帧抓停留", "first_frame": "人物脸、眼神、姿态直接占屏", "action": "微转头、抬眼或手势变化", "camera": "近景或半身，轻微俯拍/平拍", "light_scene": "统一服化色调，背景干净", "title_topic": "把人物状态写成点击理由", "validation_metric": "停留率 / 点赞", "risk_boundary": "避免只靠暴露或低俗暗示", "timeline": _beauty_shot_timeline({"name": "近景首帧抓停留"})},
+            {"name": "妆造细节推进", "first_frame": "先给完整造型", "action": "手部、发饰、道具逐步进入画面", "camera": "近景到中景", "light_scene": "突出妆造颜色和材质", "title_topic": "强调角色/氛围/出片承诺", "validation_metric": "收藏 / 评论点名", "risk_boundary": "不要照搬原角色动作", "timeline": _beauty_shot_timeline({"name": "妆造细节推进"})},
+            {"name": "成片反差证明", "first_frame": "最好看的成片先出现", "action": "切一个拍摄过程动作", "camera": "成片近景 + 过程侧拍", "light_scene": "普通场景与成片光线形成反差", "title_topic": "低成本也能出片", "validation_metric": "收藏 / 分享", "risk_boundary": "不要过度夸大器材效果", "timeline": _beauty_shot_timeline({"name": "成片反差证明"})},
         ]
     return [
         {"name": "信息首帧", "first_frame": "问题或核心结论直接出现", "action": "主体进入画面或字幕出现", "camera": "稳定中近景", "light_scene": "信息清晰", "title_topic": "明确承诺", "validation_metric": "完播 / 收藏", "risk_boundary": "不要标题党过度"},
@@ -429,11 +509,12 @@ def _profile_checklist_defaults(profile: str) -> list[str]:
         ]
     if profile == "knowledge":
         return [
-            "开头是否提出一个具体问题。",
-            "是否在前 3 秒给出明确学习承诺。",
-            "步骤是否足够短，适合收藏复看。",
-            "是否有例子或对比证明。",
-            "标题/封面是否突出问题、承诺和保存理由。",
+            "开头是否说清楚一个具体问题，而不是泛泛讲知识。",
+            "是否承诺一个具体结果，例如学会、避坑、节省时间或拿到清单。",
+            "是否有 2-5 个清晰步骤，每一步都能被观众照做。",
+            "是否有案例、对比、截图、数据或真实场景证明。",
+            "是否给出收藏理由，说明以后什么时候会用到。",
+            "结尾是否承接评论区问题，方便继续做系列选题。",
         ]
     if profile == "emotional_copy":
         return [
@@ -537,7 +618,10 @@ def _fallback_script(profile: str, index: int, needs_review: bool) -> dict[str, 
 
 def _fallback_shot(profile: str, index: int, needs_review: bool) -> dict[str, Any]:
     item = _profile_shot_defaults(profile)[0]
-    return {**item, "name": f"{item['name']} {index}", "requires_review": True}
+    result = {**item, "name": f"{item['name']} {index}", "requires_review": True}
+    if profile in BEAUTY_PROFILES and not result.get("timeline"):
+        result["timeline"] = _beauty_shot_timeline(result)
+    return result
 
 
 def _fallback_title_cover(profile: str, index: int, needs_review: bool) -> dict[str, Any]:

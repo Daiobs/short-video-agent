@@ -5208,11 +5208,22 @@ function renderStrategyPlanItemList(items = [], emptyText = "暂无") {
           item.hook_type ? `钩子：${item.hook_type}` : "",
         ).slice(0, 6);
         const beats = normalizeItems(item.beats || item.beat_structure).map(formatReportValue).filter(Boolean);
+        const timeline = normalizeItems(item.timeline).filter(Boolean);
         return `
           <li>
             <strong>${escapeHtml(title)}</strong>
             ${details.length ? `<p>${escapeHtml(details.join("；"))}</p>` : ""}
             ${beats.length ? `<ol>${beats.map((beat) => `<li>${escapeHtml(beat)}</li>`).join("")}</ol>` : ""}
+            ${timeline.length ? `
+              <ol class="strategy-plan-timeline">
+                ${timeline.map((step) => {
+                  const time = step.time || step.label || "";
+                  const goal = step.goal || step.purpose || "";
+                  const shot = step.shot || step.action || step.text || "";
+                  return `<li><strong>${escapeHtml(time)}</strong>${escapeHtml([goal, shot].filter(Boolean).join("："))}</li>`;
+                }).join("")}
+              </ol>
+            ` : ""}
             ${item.requires_review ? '<span class="strategy-plan-review">需人工复核</span>' : ""}
           </li>
         `;
@@ -5225,14 +5236,28 @@ function renderCreatorStrategyPlan(plan = {}) {
   if (!plan || typeof plan !== "object") {
     return "";
   }
+  const lowConfidenceNotes = normalizeItems(plan.low_confidence_notes);
+  const score = plan.source?.report_quality_score;
+  const lowScore = score !== undefined && score !== null && Number(score) < 50;
+  const warning = lowConfidenceNotes.length
+    ? renderPublicCard(
+      "低证据方案：不可直接拍摄",
+      `
+        <p class="strategy-plan-warning-copy">当前方案不可直接拍摄，需先补证据或人工复核。</p>
+        ${lowScore ? '<p class="strategy-plan-warning-copy">低证据方案，仅供补证据和方向参考。</p>' : ""}
+        ${renderStrategyPlanItemList(lowConfidenceNotes)}
+      `,
+      "warning wide",
+    )
+    : "";
   return `
     <div class="public-report-grid creator-strategy-plan-grid">
+      ${warning}
       ${renderPublicCard("1. 下一批选题", renderStrategyPlanItemList(plan.next_topics, "暂无选题。"), "featured")}
       ${renderPublicCard("2. 脚本结构", renderStrategyPlanItemList(plan.script_templates, "暂无脚本结构。"), "featured")}
       ${renderPublicCard("3. 镜头 / 画面模板", renderStrategyPlanItemList(plan.shot_templates, "暂无镜头模板。"), "featured")}
       ${renderPublicCard("4. 标题 / 封面建议", renderStrategyPlanItemList(plan.title_cover_suggestions, "暂无标题封面建议。"))}
       ${renderPublicCard("5. 发布前自检", renderStrategyPlanItemList(plan.pre_publish_checklist, "暂无自检项。"))}
-      ${normalizeItems(plan.low_confidence_notes).length ? renderPublicCard("低置信提醒 / 需要补证据", renderStrategyPlanItemList(plan.low_confidence_notes), "warning") : ""}
     </div>
   `;
 }
@@ -5266,7 +5291,9 @@ async function generateCreatorStrategyPlan() {
     }
     if (creatorStrategyPlanStatus) {
       const score = payload.source?.report_quality_score;
-      creatorStrategyPlanStatus.textContent = `已生成下一批创作方案${score !== undefined ? ` · 报告质量 ${formatNumber(score)}/100` : ""}`;
+      creatorStrategyPlanStatus.textContent = score !== undefined && Number(score) < 50
+        ? `低证据方案，仅供补证据和方向参考 · 报告质量 ${formatNumber(score)}/100`
+        : `已生成下一批创作方案${score !== undefined ? ` · 报告质量 ${formatNumber(score)}/100` : ""}`;
     }
   } catch (error) {
     if (creatorStrategyPlanStatus) {
