@@ -8,8 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.errors import ErrorCode
 from app.main import app
 from app.services.creator_clone import CloneSample, CloneSampleSet
+from app.services.creator_clone import creator_clone_dir
 from app.services.creator_clone import normalize_creator_clone_result, save_sample_set, validate_creator_clone_schema
 from app.services.creator_intelligence import (
     CreatorCloneStrategy,
@@ -18,6 +20,7 @@ from app.services.creator_intelligence import (
     WorkflowEngine,
     WorkflowState,
     build_behavior_representation,
+    generate_creator_strategy_plan,
     project_from_clone_sample_set,
     project_from_clone_selection,
     samples_from_browser_dom,
@@ -25,6 +28,7 @@ from app.services.creator_intelligence import (
     samples_from_cookie_api,
     samples_from_json_csv,
     samples_from_manual_links,
+    validate_creator_strategy_plan,
 )
 from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
 
@@ -97,6 +101,135 @@ def test_clone_sample_set_adapts_to_creator_project() -> None:
     assert project.samples[0].to_dict()["evidence_level"] == "partial"
     assert project.samples[0].evidence.ready_for_distillation is True
     assert project.samples[1].evidence.level.value == "metadata_only"
+
+
+def test_creator_strategy_generator_builds_executable_beauty_plan() -> None:
+    plan = generate_creator_strategy_plan(
+        creator_clone_strategy={
+            "positioning": "甜美 COS 近景视觉账号",
+            "hooks": ["0-1 秒给脸和眼神"],
+            "templates": [{"name": "首帧颜值公式", "beat_structure": ["首帧给脸", "动作变化", "标题话题"]}],
+            "idea_bank": [{"title": "粉色妆造三状态测试", "production_requirements": "准备三组动作"}],
+            "validation_rules": ["检查首帧是否直接抓停留"],
+        },
+        report_view_model={
+            "sections": {
+                "next_ideas": ["同一妆造甜美/冷感/反差测试"],
+                "formulas": ["首帧视觉 + 动作变化 + 标题话题"],
+            }
+        },
+        report_quality={"quality_score": 92},
+        diagnostics={"source_label": "分批大模型汇总（8 批）", "is_fallback": False},
+        evidence_gaps=[],
+        content_profile="beauty_cos",
+        selected_sample_evidence_summary={"selected_count": 5, "understanding": {"full": 3, "partial": 2, "metadata_only": 0}},
+    )
+
+    assert len(plan["next_topics"]) >= 5
+    assert len(plan["script_templates"]) >= 3
+    assert len(plan["shot_templates"]) >= 3
+    assert len(plan["title_cover_suggestions"]) >= 5
+    assert len(plan["pre_publish_checklist"]) >= 5
+    assert plan["low_confidence_notes"] == []
+    first_shot = plan["shot_templates"][0]
+    assert first_shot["first_frame"]
+    assert first_shot["action"]
+    assert first_shot["camera"]
+    assert first_shot["light_scene"]
+    assert first_shot["title_topic"]
+
+
+def test_creator_strategy_generator_marks_low_confidence_when_report_is_weak() -> None:
+    plan = generate_creator_strategy_plan(
+        creator_clone_strategy={"positioning": "仅元数据方向", "idea_bank": []},
+        report_view_model={},
+        report_quality={"quality_score": 42, "missing_evidence": ["缺少关键帧"]},
+        diagnostics={
+            "source_label": "本地批次汇总 / 降级",
+            "is_fallback": True,
+            "fallback_reason": "最终 Reduce 失败：LLM_REQUEST_FAILED",
+            "missing_evidence_labels": ["关键帧", "评论"],
+        },
+        evidence_gaps=["缺少 ASR/OCR/评论，互动动机低置信。"],
+        content_profile="photo_beauty",
+        selected_sample_evidence_summary={"selected_count": 6, "understanding": {"metadata_only": 4}},
+    )
+
+    assert len(plan["next_topics"]) >= 5
+    assert plan["low_confidence_notes"]
+    assert any("报告质量分 42/100" in item for item in plan["low_confidence_notes"])
+    assert any("最终 Reduce 失败" in item for item in plan["low_confidence_notes"])
+    assert any(item.get("requires_review") is True for item in plan["next_topics"])
+
+
+def test_creator_strategy_plan_schema_is_stable() -> None:
+    payload = validate_creator_strategy_plan(
+        {
+            "next_topics": [{"title": f"topic {index}"} for index in range(5)],
+            "script_templates": [{"name": f"script {index}"} for index in range(3)],
+            "shot_templates": [{"name": f"shot {index}"} for index in range(3)],
+            "title_cover_suggestions": [{"title": f"title {index}"} for index in range(5)],
+            "pre_publish_checklist": [f"check {index}" for index in range(5)],
+            "low_confidence_notes": ["low"],
+            "source": {"project_id": "demo"},
+        }
+    )
+    assert set(payload) == {
+        "next_topics",
+        "script_templates",
+        "shot_templates",
+        "title_cover_suggestions",
+        "pre_publish_checklist",
+        "low_confidence_notes",
+        "source",
+    }
+
+
+def test_creator_strategy_generate_endpoint_requires_distillation_report() -> None:
+    sample_set = sample_set_for_v2()
+    sample_set.set_id = "clone_strategy_missing_report"
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    response = client.post(f"/api/creator-intelligence/projects/{sample_set.set_id}/generate-strategy")
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == ErrorCode.CREATOR_REPORT_NOT_READY
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
+def test_creator_strategy_generate_endpoint_returns_and_persists_plan() -> None:
+    sample_set = sample_set_for_v2()
+    sample_set.set_id = "clone_strategy_endpoint"
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    normalized = normalize_creator_clone_result(
+        {
+            "summary": "甜美 COS 账号靠首帧视觉、人设动作和标题话题拉动停留。",
+            "creator_clone_strategy": {
+                "positioning": "甜美 COS 近景视觉账号",
+                "hooks": ["0-1 秒给脸和眼神"],
+                "templates": [{"name": "首帧视觉公式", "beat_structure": ["首帧", "动作", "话题"]}],
+                "idea_bank": [{"title": "粉色妆造近景测试"}],
+                "validation_rules": ["检查首帧和标题点击理由"],
+            },
+        },
+        sample_set,
+        sample_set.samples,
+    )
+    save_sample_set(sample_set)
+    output_dir = creator_clone_dir(sample_set.set_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "creator_clone_result.json").write_text(json.dumps(normalized, ensure_ascii=False), encoding="utf-8")
+
+    response = client.post(f"/api/creator-intelligence/projects/{sample_set.set_id}/generate-strategy")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert len(payload["strategy_plan"]["next_topics"]) >= 5
+    assert len(payload["strategy_plan"]["shot_templates"]) >= 3
+    assert (output_dir / "creator_strategy_plan.json").is_file()
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 
 def test_behavior_representation_is_cognitive_middle_layer() -> None:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.errors import AppError, ErrorCode
 from app.routes.common import error_response
 from app.services.creator_clone import (
+    creator_clone_dir,
     creator_intelligence_payload_for_sample_set,
     export_paths,
     load_sample_set,
@@ -14,6 +17,7 @@ from app.services.creator_intelligence import BehaviorRepresentation
 from app.services.creator_intelligence import CreatorRuntimeEngine
 from app.services.creator_intelligence import project_from_clone_sample_set
 from app.services.creator_intelligence import WorkflowAction
+from app.services.creator_intelligence.generator import generate_creator_strategy_plan
 
 
 router = APIRouter(prefix="/api/creator-intelligence", tags=["creator-intelligence"])
@@ -57,6 +61,50 @@ def get_creator_intelligence_project(project_id: str):
         return error_response(error)
 
 
+@router.post("/projects/{project_id}/generate-strategy")
+def generate_creator_intelligence_strategy(project_id: str):
+    try:
+        sample_set = load_sample_set(project_id)
+        result_path = creator_clone_dir(project_id) / "creator_clone_result.json"
+        if not result_path.is_file():
+            return error_response(AppError(ErrorCode.CREATOR_REPORT_NOT_READY), status_code=400)
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return error_response(AppError(ErrorCode.CREATOR_REPORT_NOT_READY), status_code=400)
+        if not isinstance(result, dict) or not result.get("creator_clone_strategy"):
+            return error_response(AppError(ErrorCode.CREATOR_REPORT_NOT_READY), status_code=400)
+
+        content_profile = result.get("content_profile") if isinstance(result.get("content_profile"), dict) else {}
+        view_model = result.get("creator_report_view_model") if isinstance(result.get("creator_report_view_model"), dict) else {}
+        value_upgrade = view_model.get("value_upgrade") if isinstance(view_model.get("value_upgrade"), dict) else {}
+        diagnostics = value_upgrade.get("diagnostics") if isinstance(value_upgrade.get("diagnostics"), dict) else {}
+        report_quality = result.get("report_quality") if isinstance(result.get("report_quality"), dict) else {}
+        evidence_gaps = result.get("evidence_gaps") if isinstance(result.get("evidence_gaps"), list) else []
+        plan = generate_creator_strategy_plan(
+            creator_clone_strategy=result.get("creator_clone_strategy") or {},
+            report_view_model=view_model,
+            report_quality=report_quality,
+            diagnostics=diagnostics,
+            evidence_gaps=evidence_gaps,
+            content_profile=content_profile.get("effective") or sample_set.content_profile or "general",
+            selected_sample_evidence_summary=_selected_sample_evidence_summary(sample_set, result),
+        )
+        plan_path = creator_clone_dir(project_id) / "creator_strategy_plan.json"
+        plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {
+            "ok": True,
+            "strategy_plan": plan,
+            "source": {
+                "project_id": project_id,
+                "report_quality_score": report_quality.get("quality_score", report_quality.get("score", 0)),
+                "diagnostics": diagnostics,
+            },
+        }
+    except AppError as error:
+        return error_response(error)
+
+
 @router.post("/projects/{project_id}/workflow")
 def dispatch_creator_intelligence_workflow(project_id: str, payload: CreatorIntelligenceWorkflowDispatchRequest):
     try:
@@ -75,3 +123,24 @@ def dispatch_creator_intelligence_workflow(project_id: str, payload: CreatorInte
         return error_response(AppError(ErrorCode.PROFILE_SCAN_FAILED, str(error)))
     except AppError as error:
         return error_response(error)
+
+
+def _selected_sample_evidence_summary(sample_set, result: dict) -> dict:
+    selected_ids = set(sample_set.selected_sample_ids or [])
+    selected = [sample for sample in sample_set.samples if sample.sample_id in selected_ids or sample.selected]
+    if not selected:
+        selected = list(sample_set.samples)
+    understanding = {"full": 0, "partial": 0, "metadata_only": 0}
+    for sample in selected:
+        understanding[sample.understanding_level or "metadata_only"] = understanding.get(sample.understanding_level or "metadata_only", 0) + 1
+    return {
+        "selected_count": len(selected),
+        "sample_count": len(sample_set.samples),
+        "understanding": understanding,
+        "with_video": sum(1 for sample in selected if sample.has_video),
+        "with_keyframes": sum(1 for sample in selected if sample.has_frames),
+        "with_asr": sum(1 for sample in selected if sample.has_asr),
+        "with_ocr": sum(1 for sample in selected if sample.has_ocr),
+        "with_comments": sum(1 for sample in selected if sample.has_comments),
+        "confidence": (result.get("sample_overview") or {}).get("confidence") if isinstance(result.get("sample_overview"), dict) else "",
+    }

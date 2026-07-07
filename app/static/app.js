@@ -122,6 +122,10 @@ const copyCreatorCloneSpecButton = document.getElementById("copy-creator-clone-s
 const copyDistillPromptButton = document.getElementById("copy-distill-prompt-button");
 const downloadCreatorCloneJson = document.getElementById("download-creator-clone-json");
 const downloadCreatorCloneMd = document.getElementById("download-creator-clone-md");
+const creatorStrategyPlanCard = document.getElementById("creator-strategy-plan-card");
+const generateCreatorStrategyButton = document.getElementById("generate-creator-strategy-button");
+const creatorStrategyPlanStatus = document.getElementById("creator-strategy-plan-status");
+const creatorStrategyPlanResult = document.getElementById("creator-strategy-plan-result");
 const PROFILE_BUILD_MAX_ITEMS = Math.max(1, Number(document.body.dataset.profileBuildMaxItems || 10));
 const CREATOR_CLONE_MAX_DISTILL_SAMPLES = Math.max(1, Number(document.body.dataset.creatorCloneMaxDistillSamples || 20));
 const HANDOFF_MANIFEST_MAX_BYTES = 2 * 1024 * 1024;
@@ -5088,6 +5092,20 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
   currentDistillPrompt = prompt || currentDistillPrompt || "";
   setProfileStageView("export");
   creatorCloneResultCard.classList.remove("hidden");
+  if (creatorStrategyPlanCard) {
+    creatorStrategyPlanCard.classList.toggle("hidden", !result);
+  }
+  if (creatorStrategyPlanResult) {
+    creatorStrategyPlanResult.innerHTML = "";
+  }
+  if (creatorStrategyPlanStatus) {
+    creatorStrategyPlanStatus.textContent = result
+      ? "基于当前创作者蒸馏报告生成，不重新扫描、不重新富化。"
+      : "请先完成创作者蒸馏报告。";
+  }
+  if (generateCreatorStrategyButton) {
+    generateCreatorStrategyButton.disabled = !result || !set?.set_id;
+  }
   if (creatorCloneExportActions) {
     creatorCloneExportActions.open = false;
     creatorCloneExportActions.classList.add("hidden");
@@ -5132,6 +5150,109 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
     ${renderCreatorDistillationReport(result, overview, templateLabel)}
   `;
   renderCreatorCloneNextAction();
+}
+
+function renderStrategyPlanItemList(items = [], emptyText = "暂无") {
+  const rows = normalizeItems(items).filter(Boolean);
+  if (!rows.length) {
+    return `<p class="muted compact-copy">${escapeHtml(emptyText)}</p>`;
+  }
+  return `
+    <ul class="public-report-list strategy-plan-list">
+      ${rows.map((item) => {
+        if (typeof item === "string") {
+          return `<li>${escapeHtml(item)}</li>`;
+        }
+        const title = item.title || item.name || item.first_frame || "方案";
+        const details = compactReportList(
+          item.angle,
+          item.why,
+          item.formula_used ? `公式：${item.formula_used}` : "",
+          item.expected_metric ? `指标：${item.expected_metric}` : "",
+          item.production_notes,
+          item.best_for,
+          item.first_frame ? `首帧：${item.first_frame}` : "",
+          item.action ? `动作：${item.action}` : "",
+          item.camera ? `镜头：${item.camera}` : "",
+          item.light_scene ? `光线/场景：${item.light_scene}` : "",
+          item.title_topic ? `标题话题：${item.title_topic}` : "",
+          item.validation_metric ? `验证：${item.validation_metric}` : "",
+          item.risk_boundary ? `边界：${item.risk_boundary}` : "",
+          item.cover_frame ? `封面：${item.cover_frame}` : "",
+          item.promise ? `承诺：${item.promise}` : "",
+          item.hook_type ? `钩子：${item.hook_type}` : "",
+        ).slice(0, 6);
+        const beats = normalizeItems(item.beats || item.beat_structure).map(formatReportValue).filter(Boolean);
+        return `
+          <li>
+            <strong>${escapeHtml(title)}</strong>
+            ${details.length ? `<p>${escapeHtml(details.join("；"))}</p>` : ""}
+            ${beats.length ? `<ol>${beats.map((beat) => `<li>${escapeHtml(beat)}</li>`).join("")}</ol>` : ""}
+            ${item.requires_review ? '<span class="strategy-plan-review">需人工复核</span>' : ""}
+          </li>
+        `;
+      }).join("")}
+    </ul>
+  `;
+}
+
+function renderCreatorStrategyPlan(plan = {}) {
+  if (!plan || typeof plan !== "object") {
+    return "";
+  }
+  return `
+    <div class="public-report-grid creator-strategy-plan-grid">
+      ${renderPublicCard("1. 下一批选题", renderStrategyPlanItemList(plan.next_topics, "暂无选题。"), "featured")}
+      ${renderPublicCard("2. 脚本结构", renderStrategyPlanItemList(plan.script_templates, "暂无脚本结构。"), "featured")}
+      ${renderPublicCard("3. 镜头 / 画面模板", renderStrategyPlanItemList(plan.shot_templates, "暂无镜头模板。"), "featured")}
+      ${renderPublicCard("4. 标题 / 封面建议", renderStrategyPlanItemList(plan.title_cover_suggestions, "暂无标题封面建议。"))}
+      ${renderPublicCard("5. 发布前自检", renderStrategyPlanItemList(plan.pre_publish_checklist, "暂无自检项。"))}
+      ${normalizeItems(plan.low_confidence_notes).length ? renderPublicCard("低置信提醒 / 需要补证据", renderStrategyPlanItemList(plan.low_confidence_notes), "warning") : ""}
+    </div>
+  `;
+}
+
+async function generateCreatorStrategyPlan() {
+  const setId = currentCreatorCloneSetId();
+  if (!setId) {
+    if (creatorStrategyPlanStatus) {
+      creatorStrategyPlanStatus.textContent = "请先完成创作者蒸馏报告。";
+    }
+    return;
+  }
+  if (generateCreatorStrategyButton) {
+    generateCreatorStrategyButton.disabled = true;
+    generateCreatorStrategyButton.textContent = "生成中...";
+  }
+  if (creatorStrategyPlanStatus) {
+    creatorStrategyPlanStatus.textContent = "正在把蒸馏报告转成下一批可执行创作方案。";
+  }
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/generate-strategy`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      throw payload;
+    }
+    if (creatorStrategyPlanResult) {
+      creatorStrategyPlanResult.innerHTML = renderCreatorStrategyPlan(payload.strategy_plan || {});
+    }
+    if (creatorStrategyPlanStatus) {
+      const score = payload.source?.report_quality_score;
+      creatorStrategyPlanStatus.textContent = `已生成下一批创作方案${score !== undefined ? ` · 报告质量 ${formatNumber(score)}/100` : ""}`;
+    }
+  } catch (error) {
+    if (creatorStrategyPlanStatus) {
+      creatorStrategyPlanStatus.textContent = `${error.error_code || "GENERATE_FAILED"}：${error.message || "生成创作方案失败。"}`;
+    }
+  } finally {
+    if (generateCreatorStrategyButton) {
+      generateCreatorStrategyButton.disabled = false;
+      generateCreatorStrategyButton.textContent = "生成下一批创作方案";
+    }
+  }
 }
 
 function hasCreatorCloneResultPayload(result) {
@@ -6057,6 +6178,10 @@ creatorCloneDistillButton.addEventListener("click", async () => {
 
 creatorCloneBatchDistillButton?.addEventListener("click", async () => {
   await batchDistillSelectedCreatorClone();
+});
+
+generateCreatorStrategyButton?.addEventListener("click", async () => {
+  await generateCreatorStrategyPlan();
 });
 
 copyCreatorCloneSpecButton.addEventListener("click", async () => {
