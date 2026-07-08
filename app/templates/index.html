@@ -7,16 +7,69 @@
     <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
 </head>
 <body data-profile-build-max-items="{{ profile_build_max_items }}" data-creator-clone-max-distill-samples="{{ creator_clone_max_distill_samples }}">
-<header class="site-header">
-    <div class="header-shell">
-        <a class="site-title" href="#single" aria-label="短视频爆款分析素材包生成器">短视频爆款分析素材包生成器</a>
-        <nav class="primary-nav" aria-label="一级功能导航">
-            <button type="button" class="primary-nav-button" data-home-route="single">单作品解析</button>
-            <button type="button" class="primary-nav-button" data-home-route="profile">创作者蒸馏</button>
+<div class="workbench-shell">
+    <aside class="workbench-sidebar" aria-label="短视频拆解工作台导航">
+        <div class="workbench-brand">
+            <a class="site-title" href="#workbench" aria-label="短视频拆解工作台">短视频拆解工作台</a>
+            <p>本地运行的短视频分析、素材富化与创作者策略生成控制台</p>
+        </div>
+        <nav class="workbench-nav" aria-label="工作台功能导航">
+            <section class="workbench-nav-group">
+                <h2>短视频拆解中心</h2>
+                <button type="button" class="workbench-nav-item" data-home-route="workbench">拆解工作台</button>
+                <button type="button" class="workbench-nav-item" data-home-route="single">单作品解析</button>
+                <button type="button" class="workbench-nav-item" data-home-route="profile">Creator Clone Lab</button>
+                <button type="button" class="workbench-nav-item disabled" disabled>案例报告库 <span>coming soon</span></button>
+            </section>
+            <section class="workbench-nav-group">
+                <h2>素材资产管理</h2>
+                <button type="button" class="workbench-nav-item disabled" disabled>素材池 <span>复用当前流程</span></button>
+                <button type="button" class="workbench-nav-item disabled" disabled>Case 库 <span>coming soon</span></button>
+                <button type="button" class="workbench-nav-item disabled" disabled>创作者样本库 <span>coming soon</span></button>
+            </section>
+            <section class="workbench-nav-group">
+                <h2>平台与采集配置</h2>
+                <button type="button" class="workbench-nav-item" data-workbench-open-settings>Provider 管理</button>
+                <button type="button" class="workbench-nav-item" data-home-route="profile" data-workbench-focus="chrome">本机 Chrome 辅助</button>
+                <button type="button" class="workbench-nav-item disabled" disabled>platform_lab 测试中心 <span>未启用</span></button>
+            </section>
+            <section class="workbench-nav-group">
+                <h2>AI 与规则配置</h2>
+                <button type="button" class="workbench-nav-item disabled" disabled>拆解 Prompt 库 <span>coming soon</span></button>
+                <a class="workbench-nav-item" href="/calibration">质量校准样本</a>
+                <button type="button" class="workbench-nav-item" data-workbench-open-settings>LLM / ASR / OCR 设置</button>
+            </section>
+            <section class="workbench-nav-group">
+                <h2>系统配置</h2>
+                <button type="button" class="workbench-nav-item" data-workbench-open-settings>本地运行状态</button>
+                <button type="button" class="workbench-nav-item disabled" disabled>输出目录 <span>outputs/</span></button>
+                <button type="button" class="workbench-nav-item disabled" disabled>数据边界 <span>local-only</span></button>
+                <button type="button" class="workbench-nav-item" data-workbench-open-settings>系统设置</button>
+            </section>
         </nav>
-        <button type="button" id="settings-toggle" class="icon-button" aria-label="打开设置" title="设置">⚙</button>
-    </div>
-</header>
+    </aside>
+
+    <section class="workbench-main-shell">
+        <header class="site-header workbench-topbar">
+            <div class="header-shell">
+                <div>
+                    <div class="entry-label">Workbench Shell v1</div>
+                    <h1>短视频爆款分析素材包生成器</h1>
+                </div>
+                <div class="workbench-status-strip" aria-label="本地运行状态">
+                    <span class="workbench-status-pill partial" data-workbench-status="security">本地安全模式</span>
+                    <span class="workbench-status-pill partial" data-workbench-status="ffmpeg">ffmpeg 检查中</span>
+                    <span class="workbench-status-pill partial" data-workbench-status="ffprobe">ffprobe 检查中</span>
+                    <span class="workbench-status-pill partial" data-workbench-status="yt-dlp">yt-dlp 检查中</span>
+                    <span class="workbench-status-pill partial" data-workbench-status="llm">LLM 检查中</span>
+                    <span class="workbench-status-pill partial" data-workbench-status="asr">ASR 检查中</span>
+                    <span class="workbench-status-pill partial" data-workbench-status="ocr">OCR 检查中</span>
+                    <span class="workbench-status-pill partial" data-workbench-status="chrome">Chrome 检查中</span>
+                    <span class="workbench-status-pill disabled" data-workbench-status="platform_lab">platform_lab 未启用</span>
+                </div>
+                <button type="button" id="settings-toggle" class="icon-button" aria-label="打开设置" title="设置">⚙</button>
+            </div>
+        </header>
 
 <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
     <section class="settings-card settings-modal-card" id="settings-drawer">
@@ -132,7 +185,84 @@ LLM_MODEL=支持图片输入的模型</pre>
     </section>
 </div>
 
-<main class="page">
+<main class="page workbench-page">
+    <section class="home-panel" id="home-workbench" data-home-panel="workbench">
+        <section class="panel workbench-hero-panel">
+            <div class="entry-label">Creator Intelligence Workbench</div>
+            <h2>短视频拆解工作台</h2>
+            <p class="muted">把单条作品、创作者主页、素材包和本地工具状态组织到一个控制台里。第一版只重组入口和状态，不改变解析、下载、富化、蒸馏和策略生成逻辑。</p>
+            <div class="workbench-stepper" aria-label="短视频拆解工作台 4 步流程">
+                <article>
+                    <span>1</span>
+                    <strong>素材导入</strong>
+                    <p>单作品解析、本地视频、作品链接、JSON / CSV、已有 Case、本机 Chrome 辅助采集。</p>
+                </article>
+                <article>
+                    <span>2</span>
+                    <strong>证据富化</strong>
+                    <p>视频下载、关键帧、contact sheet、ASR、OCR、评论与指标快照状态。</p>
+                </article>
+                <article>
+                    <span>3</span>
+                    <strong>爆款拆解</strong>
+                    <p>开头钩子、画面结构、镜头节奏、文案结构、人设表达和可复用公式。</p>
+                </article>
+                <article>
+                    <span>4</span>
+                    <strong>克隆规则 / 复用输出</strong>
+                    <p>Creator Clone 报告、Creator Strategy Generator、HTML 报告和下一步拍摄建议。</p>
+                </article>
+            </div>
+            <div class="workbench-action-grid">
+                <button type="button" class="workbench-action-card" data-home-route="single">
+                    <strong>进入单作品解析</strong>
+                    <span>输入作品链接，生成 Case 素材包和单条拆解。</span>
+                </button>
+                <button type="button" class="workbench-action-card" data-home-route="profile">
+                    <strong>进入 Creator Clone Lab</strong>
+                    <span>导入主页或多条作品，选择样本后富化并蒸馏。</span>
+                </button>
+                <button type="button" class="workbench-action-card" data-workbench-open-settings>
+                    <strong>检查本地运行状态</strong>
+                    <span>查看 ffmpeg、ffprobe、yt-dlp、LLM、ASR、OCR 和 Chrome 辅助状态。</span>
+                </button>
+            </div>
+        </section>
+        <section class="workbench-overview-grid" aria-label="工作台模块概览">
+            <article class="panel compact-workbench-card">
+                <div class="entry-label">Import</div>
+                <h3>真实可用入口</h3>
+                <ul>
+                    <li>单作品解析</li>
+                    <li>Creator Clone Lab</li>
+                    <li>设置弹窗中的 LLM / Douyin 数据源配置</li>
+                    <li>本机 Chrome 辅助采集确认链路</li>
+                </ul>
+            </article>
+            <article class="panel compact-workbench-card">
+                <div class="entry-label">Boundary</div>
+                <h3>本机安全边界</h3>
+                <ul>
+                    <li>loopback only</li>
+                    <li>不读取 Cookie 原文</li>
+                    <li>不上传 Cookie</li>
+                    <li>不返回登录 token</li>
+                    <li>不返回签名媒体 URL</li>
+                </ul>
+            </article>
+            <article class="panel compact-workbench-card">
+                <div class="entry-label">Disabled</div>
+                <h3>第一版占位入口</h3>
+                <ul>
+                    <li>案例报告库：coming soon</li>
+                    <li>Case 库：coming soon</li>
+                    <li>Prompt 库：coming soon</li>
+                    <li>platform_lab 未启用</li>
+                </ul>
+            </article>
+        </section>
+    </section>
+
     <section class="home-panel" id="home-single" data-home-panel="single">
         <section class="panel primary-entry" id="tab-single">
             <div class="entry-label">Single Work</div>
@@ -199,6 +329,30 @@ LLM_MODEL=支持图片输入的模型</pre>
     </section>
 
     <section class="home-panel hidden" id="home-profile" data-home-panel="profile">
+        <section class="panel workbench-process-panel" aria-label="短视频拆解工作台主流程">
+            <div class="workbench-macro-stepper">
+                <article class="active">
+                    <span>1</span>
+                    <strong>素材导入</strong>
+                    <small>主页 / 单条 / 多条 / Case</small>
+                </article>
+                <article>
+                    <span>2</span>
+                    <strong>证据富化</strong>
+                    <small>视频、关键帧、ASR、OCR、评论</small>
+                </article>
+                <article>
+                    <span>3</span>
+                    <strong>爆款拆解</strong>
+                    <small>钩子、画面、文案、人设、节奏</small>
+                </article>
+                <article>
+                    <span>4</span>
+                    <strong>规则复用</strong>
+                    <small>蒸馏报告、Strategy Plan、拍摄建议</small>
+                </article>
+            </div>
+        </section>
         <section class="panel profile-scan-panel">
             <div class="entry-label">Creator Distillation</div>
             <h2>创作者蒸馏</h2>
@@ -575,6 +729,33 @@ https://v.douyin.com/xxxxxx/
 <footer>
     本工具仅用于本地学习、复盘和内容分析。请确保你拥有相关内容的分析、下载或使用权限。
 </footer>
+
+        <button type="button" id="ai-assistant-toggle" class="ai-assistant-toggle" aria-expanded="false" aria-controls="ai-assistant-panel">AI 拆解助手</button>
+        <section id="ai-assistant-panel" class="ai-assistant-panel hidden" aria-label="AI 拆解助手说明">
+            <div class="assistant-panel-header">
+                <div>
+                    <div class="entry-label">Assistant</div>
+                    <h2>AI 拆解助手</h2>
+                </div>
+                <button type="button" id="ai-assistant-close" class="ghost-button">关闭</button>
+            </div>
+            <dl class="assistant-status-list">
+                <dt>当前阶段</dt>
+                <dd id="assistant-current-stage">拆解工作台</dd>
+                <dt>推荐下一步</dt>
+                <dd id="assistant-next-step">先选择单作品解析或 Creator Clone Lab。</dd>
+            </dl>
+            <div class="assistant-actions">
+                <button type="button" id="assistant-copy-prompt-button">复制当前拆解 Prompt</button>
+                <button type="button" data-workbench-open-settings>打开设置</button>
+                <button type="button" id="assistant-open-preflight-button">查看 preflight</button>
+                <button type="button" data-home-route="profile">跳转到 Creator Clone</button>
+                <button type="button" id="assistant-strategy-plan-button">跳转到 Strategy Plan</button>
+            </div>
+            <p id="assistant-hint" class="muted compact-copy">第一版只提供入口和说明，不做聊天 Agent。没有当前 Prompt 或 Strategy Plan 时，按钮会给出说明，不会报错。</p>
+        </section>
+    </section>
+</div>
 
 <script src="/static/app.js?v={{ static_version }}"></script>
 </body>

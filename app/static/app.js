@@ -59,6 +59,17 @@ const jobPhase = document.getElementById("job-phase");
 const jobResult = document.getElementById("job-result");
 const homeRouteButtons = Array.from(document.querySelectorAll("[data-home-route]"));
 const homePanels = Array.from(document.querySelectorAll("[data-home-panel]"));
+const workbenchStatusPills = Array.from(document.querySelectorAll("[data-workbench-status]"));
+const aiAssistantToggle = document.getElementById("ai-assistant-toggle");
+const aiAssistantPanel = document.getElementById("ai-assistant-panel");
+const aiAssistantClose = document.getElementById("ai-assistant-close");
+const assistantCurrentStage = document.getElementById("assistant-current-stage");
+const assistantNextStep = document.getElementById("assistant-next-step");
+const assistantHint = document.getElementById("assistant-hint");
+const assistantCopyPromptButton = document.getElementById("assistant-copy-prompt-button");
+const assistantOpenPreflightButton = document.getElementById("assistant-open-preflight-button");
+const assistantStrategyPlanButton = document.getElementById("assistant-strategy-plan-button");
+const workbenchSettingsButtons = Array.from(document.querySelectorAll("[data-workbench-open-settings]"));
 
 const profileForm = document.getElementById("profile-form");
 
@@ -195,9 +206,10 @@ function setStatus(element, value) {
 }
 
 function setHomeRoute(route, updateHash = true) {
-  const activeRoute = ["single", "profile"].includes(route) ? route : "single";
+  const activeRoute = ["workbench", "single", "profile"].includes(route) ? route : "workbench";
+  const visiblePanelRoute = activeRoute === "workbench" ? "profile" : activeRoute;
   homePanels.forEach((panel) => {
-    panel.classList.toggle("hidden", panel.dataset.homePanel !== activeRoute);
+    panel.classList.toggle("hidden", panel.dataset.homePanel !== visiblePanelRoute);
   });
   homeRouteButtons.forEach((button) => {
     const active = button.dataset.homeRoute === activeRoute;
@@ -207,7 +219,7 @@ function setHomeRoute(route, updateHash = true) {
   if (updateHash) {
     history.replaceState(null, "", `#${activeRoute}`);
   }
-  if (activeRoute === "profile" && !chromeHelperStatusLoaded) {
+  if (visiblePanelRoute === "profile" && !chromeHelperStatusLoaded) {
     chromeHelperStatusLoaded = true;
     loadChromeHelperStatus({silent: true}).catch(() => {
       if (profileChromeStatus) {
@@ -215,13 +227,14 @@ function setHomeRoute(route, updateHash = true) {
       }
     });
   }
-  if (activeRoute === "profile") {
+  if (visiblePanelRoute === "profile") {
     restoreRecentCreatorCloneSet().catch(() => {});
   }
+  updateAssistantContext(activeRoute);
 }
 
 function routeFromHash() {
-  return window.location.hash.replace("#", "") || "single";
+  return window.location.hash.replace("#", "") || "workbench";
 }
 
 function isSafeCreatorCloneSetId(value) {
@@ -1527,6 +1540,7 @@ function renderLlmStatus(llm) {
   if (llmClearKeyInput) {
     llmClearKeyInput.checked = false;
   }
+  renderWorkbenchLlmStatus(llm);
 }
 
 function sortCreatorSampleViewItems(items, sortBy) {
@@ -5565,11 +5579,68 @@ async function loadLlmStatus() {
     llmStatusBadge.textContent = "读取失败";
     llmStatusList.textContent = `${error.error_code || "ERROR"}：${error.message || "无法读取 AI 配置"}`;
     testLlmButton.disabled = true;
+    setWorkbenchStatus("llm", "LLM 读取失败", "missing");
   }
+}
+
+function setWorkbenchStatus(id, label, status = "partial") {
+  const pill = workbenchStatusPills.find((item) => item.dataset.workbenchStatus === id);
+  if (!pill) {
+    return;
+  }
+  pill.textContent = label;
+  pill.className = `workbench-status-pill ${["ready", "missing", "disabled", "partial"].includes(status) ? status : "partial"}`;
+}
+
+function workbenchStatusLabel(item = {}, fallbackLabel = "") {
+  const status = item.status || "partial";
+  const label = item.label || fallbackLabel || item.id || "检查项";
+  const suffix = {ready: "可用", missing: "缺失", disabled: "关闭", partial: "待确认"}[status] || status;
+  return `${label} ${suffix}`;
+}
+
+function renderWorkbenchLlmStatus(llm = {}) {
+  if (llm.configured) {
+    setWorkbenchStatus("llm", `LLM ${llm.model || "已配置"}`, "ready");
+    return;
+  }
+  setWorkbenchStatus("llm", "LLM 未配置", "disabled");
+}
+
+function renderWorkbenchDataSourceStatus(status = {}) {
+  const chromeStatus = profileChromeAvailable ? "ready" : "partial";
+  if (!workbenchStatusPills.length) {
+    return;
+  }
+  if (status.configured || status.has_cookie) {
+    setWorkbenchStatus("chrome", "Chrome / Cookie 增强可选", chromeStatus);
+  }
+}
+
+function renderWorkbenchPreflightStatus(preflight = {}) {
+  setWorkbenchStatus("security", "本地安全模式", "ready");
+  setWorkbenchStatus("platform_lab", "platform_lab 未启用", "disabled");
+  const checks = new Map(normalizeItems(preflight.checks).map((item) => [String(item.id || ""), item]));
+  [
+    ["ffmpeg", "ffmpeg"],
+    ["ffprobe", "ffprobe"],
+    ["yt-dlp", "yt-dlp"],
+    ["asr", "ASR"],
+    ["ocr", "OCR"],
+    ["chrome", "Chrome 辅助"],
+  ].forEach(([id, label]) => {
+    const item = checks.get(id);
+    if (!item) {
+      setWorkbenchStatus(id, `${label} 未检测`, id === "chrome" ? "partial" : "missing");
+      return;
+    }
+    setWorkbenchStatus(id, workbenchStatusLabel(item, label), item.status || "partial");
+  });
 }
 
 function renderPreflightStatus(preflight) {
   if (!preflightSummary || !preflightList) {
+    renderWorkbenchPreflightStatus(preflight || {});
     return;
   }
   const summary = preflight.summary || {};
@@ -5600,6 +5671,7 @@ function renderPreflightStatus(preflight) {
       `;
     })
     .join("");
+  renderWorkbenchPreflightStatus(preflight || {});
 }
 
 async function loadPreflightStatus() {
@@ -5614,6 +5686,7 @@ async function loadPreflightStatus() {
 
 function renderDataSourceStatus(status = {}) {
   if (!dataSourceStatusBadge || !dataSourceStatusList) {
+    renderWorkbenchDataSourceStatus(status);
     return;
   }
   dataSourceStatusBadge.textContent = status.configured ? "增强已配置" : "主路径可用";
@@ -5644,6 +5717,7 @@ function renderDataSourceStatus(status = {}) {
   if (douyinClearCookieInput) {
     douyinClearCookieInput.checked = false;
   }
+  renderWorkbenchDataSourceStatus(status);
 }
 
 function renderDouyinCookieDiagnosticsRows(diagnostics = {}) {
@@ -5843,14 +5917,7 @@ async function readJsonResponse(response) {
   return payload;
 }
 
-settingsToggle.addEventListener("click", () => {
-  settingsModal.classList.remove("hidden");
-  loadPreflightStatus().catch(() => {
-    if (preflightSummary) {
-      preflightSummary.textContent = "本地工具预检失败，请查看后端日志。";
-    }
-  });
-});
+settingsToggle.addEventListener("click", openSettingsModal);
 
 settingsClose.addEventListener("click", () => {
   settingsModal.classList.add("hidden");
@@ -5865,7 +5932,100 @@ settingsModal.addEventListener("click", (event) => {
 homeRouteButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setHomeRoute(button.dataset.homeRoute);
+    if (button.dataset.workbenchFocus === "chrome") {
+      window.setTimeout(() => {
+        profilePublicSection?.scrollIntoView({behavior: "smooth", block: "start"});
+      }, 120);
+    }
   });
+});
+
+function openSettingsModal() {
+  settingsModal.classList.remove("hidden");
+  loadPreflightStatus().catch(() => {
+    if (preflightSummary) {
+      preflightSummary.textContent = "本地工具预检失败，请查看后端日志。";
+    }
+    markWorkbenchPreflightFailed();
+  });
+}
+
+function markWorkbenchPreflightFailed() {
+  ["ffmpeg", "ffprobe", "yt-dlp", "asr", "ocr", "chrome"].forEach((id) => {
+    setWorkbenchStatus(id, `${id} 读取失败`, "partial");
+  });
+}
+
+workbenchSettingsButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    openSettingsModal();
+  });
+});
+
+function updateAssistantContext(route = routeFromHash()) {
+  if (!assistantCurrentStage || !assistantNextStep) {
+    return;
+  }
+  const activeRoute = ["workbench", "single", "profile"].includes(route) ? route : "workbench";
+  if (activeRoute === "single") {
+    assistantCurrentStage.textContent = "单作品解析";
+    assistantNextStep.textContent = loadedHomeCase ? "查看单条拆解结果，或复制 Prompt 继续人工分析。" : "粘贴单条作品链接，生成素材包和拆解报告。";
+  } else if (activeRoute === "profile") {
+    assistantCurrentStage.textContent = `Creator Clone Lab · ${creatorCloneCurrentStep?.textContent || "导入素材"}`;
+    assistantNextStep.textContent = currentCreatorRuntimeReport
+      ? "查看创作者蒸馏报告，或生成下一批创作方案。"
+      : "按 6 步流程导入素材、选择样本、富化证据并进入蒸馏。";
+  } else {
+    assistantCurrentStage.textContent = `拆解工作台 · ${creatorCloneCurrentStep?.textContent || "素材导入"}`;
+    assistantNextStep.textContent = currentCreatorRuntimeReport
+      ? "查看创作者蒸馏报告，或生成下一批创作方案。"
+      : "从主页 URL、多作品链接或已有 Case 导入素材，进入证据富化和创作者蒸馏。";
+  }
+}
+
+function showAssistantHint(message) {
+  if (!assistantHint) {
+    return;
+  }
+  assistantHint.textContent = message;
+}
+
+aiAssistantToggle?.addEventListener("click", () => {
+  const hidden = aiAssistantPanel?.classList.toggle("hidden");
+  aiAssistantToggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+  updateAssistantContext();
+});
+
+aiAssistantClose?.addEventListener("click", () => {
+  aiAssistantPanel?.classList.add("hidden");
+  aiAssistantToggle?.setAttribute("aria-expanded", "false");
+});
+
+assistantCopyPromptButton?.addEventListener("click", async () => {
+  const text = currentDistillPrompt || (loadedHomeCase ? buildFullPrompt(loadedHomeCase) : "");
+  if (!text) {
+    showAssistantHint("当前还没有可复制的拆解 Prompt。请先完成单作品素材包或创作者蒸馏。");
+    return;
+  }
+  await navigator.clipboard.writeText(text);
+  showAssistantHint("已复制当前可用 Prompt。");
+});
+
+assistantOpenPreflightButton?.addEventListener("click", () => {
+  openSettingsModal();
+  window.setTimeout(() => {
+    preflightSummary?.scrollIntoView({behavior: "smooth", block: "center"});
+  }, 120);
+});
+
+assistantStrategyPlanButton?.addEventListener("click", () => {
+  setHomeRoute("profile");
+  if (creatorStrategyPlanCard && !creatorStrategyPlanCard.classList.contains("hidden")) {
+    creatorStrategyPlanCard.scrollIntoView({behavior: "smooth", block: "start"});
+    showAssistantHint("已跳转到 Strategy Plan。");
+    return;
+  }
+  showAssistantHint("当前还没有 Strategy Plan。请先完成创作者蒸馏后再生成下一批创作方案。");
 });
 
 window.addEventListener("hashchange", () => {
@@ -6459,6 +6619,8 @@ window.addEventListener("beforeunload", (event) => {
 
 loadLlmStatus();
 loadDataSourceStatus();
-loadPreflightStatus().catch(() => {});
+loadPreflightStatus().catch(() => {
+  markWorkbenchPreflightFailed();
+});
 renderCreatorCloneNextAction();
 setHomeRoute(routeFromHash(), false);

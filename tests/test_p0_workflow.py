@@ -281,6 +281,40 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "单作品解析" in response.text
     assert "创作者蒸馏" in response.text
     assert "短视频爆款分析素材包生成器" in response.text
+    assert "短视频拆解工作台" in response.text
+    assert "本地运行的短视频分析、素材富化与创作者策略生成控制台" in response.text
+    assert "Workbench Shell v1" in response.text
+    assert 'id="home-workbench"' in response.text
+    assert 'data-home-panel="workbench"' in response.text
+    assert "短视频拆解中心" in response.text
+    assert "素材资产管理" in response.text
+    assert "平台与采集配置" in response.text
+    assert "AI 与规则配置" in response.text
+    assert "系统配置" in response.text
+    assert "拆解工作台" in response.text
+    assert "案例报告库" in response.text
+    assert "Provider 管理" in response.text
+    assert "platform_lab 测试中心" in response.text
+    assert "platform_lab 未启用" in response.text
+    assert "本地运行状态" in response.text
+    assert "输出目录" in response.text
+    assert "数据边界" in response.text
+    assert "素材导入" in response.text
+    assert "爆款拆解" in response.text
+    assert "克隆规则 / 复用输出" in response.text
+    assert "AI 拆解助手" in response.text
+    assert 'id="ai-assistant-toggle"' in response.text
+    assert 'id="ai-assistant-panel"' in response.text
+    assert 'data-workbench-status="ffmpeg"' in response.text
+    assert 'data-workbench-status="ffprobe"' in response.text
+    assert 'data-workbench-status="yt-dlp"' in response.text
+    assert 'data-workbench-status="llm"' in response.text
+    assert 'data-workbench-status="asr"' in response.text
+    assert 'data-workbench-status="ocr"' in response.text
+    assert 'data-workbench-status="chrome"' in response.text
+    assert "自动发布" not in response.text
+    assert "账号矩阵" not in response.text
+    assert "养号" not in response.text
     assert "默认清晰度偏好" not in response.text
     assert 'type="hidden" id="quality-preference" value="1080"' in response.text
     assert "主页 URL / sec_user_id" in response.text
@@ -1123,6 +1157,20 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="settings-modal"' in response.text
     assert 'id="download-selected-button"' not in response.text
     assert "下载并生成素材包" not in response.text
+    assert 'data-home-route="workbench"' in response.text
+    assert 'data-home-route="single"' in response.text
+    assert 'data-home-route="profile"' in response.text
+    assert "setHomeRoute(route, updateHash = true)" in script
+    assert '["workbench", "single", "profile"]' in script
+    assert 'const visiblePanelRoute = activeRoute === "workbench" ? "profile" : activeRoute;' in script
+    assert 'return window.location.hash.replace("#", "") || "workbench";' in script
+    assert "function renderWorkbenchPreflightStatus" in script
+    assert "function renderWorkbenchLlmStatus" in script
+    assert "function updateAssistantContext" in script
+    assert ".workbench-sidebar" in stylesheet
+    assert ".workbench-status-strip" in stylesheet
+    assert ".workbench-stepper" in stylesheet
+    assert ".ai-assistant-toggle" in stylesheet
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:
