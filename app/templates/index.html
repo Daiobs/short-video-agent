@@ -14,42 +14,69 @@
             <p>本地运行的短视频分析、素材富化与创作者策略生成控制台</p>
         </div>
         <nav class="workbench-nav" aria-label="工作台功能导航">
-            <section class="workbench-nav-group">
-                <h2>短视频拆解中心</h2>
+            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
+                <h2>
+                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
+                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                        <span>短视频拆解中心</span>
+                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
+                    </button>
+                </h2>
                 <button type="button" class="workbench-nav-item" data-home-route="workbench">拆解工作台</button>
                 <button type="button" class="workbench-nav-item" data-home-route="single">单作品解析</button>
                 <button type="button" class="workbench-nav-item" data-home-route="profile">Creator Clone Lab</button>
-                <button type="button" class="workbench-nav-item disabled" disabled>案例报告库 <span>coming soon</span></button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="案例报告库">案例报告库 <span>coming soon</span></button>
             </section>
-            <section class="workbench-nav-group">
-                <h2>素材资产管理</h2>
-                <button type="button" class="workbench-nav-item disabled" disabled>素材池 <span>复用当前流程</span></button>
-                <button type="button" class="workbench-nav-item disabled" disabled>Case 库 <span>coming soon</span></button>
-                <button type="button" class="workbench-nav-item disabled" disabled>创作者样本库 <span>coming soon</span></button>
+            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
+                <h2>
+                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
+                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                        <span>素材资产管理</span>
+                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
+                    </button>
+                </h2>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="独立素材池">素材池 <span>复用当前流程</span></button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="Case 库">Case 库 <span>coming soon</span></button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="创作者样本库">创作者样本库 <span>coming soon</span></button>
             </section>
-            <section class="workbench-nav-group">
-                <h2>平台与采集配置</h2>
-                <button type="button" class="workbench-nav-item" data-workbench-open-settings>Provider 管理</button>
+            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
+                <h2>
+                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
+                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                        <span>平台与采集</span>
+                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
+                    </button>
+                </h2>
                 <button type="button" class="workbench-nav-item" data-home-route="profile" data-workbench-focus="chrome">本机 Chrome 辅助</button>
-                <button type="button" class="workbench-nav-item disabled" disabled>platform_lab 测试中心 <span>未启用</span></button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="platform_lab 测试中心">platform_lab 测试中心 <span>未启用</span></button>
             </section>
-            <section class="workbench-nav-group">
-                <h2>AI 与规则配置</h2>
-                <button type="button" class="workbench-nav-item disabled" disabled>拆解 Prompt 库 <span>coming soon</span></button>
+            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
+                <h2>
+                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
+                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                        <span>规则与校准</span>
+                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
+                    </button>
+                </h2>
                 <a class="workbench-nav-item" href="/calibration">质量校准样本</a>
-                <button type="button" class="workbench-nav-item" data-workbench-open-settings>LLM / ASR / OCR 设置</button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="拆解 Prompt 库">拆解 Prompt 库 <span>coming soon</span></button>
             </section>
-            <section class="workbench-nav-group">
-                <h2>系统配置</h2>
-                <button type="button" class="workbench-nav-item" data-workbench-open-settings>本地运行状态</button>
-                <button type="button" class="workbench-nav-item disabled" disabled>输出目录 <span>outputs/</span></button>
-                <button type="button" class="workbench-nav-item disabled" disabled>数据边界 <span>local-only</span></button>
+            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
+                <h2>
+                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
+                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                        <span>系统</span>
+                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
+                    </button>
+                </h2>
                 <button type="button" class="workbench-nav-item" data-workbench-open-settings>系统设置</button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="输出目录浏览器">输出目录浏览器 <span>coming soon</span></button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="数据边界说明">数据边界 <span>local-only</span></button>
             </section>
         </nav>
     </aside>
 
-    <section class="workbench-main-shell">
+    <section class="workbench-main workbench-main-shell">
         <header class="site-header workbench-topbar">
             <div class="header-shell">
                 <div>
@@ -58,14 +85,7 @@
                 </div>
                 <div class="workbench-status-strip" aria-label="本地运行状态">
                     <span class="workbench-status-pill partial" data-workbench-status="security">本地安全模式</span>
-                    <span class="workbench-status-pill partial" data-workbench-status="ffmpeg">ffmpeg 检查中</span>
-                    <span class="workbench-status-pill partial" data-workbench-status="ffprobe">ffprobe 检查中</span>
-                    <span class="workbench-status-pill partial" data-workbench-status="yt-dlp">yt-dlp 检查中</span>
                     <span class="workbench-status-pill partial" data-workbench-status="llm">LLM 检查中</span>
-                    <span class="workbench-status-pill partial" data-workbench-status="asr">ASR 检查中</span>
-                    <span class="workbench-status-pill partial" data-workbench-status="ocr">OCR 检查中</span>
-                    <span class="workbench-status-pill partial" data-workbench-status="chrome">Chrome 检查中</span>
-                    <span class="workbench-status-pill disabled" data-workbench-status="platform_lab">platform_lab 未启用</span>
                 </div>
                 <button type="button" id="settings-toggle" class="icon-button" aria-label="打开设置" title="设置">⚙</button>
             </div>
@@ -185,7 +205,7 @@ LLM_MODEL=支持图片输入的模型</pre>
     </section>
 </div>
 
-<main class="page workbench-page">
+<main class="page workbench-content workbench-page">
     <section class="home-panel" id="home-workbench" data-home-panel="workbench">
         <section class="panel workbench-hero-panel">
             <div class="entry-label">Creator Intelligence Workbench</div>
@@ -692,6 +712,7 @@ https://v.douyin.com/xxxxxx/
                     </table>
                 </div>
             </details>
+        </section>
             <section id="creator-clone-result-card" class="creator-clone-result-card hidden" data-profile-stage-section="export">
                 <div class="section-heading-row">
                     <div>
@@ -722,7 +743,6 @@ https://v.douyin.com/xxxxxx/
                     </div>
                 </details>
             </section>
-        </section>
     </section>
 </main>
 
@@ -740,16 +760,21 @@ https://v.douyin.com/xxxxxx/
                 <button type="button" id="ai-assistant-close" class="ghost-button">关闭</button>
             </div>
             <dl class="assistant-status-list">
-                <dt>当前阶段</dt>
+                <dt>当前模块</dt>
                 <dd id="assistant-current-stage">拆解工作台</dd>
+                <dt>宏观步骤</dt>
+                <dd id="assistant-macro-step">4 步流程概览</dd>
                 <dt>推荐下一步</dt>
                 <dd id="assistant-next-step">先选择单作品解析或 Creator Clone Lab。</dd>
             </dl>
             <div class="assistant-actions">
                 <button type="button" id="assistant-copy-prompt-button">复制当前拆解 Prompt</button>
+                <button type="button" data-home-route="single">单作品解析</button>
+                <button type="button" data-home-route="profile">Creator Clone</button>
                 <button type="button" data-workbench-open-settings>打开设置</button>
                 <button type="button" id="assistant-open-preflight-button">查看 preflight</button>
-                <button type="button" data-home-route="profile">跳转到 Creator Clone</button>
+                <a class="button-link" href="/calibration">质量校准</a>
+                <button type="button" data-home-route="workbench">回到工作台</button>
                 <button type="button" id="assistant-strategy-plan-button">跳转到 Strategy Plan</button>
             </div>
             <p id="assistant-hint" class="muted compact-copy">第一版只提供入口和说明，不做聊天 Agent。没有当前 Prompt 或 Strategy Plan 时，按钮会给出说明，不会报错。</p>
@@ -757,6 +782,7 @@ https://v.douyin.com/xxxxxx/
     </section>
 </div>
 
+<script src="/static/workbench.js?v={{ static_version }}"></script>
 <script src="/static/app.js?v={{ static_version }}"></script>
 </body>
 </html>

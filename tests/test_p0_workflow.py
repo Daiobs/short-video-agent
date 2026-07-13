@@ -274,6 +274,7 @@ def test_case_build_persists_beauty_content_category_guess(tmp_path: Path) -> No
 def test_home_uses_versioned_static_assets() -> None:
     response = client.get("/")
     assert response.status_code == 200
+    assert "/static/workbench.js?v=" in response.text
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
     assert 'data-profile-build-max-items="150"' in response.text
@@ -284,34 +285,49 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "短视频拆解工作台" in response.text
     assert "本地运行的短视频分析、素材富化与创作者策略生成控制台" in response.text
     assert "Workbench Shell v1" in response.text
+    assert 'class="workbench-main workbench-main-shell"' in response.text
+    assert 'class="page workbench-content workbench-page"' in response.text
     assert 'id="home-workbench"' in response.text
     assert 'data-home-panel="workbench"' in response.text
     assert "短视频拆解中心" in response.text
     assert "素材资产管理" in response.text
-    assert "平台与采集配置" in response.text
-    assert "AI 与规则配置" in response.text
-    assert "系统配置" in response.text
+    assert "平台与采集" in response.text
+    assert "规则与校准" in response.text
+    assert "系统" in response.text
+    assert 'data-workbench-nav-group data-disabled-collapsed="true"' in response.text
+    assert 'class="workbench-nav-group-icon"' in response.text
+    assert 'class="workbench-nav-chevron"' in response.text
+    assert 'data-workbench-nav-toggle' in response.text
     assert "拆解工作台" in response.text
     assert "案例报告库" in response.text
-    assert "Provider 管理" in response.text
+    assert 'data-workbench-coming-soon="案例报告库"' in response.text
+    assert "系统设置" in response.text
+    assert "Provider 管理" not in response.text
     assert "platform_lab 测试中心" in response.text
-    assert "platform_lab 未启用" in response.text
-    assert "本地运行状态" in response.text
-    assert "输出目录" in response.text
+    assert 'data-workbench-coming-soon="platform_lab 测试中心"' in response.text
+    assert "拆解 Prompt 库" in response.text
+    assert "本机 Chrome 辅助" in response.text
+    assert "本地运行状态</button>" not in response.text
+    assert "输出目录浏览器" in response.text
     assert "数据边界" in response.text
+    assert "LLM / ASR / OCR 设置" not in response.text
     assert "素材导入" in response.text
     assert "爆款拆解" in response.text
     assert "克隆规则 / 复用输出" in response.text
     assert "AI 拆解助手" in response.text
     assert 'id="ai-assistant-toggle"' in response.text
     assert 'id="ai-assistant-panel"' in response.text
-    assert 'data-workbench-status="ffmpeg"' in response.text
-    assert 'data-workbench-status="ffprobe"' in response.text
-    assert 'data-workbench-status="yt-dlp"' in response.text
+    assert 'id="assistant-macro-step"' in response.text
+    assert 'data-workbench-status="security"' in response.text
     assert 'data-workbench-status="llm"' in response.text
-    assert 'data-workbench-status="asr"' in response.text
-    assert 'data-workbench-status="ocr"' in response.text
-    assert 'data-workbench-status="chrome"' in response.text
+    assert 'data-workbench-status="ffmpeg"' not in response.text
+    assert 'data-workbench-status="ffprobe"' not in response.text
+    assert 'data-workbench-status="yt-dlp"' not in response.text
+    assert 'data-workbench-status="asr"' not in response.text
+    assert 'data-workbench-status="ocr"' not in response.text
+    assert 'data-workbench-status="chrome"' not in response.text
+    assert 'data-workbench-status="platform_lab"' not in response.text
+    assert 'id="settings-toggle"' in response.text
     assert "自动发布" not in response.text
     assert "账号矩阵" not in response.text
     assert "养号" not in response.text
@@ -540,6 +556,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "大模型蒸馏" in response.text
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     script = Path("app/static/app.js").read_text(encoding="utf-8")
+    workbench_script = Path("app/static/workbench.js").read_text(encoding="utf-8")
     assert "function getWizardStep" not in script
     assert "function getCreatorCloneStage" not in script
     assert "function renderCreatorCloneNextAction" in script
@@ -600,9 +617,21 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "正在恢复上次素材池" in script
     assert "已恢复上次创作者蒸馏报告" in script
     assert "已恢复上次素材池" in script
+    assert 'const isNavItem = button.classList.contains("workbench-nav-item");' in script
+    assert "isNavItem && button.dataset.homeRoute === activeRoute && !button.dataset.workbenchFocus" in script
+    assert "function normalizeRoute" in workbench_script
+    assert "function normalizeBadgeState" in workbench_script
+    assert "function comingSoonBehavior" in workbench_script
+    assert 'group.dataset.disabledCollapsed = collapsed ? "false" : "true";' in workbench_script
+    assert ".workbench-nav-group[data-disabled-collapsed=\"true\"] .workbench-nav-item.disabled" in stylesheet
+    assert 'const shouldShowResultContainer = !["import", "export"].includes(activeStage)' in script
+    assert 'id="profile-results-card"' in response.text
+    assert 'id="creator-clone-result-card"' in response.text
+    assert response.text.index('id="profile-results-card"') < response.text.index('id="creator-clone-result-card"')
     poll_distill = script[
         script.index("async function pollCreatorCloneDistillJob") : script.index("// Creator Clone: distillation")
     ]
+    assert "const rendered = safeRenderCreatorCloneResult(" in poll_distill
     assert "applyCreatorCloneDistillPayload(resultPayload);" in poll_distill
     assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});" in poll_distill
     assert poll_distill.index("await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});") < poll_distill.rindex("applyCreatorCloneDistillPayload(resultPayload);")
@@ -1162,8 +1191,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'data-home-route="profile"' in response.text
     assert "setHomeRoute(route, updateHash = true)" in script
     assert '["workbench", "single", "profile"]' in script
-    assert 'const visiblePanelRoute = activeRoute === "workbench" ? "profile" : activeRoute;' in script
-    assert 'return window.location.hash.replace("#", "") || "workbench";' in script
+    assert "const visiblePanelRoute = activeRoute;" in script
+    assert "window.WorkbenchShell?.routeFromHash(window.location.hash)" in script
+    assert "setHomeRoute(routeFromHash(), !window.location.hash);" in script
     assert "function renderWorkbenchPreflightStatus" in script
     assert "function renderWorkbenchLlmStatus" in script
     assert "function updateAssistantContext" in script
@@ -1171,6 +1201,47 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".workbench-status-strip" in stylesheet
     assert ".workbench-stepper" in stylesheet
     assert ".ai-assistant-toggle" in stylesheet
+
+
+def test_workbench_shell_pure_behaviors() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; workbench browser behavior is covered by manual smoke testing.")
+
+    source = Path("app/static/workbench.js").read_text(encoding="utf-8")
+    runner = f"""
+global.window = globalThis;
+global.document = {{readyState: "loading", addEventListener() {{}}}};
+eval({json.dumps(source)});
+const output = {{
+  routes: ["", "#single", "profile", "#unknown", " #WORKBENCH "].map(WorkbenchShell.routeFromHash),
+  ready: WorkbenchShell.preflightBadge({{status: "ready", label: "ffmpeg"}}),
+  unknown: WorkbenchShell.preflightBadge({{status: "unexpected", label: "OCR"}}),
+  failure: WorkbenchShell.apiFailureBadge("preflight"),
+  comingSoon: WorkbenchShell.comingSoonBehavior("案例报告库"),
+}};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["routes"] == ["workbench", "single", "profile", "workbench", "workbench"]
+    assert result["ready"] == {"status": "ready", "label": "ffmpeg 可用"}
+    assert result["unknown"] == {"status": "partial", "label": "OCR 待确认"}
+    assert result["failure"] == {"status": "partial", "label": "preflight 读取失败"}
+    assert result["comingSoon"]["disabled"] is True
+    assert result["comingSoon"]["shouldFetch"] is False
+    assert "尚未接入" in result["comingSoon"]["message"]
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:
