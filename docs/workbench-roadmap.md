@@ -94,7 +94,7 @@ Overview 只聚合已有本机状态，不建立第二真源：
 
 ## 明确未完成
 
-- Stage A Draft PR 尚未在本文登记；人工审查、合并和合并 commit 均未完成。
+- Stage A Draft PR #12 已创建；人工审查、合并和合并 commit 均未完成。
 - Stage B 未开始，当前不得实现其统一恢复模型、自动诊断或 stale 任务操作。
 
 因此，当前不能宣布 Stage A 完成。
@@ -163,11 +163,11 @@ Stage B 的首要工作是统一任务 DTO、精确 `resume_target`、失败恢�
 
 | 字段 | 当前记录 |
 | --- | --- |
-| Stage A 状态 | 候选完成，等待 Draft PR 人工审查 |
+| Stage A 状态 | Draft PR #12，等待人工审查 |
 | Head 分支 | `codex/workbench-task-console-v1` |
 | Base 分支与基线 commit | `main` / `a4f0dd1` |
-| Draft PR 编号 | 待创建/待记录 |
-| Draft PR 链接 | 待创建/待记录 |
+| Draft PR 编号 | #12 |
+| Draft PR 链接 | `https://github.com/Daiobs/short-video-agent/pull/12` |
 | 人工审查结论 | 待记录 |
 | 合并状态 | 未合并 |
 | 合并 commit | 不适用，待合并后记录 |
