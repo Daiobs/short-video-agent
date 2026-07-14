@@ -454,6 +454,23 @@ p {
     overflow-wrap: anywhere;
 }
 
+.workbench-source-warning.partial-only {
+    border-color: #bfdbfe;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.workbench-source-warning.partial-only > strong,
+.workbench-source-warning.partial-only p {
+    color: #1e40af;
+}
+
+.workbench-partial-result-note + .workbench-partial-result-note {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(37, 99, 235, .16);
+}
+
 .workbench-priority {
     padding: 16px;
     border: 1px solid #d7dee8;

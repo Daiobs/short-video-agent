@@ -1315,7 +1315,14 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
     source = Path("app/static/workbench-tasks.js").read_text(encoding="utf-8")
     runner = f"""
 (async () => {{
-  const classList = () => ({{add() {{}}, remove() {{}}}});
+  const classList = () => {{
+    const values = new Set(["hidden"]);
+    return {{
+      add(...names) {{ names.forEach((name) => values.add(name)); }},
+      remove(...names) {{ names.forEach((name) => values.delete(name)); }},
+      contains(name) {{ return values.has(name); }},
+    }};
+  }};
   const element = () => ({{
     innerHTML: "",
     textContent: "",
@@ -1351,10 +1358,15 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
   global.CustomEvent = class CustomEvent {{ constructor(name, options) {{ this.type = name; this.detail = options?.detail; }} }};
   let shouldFail = false;
   let payload = {{
-    running_tasks: [{{task_id: "job_1", title: "正在富化", status: "running", progress: 30}}],
+    running_tasks: Array.from({{length: 5}}, (_, index) => ({{
+      task_id: `job_${{index + 1}}`, title: `正在富化 ${{index + 1}}`, status: "running", progress: 30,
+    }})),
     resumable_tasks: [{{task_id: "clone_1", title: "可继续创作者", status: "resumable"}}],
-    recent_cases: [], recent_creator_reports: [], recent_strategy_plans: [], recent_failures: [],
-    capabilities: {{running_task_count: 1}}, source_errors: [],
+    recent_cases: [{{title: "部分结果下仍显示的 Case", type: "单作品 Case", status: "ready"}}],
+    recent_creator_reports: [], recent_strategy_plans: [], recent_failures: [],
+    capabilities: {{running_task_count: 500}},
+    source_errors: [],
+    meta: {{partial: true, truncated_sources: ["creator_runtime"]}},
   }};
   global.fetch = async () => {{
     if (shouldFail) throw new Error("offline");
@@ -1363,6 +1375,14 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
   eval({json.dumps(source)});
   await new Promise((resolve) => setTimeout(resolve, 0));
   const running = elements["workbench-priority"].innerHTML;
+  const partialWarning = elements["workbench-source-warning"].innerHTML;
+  const partialOnly = elements["workbench-source-warning"].classList.contains("partial-only");
+  const recentCase = elements["workbench-recent-cases"].innerHTML;
+  const capabilities = elements["workbench-capabilities"].innerHTML;
+
+  payload = {{...payload, capabilities: {{running_task_count: 5}}, meta: {{partial: false, truncated_sources: []}}}};
+  await WorkbenchTasks.refresh();
+  const runningExact = elements["workbench-priority"].innerHTML;
 
   payload = {{...payload, running_tasks: [], capabilities: {{running_task_count: 0}}}};
   await WorkbenchTasks.refresh();
@@ -1377,7 +1397,9 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
   const failed = elements["workbench-priority"].innerHTML;
   const announcement = elements["workbench-overview-announcement"].textContent;
 
-  process.stdout.write(JSON.stringify({{running, resumable, empty, failed, announcement}}));
+  process.stdout.write(JSON.stringify({{
+    running, runningExact, partialWarning, partialOnly, recentCase, capabilities, resumable, empty, failed, announcement,
+  }}));
 }})().catch((error) => {{ console.error(error); process.exit(1); }});
 """
     completed = subprocess.run(
@@ -1390,7 +1412,19 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
     result = json.loads(completed.stdout)
 
     assert "正在运行" in result["running"]
+    assert "显示 5 / 共 500 个运行任务" in result["running"]
+    assert "5 个任务" in result["runningExact"]
+    assert "显示 5 / 共" not in result["runningExact"]
     assert "继续上次任务" not in result["running"]
+    assert result["partialOnly"] is True
+    assert "当前展示部分结果" in result["partialWarning"]
+    assert "创作者任务索引仅展示最近一部分记录，较早的任务或报告可能未列出。" in result["partialWarning"]
+    assert "完整历史浏览将在后续资产库阶段提供。" in result["partialWarning"]
+    assert "部分状态已安全降级" not in result["partialWarning"]
+    assert "creator_runtime" not in result["partialWarning"]
+    assert "部分结果下仍显示的 Case" in result["recentCase"]
+    assert "运行任务" in result["capabilities"]
+    assert "500" in result["capabilities"]
     assert "继续上次任务" in result["resumable"]
     assert "选择分析对象" in result["empty"]
     assert "分析单条作品" in result["empty"]

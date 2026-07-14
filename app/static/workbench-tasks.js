@@ -193,13 +193,38 @@
     `).join("");
   }
 
-  function renderWarnings(sourceErrors, {requestFailed = false} = {}) {
+  function partialResultNotices(meta, {hasSourceErrors = false} = {}) {
+    if (!meta || typeof meta !== "object" || meta.partial !== true) {
+      return [];
+    }
+    const truncatedSources = Array.isArray(meta.truncated_sources)
+      ? meta.truncated_sources.map((item) => String(item || "")).slice(0, maxItems)
+      : [];
+    const notices = [];
+    if (truncatedSources.includes("creator_runtime")) {
+      notices.push({
+        message: "创作者任务索引仅展示最近一部分记录，较早的任务或报告可能未列出。",
+        followup: "完整历史浏览将在后续资产库阶段提供。",
+      });
+    }
+    if (!notices.length && !hasSourceErrors) {
+      notices.push({
+        message: "任务概览当前仅返回部分结果，可用任务和最近结果仍已正常展示。",
+        followup: "刷新概览后可再次检查本地索引状态。",
+      });
+    }
+    return notices;
+  }
+
+  function renderWarnings(sourceErrors, meta = {}, {requestFailed = false} = {}) {
     if (!warningContainer) {
       return;
     }
     const errors = itemList(sourceErrors);
-    if (!requestFailed && !errors.length) {
+    const partialNotices = partialResultNotices(meta, {hasSourceErrors: Boolean(errors.length)});
+    if (!requestFailed && !errors.length && !partialNotices.length) {
       warningContainer.classList.add("hidden");
+      warningContainer.classList.remove("partial-only");
       warningContainer.innerHTML = "";
       return;
     }
@@ -208,12 +233,25 @@
       const message = publicText(item.message, "暂时不可用。", 160);
       return `<li><strong>${escapeHtml(source)}</strong><span>${escapeHtml(message)}</span></li>`;
     }).join("");
+    const partialDetails = partialNotices.map((item) => `
+      <div class="workbench-partial-result-note">
+        <p>${escapeHtml(item.message)}</p>
+        <p>${escapeHtml(item.followup)}</p>
+      </div>
+    `).join("");
+    const partialOnly = !requestFailed && !errors.length && Boolean(partialNotices.length);
+    warningContainer.classList.remove("hidden");
+    if (partialOnly) {
+      warningContainer.classList.add("partial-only");
+    } else {
+      warningContainer.classList.remove("partial-only");
+    }
     warningContainer.innerHTML = `
-      <strong>${requestFailed ? "任务概览暂时无法读取" : "部分状态已安全降级"}</strong>
-      <p>新建任务仍可使用；不可用的本地索引不会阻断现有工作流。</p>
+      <strong>${requestFailed ? "任务概览暂时无法读取" : (errors.length ? "部分状态已安全降级" : "当前展示部分结果")}</strong>
+      ${requestFailed || errors.length ? "<p>新建任务仍可使用；不可用的本地索引不会阻断现有工作流。</p>" : ""}
+      ${partialDetails}
       ${details ? `<ul>${details}</ul>` : ""}
     `;
-    warningContainer.classList.remove("hidden");
   }
 
   function renderNewTaskButton(route, title, description) {
@@ -318,13 +356,18 @@
     const runningTasks = itemList(payload?.running_tasks);
     const resumableTasks = itemList(payload?.resumable_tasks);
     if (runningTasks.length) {
+      const reportedTotal = safeCount(payload?.capabilities?.running_task_count);
+      const runningTotal = Math.max(runningTasks.length, reportedTotal);
+      const runningCountLabel = runningTotal > runningTasks.length
+        ? `显示 ${runningTasks.length} / 共 ${runningTotal} 个运行任务`
+        : `${runningTasks.length} 个任务`;
       priorityContainer.innerHTML = `
         <header class="workbench-section-heading">
           <div>
             <span>实时任务</span>
             <h3 id="workbench-priority-title">正在运行</h3>
           </div>
-          <strong>${runningTasks.length} 个任务</strong>
+          <strong>${escapeHtml(runningCountLabel)}</strong>
         </header>
         <div class="workbench-running-list">
           ${runningTasks.map((item) => renderRunningTask(item, focusedTaskId)).join("")}
@@ -411,7 +454,7 @@
     actionSequence = 0;
     latestPayload = payload;
     renderCapabilities(payload);
-    renderWarnings(payload?.source_errors);
+    renderWarnings(payload?.source_errors, payload?.meta);
     renderPriority(payload, focusedTaskId);
     renderRecents(payload);
   }
@@ -421,7 +464,7 @@
     actionSequence = 0;
     latestPayload = null;
     renderCapabilities({capabilities: {}});
-    renderWarnings([], {requestFailed: true});
+    renderWarnings([], {}, {requestFailed: true});
     if (priorityContainer) {
       priorityContainer.innerHTML = renderNewTaskPriority();
     }

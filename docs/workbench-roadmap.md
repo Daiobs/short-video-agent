@@ -111,9 +111,11 @@ Overview 只聚合已有本机状态，不建立第二真源：
 
 ## 已知问题
 
-### 1. 测试运行数据未隔离
+### 1. 测试运行数据隔离（已关闭）
 
-测试、开发运行和本机真实状态若复用默认数据库或产物根目录，Overview 可能把测试 job、Case 或 Creator 产物当作最近结果。验收前应让相关测试显式注入临时数据库和临时产物目录，并确认测试结束后不污染默认运行数据。该项当前未关闭。
+已关闭：Stage A 新增测试显式注入临时 SQLite 和临时产物目录；测试结束后不污染默认 job、Case、Creator Runtime 或最近报告。
+
+开发注意事项：手动开发冒烟仍应使用临时或明确可清理的数据目录。
 
 ### 2. 旧 stale job
 
@@ -125,7 +127,7 @@ Overview 只聚合已有本机状态，不建立第二真源：
 
 ### 4. Runtime 索引截断
 
-为限制请求成本，Creator Runtime 只检查有界数量的最新候选。超过上限时，较旧但仍可继续的任务或报告可能不出现在首页；候选响应会把该来源标记为截断和部分结果。Stage A 需验证提示与降级行为，完整历史浏览或分页属于后续资产库范围。
+为限制请求成本，Creator Runtime 只检查有界数量的最新候选。超过上限时，较旧但仍可继续的任务或报告可能不出现在首页；候选响应会把该来源标记为截断和部分结果，任务控制台会显示非阻断式“部分结果”提示。Stage A 已覆盖 API 截断与前端展示行为；完整历史浏览或分页属于后续资产库范围。
 
 ## Stage B 入口条件
 
@@ -134,7 +136,7 @@ Overview 只聚合已有本机状态，不建立第二真源：
 1. Stage A 的 API、首页优先级、最近结果、能力状态、空状态和安全降级全部通过验收。
 2. 单作品、Creator Clone、报告即时显示、刷新恢复、设置入口和本机安全合同完成回归。
 3. 全局测试、JavaScript `--check`、差异检查、至少 500 条规模测试和可用的页面/HTTP 冒烟结果已如实记录。
-4. 四项已知问题均有明确处置：在 Stage A 关闭，或作为有测试与用户提示的受控限制进入后续阶段。
+4. 四项已知问题均已有明确处置：测试数据隔离已关闭；旧 stale job 留待 Stage B 建立显式状态；Strategy Plan 通过时间比较与 `stale` 测试提示风险；Runtime 截断已由 API 和 UI 明示，完整历史浏览留待 Stage C。
 5. Stage A Draft PR 已完成人工审查并合并，合并 commit 已记录。
 6. 用户明确确认进入 Stage B；不得由自动流程自行推进。
 
@@ -145,12 +147,12 @@ Stage B 的首要工作是统一任务 DTO、精确 `resume_target`、失败恢�
 | 检查项 | 状态 | 结果或证据 |
 | --- | --- | --- |
 | 最新 `main` 基线 `pytest -q` | 通过 | `344 passed, 1 warning`，阶段开始前执行 |
-| Stage A 完整 `pytest -q` | 通过 | `356 passed, 1 warning in 47.76s` |
+| Stage A 完整 `pytest -q` | 通过 | `356 passed, 1 warning in 50.96s` |
 | `node --check app/static/app.js` | 通过 | 使用 Codex bundled Node.js |
 | `node --check app/static/workbench.js` | 通过 | 使用 Codex bundled Node.js |
 | 新增 JavaScript 模块 `node --check` | 通过 | `app/static/workbench-tasks.js` |
 | `git diff --check` | 通过 | 无空白或补丁格式错误 |
-| Overview API 正常、空状态与来源失败 | 通过 | `tests/test_workbench_overview.py` 与 Node 任务优先级测试 |
+| Overview API 正常、空状态与来源失败 | 通过 | `tests/test_workbench_overview.py` 与 Node 任务优先级、截断提示、5/500 计数测试 |
 | 文件缺失、stale、敏感字段与截断 | 通过 | 覆盖 Bearer/JWT、畸形样本、超限 Runtime 索引和 Strategy stale |
 | 报告即时显示与刷新恢复 | 通过 | 既有 Creator Clone 回归测试进入完整测试套件 |
 | 500 条规模测试 | 通过 | 500 Jobs + 500 Cases + 500 Creator 记录；有界结果与读取次数 |
