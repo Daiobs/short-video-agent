@@ -413,10 +413,6 @@ p {
     margin: 8px 0 0;
 }
 
-.workbench-data-source-panel > button {
-    flex: 0 0 auto;
-}
-
 .workbench-data-source-heading {
     display: flex;
     align-items: center;
@@ -500,12 +496,6 @@ p {
     gap: 5px;
     margin: 8px 0 0;
     padding-left: 20px;
-}
-
-#douyin-data-source-settings,
-#llm-capability-settings,
-#system-diagnostics-settings {
-    scroll-margin-top: 18px;
 }
 
 .ai-assistant-toggle {

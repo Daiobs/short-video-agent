@@ -5969,27 +5969,11 @@ function openSettingsModal() {
   });
 }
 
-function openWorkbenchSettings(targetId = "") {
-  openSettingsModal();
-  if (targetId === "douyin-data-source-settings") {
-    loadDataSourceStatus().catch(() => {});
-  } else if (targetId === "llm-capability-settings") {
-    loadLlmStatus().catch(() => {});
-  }
-  window.setTimeout(() => {
-    document.getElementById(targetId)?.scrollIntoView({behavior: "smooth", block: "start"});
-  }, 120);
-}
-
 function markWorkbenchPreflightFailed() {
   const fallback = window.WorkbenchShell?.apiFailureBadge("本地状态")
     || {label: "本地状态待确认", status: "partial"};
   setWorkbenchStatus("security", fallback.label, fallback.status);
 }
-
-document.addEventListener("workbench:open-settings", (event) => {
-  openWorkbenchSettings(event.detail?.targetId || "");
-});
 
 function updateAssistantContext(route = routeFromHash()) {
   if (!assistantCurrentStage || !assistantNextStep || !assistantMacroStep) {

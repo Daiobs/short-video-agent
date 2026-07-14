@@ -290,7 +290,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="home-workbench"' in response.text
     assert 'data-home-panel="workbench"' in response.text
     assert "主要工作流" in response.text
-    assert "配置与诊断" in response.text
+    assert "配置与诊断" not in response.text
     assert "高级工具 / 备用采集" in response.text
     assert "未来模块" in response.text
     assert "素材资产管理" not in response.text
@@ -303,9 +303,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "拆解工作台" in response.text
     assert "案例报告库" in response.text
     assert 'data-workbench-coming-soon="案例报告库"' in response.text
-    assert 'data-workbench-open-settings="data-source">抖音数据源' in response.text
-    assert 'data-workbench-open-settings="ai">AI 能力设置' in response.text
-    assert 'data-workbench-open-settings="diagnostics">系统诊断' in response.text
+    assert 'data-workbench-open-settings' not in response.text
+    assert 'id="settings-toggle"' in response.text
     assert "Provider 管理" not in response.text
     assert "platform_lab 测试中心" in response.text
     assert 'data-workbench-coming-soon="platform_lab 测试中心"' in response.text
@@ -633,7 +632,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function comingSoonBehavior" in workbench_script
     assert 'group.dataset.itemsCollapsed = collapsed ? "false" : "true";' in workbench_script
     assert ".workbench-nav-group[data-items-collapsed=\"true\"] .workbench-nav-item" in stylesheet
-    assert "function settingsTarget" in workbench_script
+    assert "function settingsTarget" not in workbench_script
     assert 'id="workbench-douyin-source-card"' in response.text
     assert 'id="douyin-data-source-settings"' in response.text
     assert 'id="llm-capability-settings"' in response.text
@@ -642,6 +641,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "进入单作品拆解" in home_workbench
     assert "进入创作者拆解" in home_workbench
     assert "本机 Chrome 辅助" not in home_workbench
+    assert "配置抖音数据源" not in home_workbench
     assert "workbench-overview-grid" not in home_workbench
     assert 'const shouldShowResultContainer = !["import", "export"].includes(activeStage)' in script
     assert 'id="profile-results-card"' in response.text
@@ -1235,38 +1235,13 @@ def test_workbench_shell_pure_behaviors() -> None:
     runner = f"""
 global.window = globalThis;
 global.document = {{readyState: "loading", addEventListener() {{}}}};
-global.CustomEvent = class CustomEvent {{
-  constructor(type, options = {{}}) {{
-    this.type = type;
-    this.detail = options.detail;
-  }}
-}};
 eval({json.dumps(source)});
-let settingsClickHandler = null;
-let settingsEvent = null;
-const settingsItem = {{
-  dataset: {{workbenchOpenSettings: "data-source"}},
-  addEventListener(type, handler) {{
-    if (type === "click") settingsClickHandler = handler;
-  }},
-}};
-WorkbenchShell.initNavigation({{
-  querySelectorAll(selector) {{
-    return selector === "[data-workbench-open-settings]" ? [settingsItem] : [];
-  }},
-  dispatchEvent(event) {{
-    settingsEvent = {{type: event.type, detail: event.detail}};
-  }},
-}});
-settingsClickHandler();
 const output = {{
   routes: ["", "#single", "profile", "#unknown", " #WORKBENCH "].map(WorkbenchShell.routeFromHash),
   ready: WorkbenchShell.preflightBadge({{status: "ready", label: "ffmpeg"}}),
   unknown: WorkbenchShell.preflightBadge({{status: "unexpected", label: "OCR"}}),
   failure: WorkbenchShell.apiFailureBadge("preflight"),
   comingSoon: WorkbenchShell.comingSoonBehavior("案例报告库"),
-  settingsTargets: ["data-source", "ai", "diagnostics", "unknown"].map(WorkbenchShell.settingsTarget),
-  settingsEvent,
 }};
 process.stdout.write(JSON.stringify(output));
 """
@@ -1286,16 +1261,6 @@ process.stdout.write(JSON.stringify(output));
     assert result["comingSoon"]["disabled"] is True
     assert result["comingSoon"]["shouldFetch"] is False
     assert "尚未接入" in result["comingSoon"]["message"]
-    assert result["settingsTargets"] == [
-        "douyin-data-source-settings",
-        "llm-capability-settings",
-        "system-diagnostics-settings",
-        "",
-    ]
-    assert result["settingsEvent"] == {
-        "type": "workbench:open-settings",
-        "detail": {"section": "data-source", "targetId": "douyin-data-source-settings"},
-    }
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:
