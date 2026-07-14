@@ -3621,10 +3621,20 @@ async function runCreatorCloneNextAction() {
   return handleWizardPrimaryAction();
 }
 
+function profileSelectionSetsEqual(left, right) {
+  if (left.size !== right.size) {
+    return false;
+  }
+  return [...left].every((key) => right.has(key));
+}
+
 function setProfileSelection(items) {
   const selectedIds = new Set(items.map(sampleViewItemKey));
+  const selectionChanged = !profileSelectionSetsEqual(profileSelectedKeys, selectedIds);
   profileSelectedKeys = selectedIds;
-  invalidateCreatorRuntimeReportForSelectionChange();
+  if (selectionChanged) {
+    invalidateCreatorRuntimeReportForSelectionChange();
+  }
   document.querySelectorAll("[data-profile-select]").forEach((input) => {
     input.checked = selectedIds.has(input.value) && !input.disabled;
   });
@@ -5492,31 +5502,119 @@ async function pollCreatorCloneDistillJob(jobId) {
       const reportVisible = expectsReport ? hasRenderedCreatorCloneReport() : hasRenderedCreatorCloneOutput();
       if (rendered && reportVisible) {
         revealCreatorCloneResultCard({scroll: false});
-        profileScanStatus.textContent = hydrateError
+        const statusMessage = hydrateError
           ? `${hydrateError.error_code || "REPORT_SYNC_FAILED"}：${hydrateError.message || "报告文件同步失败，已使用任务结果直接渲染。"}`
           : successMessage;
-        return;
+        profileScanStatus.textContent = statusMessage;
+        return {
+          completed: true,
+          rendered: true,
+          setId,
+          resultPayload,
+          statusMessage,
+        };
       }
       profileScanStatus.textContent = "REPORT_RENDER_FAILED：任务结果与持久化报告均无法渲染，请重新打开报告或再次蒸馏。";
       creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
       setProfileStageView("export");
       renderCreatorCloneNextAction();
-      return;
+      return {
+        completed: true,
+        rendered: false,
+        setId,
+        resultPayload,
+        statusMessage: profileScanStatus.textContent,
+      };
     }
     applyCreatorCloneDistillPayload(resultPayload);
-    return;
+    return {
+      completed: true,
+      rendered: hasRenderedCreatorCloneOutput(),
+      setId: currentCreatorCloneSetId(),
+      resultPayload,
+      statusMessage: profileScanStatus.textContent,
+    };
   }
   if (job.status === "failed") {
     jobMessage.className = "job-message failed";
     jobMessage.textContent = `${job.error_code || "ERROR"}：${job.message || "蒸馏失败"}`;
     profileScanStatus.textContent = jobMessage.textContent;
     updateCreatorCloneSelectionStatus();
-    return;
+    return {completed: false, rendered: false};
   }
   await new Promise((resolve) => {
     window.setTimeout(resolve, 900);
   });
   return pollCreatorCloneDistillJob(jobId);
+}
+
+function waitForCreatorCloneReportPaint() {
+  return new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    window.setTimeout(resolve, 0);
+  });
+}
+
+async function finalizeCreatorCloneDistillView(completion, {inputValueAtStart = "", scroll = true} = {}) {
+  if (!completion?.completed) {
+    return false;
+  }
+  const currentInputValue = creatorCloneUnifiedInputValue();
+  const inputWasNotChangedDuringTask = currentInputValue === String(inputValueAtStart || "").trim();
+  if (inputWasNotChangedDuringTask) {
+    commitCreatorCloneUnifiedInput();
+  }
+
+  const resultPayload = completion.resultPayload || {};
+  applyCreatorIntelligencePayload(resultPayload);
+  const setId = completion.setId || resultPayload.set?.set_id || currentCreatorCloneSetId();
+  if (!hasRenderedCreatorCloneOutput() && setId) {
+    try {
+      await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});
+    } catch (error) {
+      if (hasCreatorCloneResultPayload(resultPayload.result) || resultPayload.prompt) {
+        safeRenderCreatorCloneResult(
+          resultPayload.result || null,
+          resultPayload.set,
+          resultPayload.prompt || "",
+          resultPayload.exports || {},
+          {scroll: false},
+        );
+      } else {
+        profileScanStatus.textContent = `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告同步失败，请重新打开报告。"}`;
+      }
+    }
+  }
+
+  if (!inputWasNotChangedDuringTask && hasPendingQuickImportInput()) {
+    return hasRenderedCreatorCloneOutput();
+  }
+
+  revealCreatorCloneResultCard({scroll: false});
+  await waitForCreatorCloneReportPaint();
+
+  const outputReady = hasRenderedCreatorCloneOutput();
+  if (!outputReady) {
+    profileScanStatus.textContent = "REPORT_RENDER_FAILED：报告已生成，但页面没有生成报告节点，请重新打开报告。";
+    return false;
+  }
+
+  // Reapply the export stage after the distill function unlocks its controls;
+  // the committed input baseline keeps later wizard renders on this stage.
+  setProfileStageView("export");
+  creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
+  renderCreatorCloneNextAction();
+  creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
+  if (completion.statusMessage) {
+    profileScanStatus.textContent = completion.statusMessage;
+  }
+  if (scroll) {
+    creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
+  }
+  return true;
 }
 
 // Creator Clone: distillation
@@ -5546,6 +5644,8 @@ async function distillSelectedCreatorClone(options = {}) {
   }
   setCreatorCloneDistillButtonsLocked(true);
   renderCreatorCloneNextAction();
+  const inputValueAtStart = creatorCloneUnifiedInputValue();
+  let completion = null;
   try {
     const selectedIds = selected.map(sampleViewItemKey);
     await syncCreatorCloneWorkflowSelection();
@@ -5570,7 +5670,7 @@ async function distillSelectedCreatorClone(options = {}) {
     });
     const payload = await readJsonResponse(response);
     profileScanStatus.textContent = `已创建创作者蒸馏任务：${payload.selected_count || selected.length} 条样本。`;
-    await pollCreatorCloneDistillJob(payload.job_id);
+    completion = await pollCreatorCloneDistillJob(payload.job_id);
   } catch (error) {
     profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "蒸馏失败"}`;
     jobMessage.className = "job-message failed";
@@ -5579,6 +5679,9 @@ async function distillSelectedCreatorClone(options = {}) {
     setCreatorCloneDistillButtonsLocked(false);
     updateCreatorCloneSelectionStatus();
     renderCreatorCloneNextAction();
+  }
+  if (completion?.completed) {
+    await finalizeCreatorCloneDistillView(completion, {inputValueAtStart, scroll: true});
   }
 }
 
@@ -5599,6 +5702,8 @@ async function batchDistillSelectedCreatorClone(options = {}) {
   setProfileStageView("distill", {scroll: true});
   setCreatorCloneDistillButtonsLocked(true);
   renderCreatorCloneNextAction();
+  const inputValueAtStart = creatorCloneUnifiedInputValue();
+  let completion = null;
   try {
     await syncCreatorCloneWorkflowSelection();
     await markCreatorCloneDistillationStarted();
@@ -5622,7 +5727,7 @@ async function batchDistillSelectedCreatorClone(options = {}) {
     });
     const payload = await readJsonResponse(response);
     profileScanStatus.textContent = `已创建分批蒸馏任务：${payload.selected_count || selected.length} 条样本，${payload.batch_count || 1} 个批次。`;
-    await pollCreatorCloneDistillJob(payload.job_id);
+    completion = await pollCreatorCloneDistillJob(payload.job_id);
   } catch (error) {
     profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "分批蒸馏失败"}`;
     jobMessage.className = "job-message failed";
@@ -5631,6 +5736,9 @@ async function batchDistillSelectedCreatorClone(options = {}) {
     setCreatorCloneDistillButtonsLocked(false);
     updateCreatorCloneSelectionStatus();
     renderCreatorCloneNextAction();
+  }
+  if (completion?.completed) {
+    await finalizeCreatorCloneDistillView(completion, {inputValueAtStart, scroll: true});
   }
 }
 

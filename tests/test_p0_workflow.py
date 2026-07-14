@@ -1471,6 +1471,131 @@ def test_creator_clone_distill_success_report_recovery_runs_in_javascript() -> N
     assert both_failure["status"].startswith("REPORT_RENDER_FAILED")
 
 
+def test_creator_clone_distill_finalizes_report_after_unlock_in_javascript() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; final report visibility is covered by manual smoke testing.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    finalizer = source[
+        source.index("function waitForCreatorCloneReportPaint") : source.index("// Creator Clone: distillation")
+    ]
+    single_flow = source[
+        source.index("async function distillSelectedCreatorClone") : source.index("async function batchDistillSelectedCreatorClone")
+    ]
+    batch_flow = source[
+        source.index("async function batchDistillSelectedCreatorClone") : source.index("async function loadLlmStatus")
+    ]
+    assert single_flow.index("setCreatorCloneDistillButtonsLocked(false)") < single_flow.index("await finalizeCreatorCloneDistillView")
+    assert single_flow.index("updateCreatorCloneSelectionStatus()") < single_flow.index("await finalizeCreatorCloneDistillView")
+    assert batch_flow.index("setCreatorCloneDistillButtonsLocked(false)") < batch_flow.index("await finalizeCreatorCloneDistillView")
+    assert batch_flow.index("updateCreatorCloneSelectionStatus()") < batch_flow.index("await finalizeCreatorCloneDistillView")
+
+    runner = (
+        'var profileQuickInput = {value: "https://www.douyin.com/user/creator-a"};\n'
+        'var profileQuickInputRestoredValue = "";\n'
+        'var profileStageView = "distill";\n'
+        'var reportPresent = true;\n'
+        'var promptPresent = false;\n'
+        'var commitCalls = 0;\n'
+        'var scrollCalls = 0;\n'
+        'var profileScanStatus = {textContent: ""};\n'
+        'function makeClassList() {\n'
+        '  const values = new Set(["hidden", "stage-hidden"]);\n'
+        '  return {add(...items) { items.forEach((item) => values.add(item)); }, remove(...items) { items.forEach((item) => values.delete(item)); }, contains(item) { return values.has(item); }};\n'
+        '}\n'
+        'var creatorCloneResultCard = {classList: makeClassList(), scrollIntoView() { scrollCalls += 1; }};\n'
+        'function creatorCloneUnifiedInputValue() { return profileQuickInput.value.trim(); }\n'
+        'function commitCreatorCloneUnifiedInput() { profileQuickInputRestoredValue = creatorCloneUnifiedInputValue(); commitCalls += 1; }\n'
+        'function hasPendingQuickImportInput() { return Boolean(creatorCloneUnifiedInputValue() && creatorCloneUnifiedInputValue() !== profileQuickInputRestoredValue); }\n'
+        'function applyCreatorIntelligencePayload() {}\n'
+        'function currentCreatorCloneSetId() { return "clone_demo"; }\n'
+        'function hasRenderedCreatorCloneOutput() { return reportPresent || promptPresent; }\n'
+        'function hasCreatorCloneResultPayload(value) { return Boolean(value && Object.keys(value).length); }\n'
+        'async function hydrateCreatorCloneReportFromSet() { reportPresent = true; }\n'
+        'function safeRenderCreatorCloneResult() { reportPresent = true; return true; }\n'
+        'function revealCreatorCloneResultCard() { profileStageView = "export"; creatorCloneResultCard.classList.remove("hidden", "stage-hidden"); return hasRenderedCreatorCloneOutput(); }\n'
+        'function setProfileStageView(stage) { profileStageView = stage; }\n'
+        'function renderCreatorCloneNextAction() {}\n'
+        'var window = {requestAnimationFrame(callback) { callback(); }, setTimeout(callback) { callback(); }};\n'
+        + finalizer
+        + "\n"
+        + "(async () => {\n"
+        + "  const result = await finalizeCreatorCloneDistillView({completed: true, rendered: true, setId: 'clone_demo', resultPayload: {result: {summary: 'ready'}}, statusMessage: '创作者蒸馏完成。'}, {inputValueAtStart: profileQuickInput.value, scroll: true});\n"
+        + "  process.stdout.write(JSON.stringify({result, profileStageView, pending: hasPendingQuickImportInput(), commitCalls, scrollCalls, hidden: creatorCloneResultCard.classList.contains('hidden'), stageHidden: creatorCloneResultCard.classList.contains('stage-hidden'), status: profileScanStatus.textContent}));\n"
+        + "})().catch((error) => { console.error(error); process.exit(1); });\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result == {
+        "result": True,
+        "profileStageView": "export",
+        "pending": False,
+        "commitCalls": 1,
+        "scrollCalls": 1,
+        "hidden": False,
+        "stageHidden": False,
+        "status": "创作者蒸馏完成。",
+    }
+
+
+def test_profile_selection_refresh_only_invalidates_report_when_selection_changes() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; selection refresh behavior is covered by manual smoke testing.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    selection_functions = source[
+        source.index("function profileSelectionSetsEqual") : source.index("function selectedBuildableSampleViewItems")
+    ]
+    runner = (
+        'var profileSelectedKeys = new Set(["sample_a", "sample_b"]);\n'
+        'var invalidations = 0;\n'
+        'var syncCalls = 0;\n'
+        'function sampleViewItemKey(item) { return item.sample_id; }\n'
+        'function invalidateCreatorRuntimeReportForSelectionChange() { invalidations += 1; }\n'
+        'function updateCreatorCloneSelectionStatus() {}\n'
+        'function scheduleCreatorCloneSelectionSync() { syncCalls += 1; }\n'
+        'var document = {querySelectorAll() { return []; }};\n'
+        + selection_functions
+        + "\n"
+        + "setProfileSelection([{sample_id: 'sample_b'}, {sample_id: 'sample_a'}]);\n"
+        + "const unchangedInvalidations = invalidations;\n"
+        + "setProfileSelection([{sample_id: 'sample_a'}, {sample_id: 'sample_c'}]);\n"
+        + "process.stdout.write(JSON.stringify({unchangedInvalidations, invalidations, syncCalls, selected: [...profileSelectedKeys].sort()}));\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result == {
+        "unchangedInvalidations": 0,
+        "invalidations": 1,
+        "syncCalls": 2,
+        "selected": ["sample_a", "sample_c"],
+    }
+
+
 def test_calibration_page_uses_versioned_static_assets() -> None:
     response = client.get("/calibration")
     assert response.status_code == 200
