@@ -289,19 +289,23 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'class="page workbench-content workbench-page"' in response.text
     assert 'id="home-workbench"' in response.text
     assert 'data-home-panel="workbench"' in response.text
-    assert "短视频拆解中心" in response.text
-    assert "素材资产管理" in response.text
-    assert "平台与采集" in response.text
-    assert "规则与校准" in response.text
-    assert "系统" in response.text
-    assert 'data-workbench-nav-group data-disabled-collapsed="true"' in response.text
+    assert "主要工作流" in response.text
+    assert "配置与诊断" in response.text
+    assert "高级工具 / 备用采集" in response.text
+    assert "未来模块" in response.text
+    assert "素材资产管理" not in response.text
+    assert "平台与采集" not in response.text
+    assert "规则与校准" not in response.text
+    assert response.text.count('data-workbench-nav-group data-items-collapsed="true"') == 2
     assert 'class="workbench-nav-group-icon"' in response.text
     assert 'class="workbench-nav-chevron"' in response.text
     assert 'data-workbench-nav-toggle' in response.text
     assert "拆解工作台" in response.text
     assert "案例报告库" in response.text
     assert 'data-workbench-coming-soon="案例报告库"' in response.text
-    assert "系统设置" in response.text
+    assert 'data-workbench-open-settings="data-source">抖音数据源' in response.text
+    assert 'data-workbench-open-settings="ai">AI 能力设置' in response.text
+    assert 'data-workbench-open-settings="diagnostics">系统诊断' in response.text
     assert "Provider 管理" not in response.text
     assert "platform_lab 测试中心" in response.text
     assert 'data-workbench-coming-soon="platform_lab 测试中心"' in response.text
@@ -309,7 +313,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "本机 Chrome 辅助" in response.text
     assert "本地运行状态</button>" not in response.text
     assert "输出目录浏览器" in response.text
-    assert "数据边界" in response.text
+    assert "数据边界" not in response.text
     assert "LLM / ASR / OCR 设置" not in response.text
     assert "素材导入" in response.text
     assert "爆款拆解" in response.text
@@ -367,8 +371,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-capture-audit"' in response.text
     assert 'id="profile-decision-board"' in response.text
     assert 'id="profile-segments-preview"' in response.text
-    assert "默认不依赖 Cookie" in response.text
-    assert "Cookie / Web API 仅作为可选增强层" in response.text
+    assert "主页扫描优先使用已配置的 Douyin Cookie / Web API" in response.text
+    assert "Douyin Cookie / Web API 是当前主页作品扫描的主力数据源" in response.text
+    assert "Douyin Cookie 由用户主动配置，仅保存在本机。" in response.text
+    assert "已保存 Cookie 不回显原文。" in response.text
+    assert "Cookie 不进入数据库、素材包、Prompt 或日志。" in response.text
+    assert "本机 Chrome 辅助不读取 Cookie。" in response.text
+    assert "不读取 Cookie 原文" not in response.text
     assert "不绕风控" in response.text
     assert "Creator Distillation" in response.text
     assert "浏览器辅助采集" in response.text
@@ -541,7 +550,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "写入富化归档" in response.text
     assert "本地工作流预检" in response.text
     assert "本机 Chrome 助手使用提示" in response.text
-    assert "创作者蒸馏数据源" in response.text
+    assert "抖音数据源" in response.text
     assert "生成下一批创作方案" in response.text
     assert 'id="creator-strategy-plan-card"' in response.text
     assert 'id="generate-creator-strategy-button"' in response.text
@@ -622,8 +631,18 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function normalizeRoute" in workbench_script
     assert "function normalizeBadgeState" in workbench_script
     assert "function comingSoonBehavior" in workbench_script
-    assert 'group.dataset.disabledCollapsed = collapsed ? "false" : "true";' in workbench_script
-    assert ".workbench-nav-group[data-disabled-collapsed=\"true\"] .workbench-nav-item.disabled" in stylesheet
+    assert 'group.dataset.itemsCollapsed = collapsed ? "false" : "true";' in workbench_script
+    assert ".workbench-nav-group[data-items-collapsed=\"true\"] .workbench-nav-item" in stylesheet
+    assert "function settingsTarget" in workbench_script
+    assert 'id="workbench-douyin-source-card"' in response.text
+    assert 'id="douyin-data-source-settings"' in response.text
+    assert 'id="llm-capability-settings"' in response.text
+    assert 'id="system-diagnostics-settings"' in response.text
+    home_workbench = response.text.split('id="home-workbench"', 1)[1].split('id="home-single"', 1)[0]
+    assert "进入单作品拆解" in home_workbench
+    assert "进入创作者拆解" in home_workbench
+    assert "本机 Chrome 辅助" not in home_workbench
+    assert "workbench-overview-grid" not in home_workbench
     assert 'const shouldShowResultContainer = !["import", "export"].includes(activeStage)' in script
     assert 'id="profile-results-card"' in response.text
     assert 'id="creator-clone-result-card"' in response.text
@@ -1170,7 +1189,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".profile-evidence-status.warning" in stylesheet
     assert "图文/照片" in script
     assert "图文/元数据样本会保存为蒸馏参考" in script
-    assert "API 与解析设置" in response.text
+    assert "本地能力与数据源设置" in response.text
     assert 'id="test-llm-button"' in response.text
     assert "解析结果" in response.text
     assert "关键帧总览" in response.text
@@ -1216,13 +1235,38 @@ def test_workbench_shell_pure_behaviors() -> None:
     runner = f"""
 global.window = globalThis;
 global.document = {{readyState: "loading", addEventListener() {{}}}};
+global.CustomEvent = class CustomEvent {{
+  constructor(type, options = {{}}) {{
+    this.type = type;
+    this.detail = options.detail;
+  }}
+}};
 eval({json.dumps(source)});
+let settingsClickHandler = null;
+let settingsEvent = null;
+const settingsItem = {{
+  dataset: {{workbenchOpenSettings: "data-source"}},
+  addEventListener(type, handler) {{
+    if (type === "click") settingsClickHandler = handler;
+  }},
+}};
+WorkbenchShell.initNavigation({{
+  querySelectorAll(selector) {{
+    return selector === "[data-workbench-open-settings]" ? [settingsItem] : [];
+  }},
+  dispatchEvent(event) {{
+    settingsEvent = {{type: event.type, detail: event.detail}};
+  }},
+}});
+settingsClickHandler();
 const output = {{
   routes: ["", "#single", "profile", "#unknown", " #WORKBENCH "].map(WorkbenchShell.routeFromHash),
   ready: WorkbenchShell.preflightBadge({{status: "ready", label: "ffmpeg"}}),
   unknown: WorkbenchShell.preflightBadge({{status: "unexpected", label: "OCR"}}),
   failure: WorkbenchShell.apiFailureBadge("preflight"),
   comingSoon: WorkbenchShell.comingSoonBehavior("案例报告库"),
+  settingsTargets: ["data-source", "ai", "diagnostics", "unknown"].map(WorkbenchShell.settingsTarget),
+  settingsEvent,
 }};
 process.stdout.write(JSON.stringify(output));
 """
@@ -1242,6 +1286,16 @@ process.stdout.write(JSON.stringify(output));
     assert result["comingSoon"]["disabled"] is True
     assert result["comingSoon"]["shouldFetch"] is False
     assert "尚未接入" in result["comingSoon"]["message"]
+    assert result["settingsTargets"] == [
+        "douyin-data-source-settings",
+        "llm-capability-settings",
+        "system-diagnostics-settings",
+        "",
+    ]
+    assert result["settingsEvent"] == {
+        "type": "workbench:open-settings",
+        "detail": {"section": "data-source", "targetId": "douyin-data-source-settings"},
+    }
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:
@@ -1262,7 +1316,7 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "创作者克隆实验室" in readme
     assert "单主线 Wizard" in readme
     assert "DataSourceManager" in readme
-    assert "Cookie Web API 只是可选增强层" in readme
+    assert "Cookie / Web API，多作品链接、公开扫描和本机 Chrome 辅助作为回退" in readme
     assert "公开网站 / 本机助手模式的目标边界" in readme
     assert "`handoff_manifest.json` 必须带有安全契约声明" in readme
     assert "公开站 / 本机助手边界" in readme
@@ -1633,6 +1687,35 @@ def test_data_source_settings_masks_cookie(monkeypatch) -> None:
     assert status["cookie_diagnostics"]["has_cookie"] is True
     assert status["cookie_diagnostics"]["pair_count"] == 1
     assert "very-secret-cookie-value" not in json.dumps(status["cookie_diagnostics"], ensure_ascii=False)
+
+
+def test_workbench_never_renders_saved_douyin_cookie() -> None:
+    from app.services.runtime_settings import update_douyin_runtime_settings
+
+    secret = (
+        "sessionid=prefix-value; "
+        "secret_cookie_marker=COOKIE_SENTINEL_DO_NOT_RENDER; "
+        "odin_tt=suffix9876"
+    )
+    update_douyin_runtime_settings(
+        {
+            "cookie": secret,
+            "user_agent": "Browser UA",
+            "referer": "https://www.douyin.com/",
+        }
+    )
+
+    page_response = client.get("/")
+    status_response = client.get("/api/settings/data-sources")
+
+    assert page_response.status_code == 200
+    assert status_response.status_code == 200
+    assert secret not in page_response.text
+    assert secret not in status_response.text
+    assert "COOKIE_SENTINEL_DO_NOT_RENDER" not in page_response.text
+    assert "COOKIE_SENTINEL_DO_NOT_RENDER" not in status_response.text
+    assert status_response.json()["data_sources"]["has_cookie"] is True
+    assert status_response.json()["data_sources"]["masked_cookie"] != secret
 
 
 def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypatch, tmp_path) -> None:
@@ -9406,8 +9489,8 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert '<div class="profile-selection-toolbar" id="profile-selection-section" aria-label="素材选样工具栏">' in response.text
     assert "素材列表" in response.text
     assert "主页扫描</button>" not in response.text
-    assert "默认不依赖 Cookie" in response.text
-    assert "Cookie / Web API 仅作为可选增强层" in response.text
+    assert "主页扫描优先使用已配置的 Douyin Cookie / Web API" in response.text
+    assert "Cookie / Web API 优先" in response.text
     assert "不绕验证码、不绕风控" in response.text
     assert "JSON / CSV 导入" in response.text
     assert "已有 Case 导入" in response.text

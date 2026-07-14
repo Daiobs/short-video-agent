@@ -14,64 +14,50 @@
             <p>本地运行的短视频分析、素材富化与创作者策略生成控制台</p>
         </div>
         <nav class="workbench-nav" aria-label="工作台功能导航">
-            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
-                <h2>
-                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
-                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
-                        <span>短视频拆解中心</span>
-                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
-                    </button>
+            <section class="workbench-nav-group">
+                <h2 class="workbench-nav-group-label">
+                    <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                    <span>主要工作流</span>
                 </h2>
-                <button type="button" class="workbench-nav-item" data-home-route="workbench">拆解工作台</button>
-                <button type="button" class="workbench-nav-item" data-home-route="single">单作品解析</button>
-                <button type="button" class="workbench-nav-item" data-home-route="profile">Creator Clone Lab</button>
-                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="案例报告库">案例报告库 <span>coming soon</span></button>
+                <button type="button" class="workbench-nav-item" data-home-route="workbench">工作台</button>
+                <button type="button" class="workbench-nav-item" data-home-route="single">单作品拆解</button>
+                <button type="button" class="workbench-nav-item" data-home-route="profile">创作者拆解</button>
+                <a class="workbench-nav-item" href="/calibration">质量校准</a>
             </section>
-            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
-                <h2>
-                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
-                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
-                        <span>素材资产管理</span>
-                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
-                    </button>
+            <section class="workbench-nav-group">
+                <h2 class="workbench-nav-group-label">
+                    <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                    <span>配置与诊断</span>
                 </h2>
-                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="独立素材池">素材池 <span>复用当前流程</span></button>
-                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="Case 库">Case 库 <span>coming soon</span></button>
-                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="创作者样本库">创作者样本库 <span>coming soon</span></button>
+                <button type="button" class="workbench-nav-item" data-workbench-open-settings="data-source">抖音数据源</button>
+                <button type="button" class="workbench-nav-item" data-workbench-open-settings="ai">AI 能力设置</button>
+                <button type="button" class="workbench-nav-item" data-workbench-open-settings="diagnostics">系统诊断</button>
             </section>
-            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
+            <section class="workbench-nav-group" data-workbench-nav-group data-items-collapsed="true">
                 <h2>
                     <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
                         <span class="workbench-nav-group-icon" aria-hidden="true"></span>
-                        <span>平台与采集</span>
+                        <span>高级工具 / 备用采集</span>
                         <span class="workbench-nav-chevron" aria-hidden="true"></span>
                     </button>
                 </h2>
                 <button type="button" class="workbench-nav-item" data-home-route="profile" data-workbench-focus="chrome">本机 Chrome 辅助</button>
+            </section>
+            <section class="workbench-nav-group" data-workbench-nav-group data-items-collapsed="true">
+                <h2>
+                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
+                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                        <span>未来模块</span>
+                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
+                    </button>
+                </h2>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="案例报告库">案例报告库 <span>coming soon</span></button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="独立素材池">素材池 <span>coming soon</span></button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="Case 库">Case 库 <span>coming soon</span></button>
+                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="创作者样本库">创作者样本库 <span>coming soon</span></button>
                 <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="platform_lab 测试中心">platform_lab 测试中心 <span>未启用</span></button>
-            </section>
-            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
-                <h2>
-                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
-                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
-                        <span>规则与校准</span>
-                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
-                    </button>
-                </h2>
-                <a class="workbench-nav-item" href="/calibration">质量校准样本</a>
                 <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="拆解 Prompt 库">拆解 Prompt 库 <span>coming soon</span></button>
-            </section>
-            <section class="workbench-nav-group" data-workbench-nav-group data-disabled-collapsed="true">
-                <h2>
-                    <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
-                        <span class="workbench-nav-group-icon" aria-hidden="true"></span>
-                        <span>系统</span>
-                        <span class="workbench-nav-chevron" aria-hidden="true"></span>
-                    </button>
-                </h2>
-                <button type="button" class="workbench-nav-item" data-workbench-open-settings>系统设置</button>
                 <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="输出目录浏览器">输出目录浏览器 <span>coming soon</span></button>
-                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="数据边界说明">数据边界 <span>local-only</span></button>
             </section>
         </nav>
     </aside>
@@ -97,20 +83,29 @@
             <div class="settings-title-row">
                 <div>
                     <div class="entry-label">Settings</div>
-                    <h2 id="settings-title">API 与解析设置</h2>
-                    <p class="muted">API Key 和 Cookie 可保存到本机运行时配置，不进数据库、不上传云端、不提交 Git。没有 API Key 也能完成下载和素材包生成。</p>
+                    <h2 id="settings-title">本地能力与数据源设置</h2>
+                    <p class="muted">Douyin Cookie 与 API Key 均由用户主动配置，仅保存在本机运行时配置中，不上传云端、不提交 Git。</p>
                 </div>
                 <button type="button" id="settings-close" class="ghost-button">关闭</button>
             </div>
         </div>
         <input type="hidden" id="quality-preference" value="1080">
         <div class="settings-grid">
-            <div class="settings-panel wide-settings-panel">
+            <div class="settings-panel wide-settings-panel" id="douyin-data-source-settings">
                 <div class="settings-panel-header">
-                    <h3>创作者蒸馏数据源</h3>
+                    <h3>抖音数据源</h3>
                     <span id="data-source-status-badge" class="status-badge">读取中</span>
                 </div>
-                <p class="muted compact-copy">Cookie / Web API 只是可选增强层。默认主路径仍是手动作品链接和浏览器辅助采集；Cookie 不会写入素材包、Prompt 或日志。视频下载默认使用 1080p 优先。</p>
+                <p class="muted compact-copy">Douyin Cookie / Web API 是当前主页作品扫描的主力数据源；未配置或请求失败时，仍可回退到手动链接或高级工具中的本机 Chrome 辅助。视频下载默认使用 1080p 优先。</p>
+                <div class="notice compact-notice data-source-safety-note">
+                    <strong>Cookie 本机安全边界</strong>
+                    <ul>
+                        <li>Douyin Cookie 由用户主动配置，仅保存在本机。</li>
+                        <li>已保存 Cookie 不回显原文。</li>
+                        <li>Cookie 不进入数据库、素材包、Prompt 或日志。</li>
+                        <li>本机 Chrome 辅助不读取 Cookie。</li>
+                    </ul>
+                </div>
                 <div id="data-source-status-list" class="compact-dl"></div>
                 <form id="douyin-settings-form" class="settings-form">
                     <label>Douyin Cookie
@@ -134,7 +129,7 @@
                     <div id="douyin-cookie-test-result" class="settings-test-result muted"></div>
                 </form>
             </div>
-            <div class="settings-panel">
+            <div class="settings-panel" id="llm-capability-settings">
                 <div class="settings-panel-header">
                     <h3>AI 自动拆解</h3>
                     <span id="llm-status-badge" class="status-badge">读取中</span>
@@ -187,7 +182,7 @@ LLM_MODEL=支持图片输入的模型</pre>
                     <span id="llm-test-result" class="muted"></span>
                 </div>
             </div>
-            <div class="settings-panel wide-settings-panel">
+            <div class="settings-panel wide-settings-panel" id="system-diagnostics-settings">
                 <div class="settings-panel-header">
                     <h3>本地工作流预检</h3>
                     <button type="button" id="refresh-preflight-button" class="text-button">刷新</button>
@@ -195,7 +190,7 @@ LLM_MODEL=支持图片输入的模型</pre>
                 <p class="muted compact-copy">检查 Chrome 辅助扫描、ffmpeg/ffprobe、ASR、OCR 和大模型配置是否已准备好。</p>
                 <div class="notice compact-notice chrome-helper-settings-note">
                     <strong>本机 Chrome 助手使用提示</strong>
-                    <p>主页公开扫描受限时，请先在带 DevTools 的本机 Chrome 中打开目标抖音主页并完成登录/验证，再回到“创作者蒸馏”点击“本机 Chrome 辅助入口”。助手只读取页面可见作品列表和互动元数据，不读取、不保存 Cookie。</p>
+                    <p>主页 Cookie / Web API 不可用时，可在“高级工具 / 备用采集”中使用本机 Chrome 辅助。助手只读取页面可见作品列表和互动元数据，不读取 Cookie。</p>
                     <p>如果状态显示“未检测到 Chrome DevTools”，请复制下方预检命令启动调试 Chrome；如果使用专用 profile，第一次需要在该窗口重新登录。</p>
                 </div>
                 <div id="preflight-summary" class="muted">读取中...</div>
@@ -215,7 +210,7 @@ LLM_MODEL=支持图片输入的模型</pre>
                 <article>
                     <span>1</span>
                     <strong>素材导入</strong>
-                    <p>单作品解析、本地视频、作品链接、JSON / CSV、已有 Case、本机 Chrome 辅助采集。</p>
+                    <p>单作品、创作者主页、Douyin Cookie / Web API、作品链接、JSON / CSV 与已有 Case。</p>
                 </article>
                 <article>
                     <span>2</span>
@@ -235,51 +230,25 @@ LLM_MODEL=支持图片输入的模型</pre>
             </div>
             <div class="workbench-action-grid">
                 <button type="button" class="workbench-action-card" data-home-route="single">
-                    <strong>进入单作品解析</strong>
+                    <strong>进入单作品拆解</strong>
                     <span>输入作品链接，生成 Case 素材包和单条拆解。</span>
                 </button>
                 <button type="button" class="workbench-action-card" data-home-route="profile">
-                    <strong>进入 Creator Clone Lab</strong>
+                    <strong>进入创作者拆解</strong>
                     <span>导入主页或多条作品，选择样本后富化并蒸馏。</span>
-                </button>
-                <button type="button" class="workbench-action-card" data-workbench-open-settings>
-                    <strong>检查本地运行状态</strong>
-                    <span>查看 ffmpeg、ffprobe、yt-dlp、LLM、ASR、OCR 和 Chrome 辅助状态。</span>
                 </button>
             </div>
         </section>
-        <section class="workbench-overview-grid" aria-label="工作台模块概览">
-            <article class="panel compact-workbench-card">
-                <div class="entry-label">Import</div>
-                <h3>真实可用入口</h3>
-                <ul>
-                    <li>单作品解析</li>
-                    <li>Creator Clone Lab</li>
-                    <li>设置弹窗中的 LLM / Douyin 数据源配置</li>
-                    <li>本机 Chrome 辅助采集确认链路</li>
-                </ul>
-            </article>
-            <article class="panel compact-workbench-card">
-                <div class="entry-label">Boundary</div>
-                <h3>本机安全边界</h3>
-                <ul>
-                    <li>loopback only</li>
-                    <li>不读取 Cookie 原文</li>
-                    <li>不上传 Cookie</li>
-                    <li>不返回登录 token</li>
-                    <li>不返回签名媒体 URL</li>
-                </ul>
-            </article>
-            <article class="panel compact-workbench-card">
-                <div class="entry-label">Disabled</div>
-                <h3>第一版占位入口</h3>
-                <ul>
-                    <li>案例报告库：coming soon</li>
-                    <li>Case 库：coming soon</li>
-                    <li>Prompt 库：coming soon</li>
-                    <li>platform_lab 未启用</li>
-                </ul>
-            </article>
+        <section class="panel workbench-data-source-panel" id="workbench-douyin-source-card" aria-label="抖音数据源状态">
+            <div>
+                <div class="entry-label">Primary Data Source</div>
+                <div class="workbench-data-source-heading">
+                    <h3>抖音数据源</h3>
+                    <span id="workbench-douyin-source-badge" class="status-badge">读取中</span>
+                </div>
+                <p id="workbench-douyin-source-summary" class="muted">正在读取 Douyin Cookie / Web API 配置状态...</p>
+            </div>
+            <button type="button" data-workbench-open-settings="data-source">配置抖音数据源</button>
         </section>
     </section>
 
@@ -377,7 +346,7 @@ LLM_MODEL=支持图片输入的模型</pre>
             <div class="entry-label">Creator Distillation</div>
             <h2>创作者蒸馏</h2>
             <p class="muted">导入一组对标素材，自由选择 N 条样本，通过大模型蒸馏创作者定位、选题规律、表达模板和可复用公式。</p>
-            <div class="notice compact-notice">默认不依赖 Cookie，不绕验证码、不绕风控；Cookie / Web API 仅作为可选增强层。请确保你拥有素材分析权限。</div>
+            <div class="notice compact-notice">主页扫描优先使用已配置的 Douyin Cookie / Web API；失败时回退到公开扫描、手动作品链接或高级工具。系统不绕验证码、不绕风控，请确保你拥有素材分析权限。</div>
             <div class="profile-flow-strip profile-main-flow" aria-label="创作者蒸馏工作流">
                 <button type="button" data-profile-stage-nav="import">1. 导入素材</button>
                 <button type="button" data-profile-stage-nav="pool">2. 构建素材池</button>
@@ -416,18 +385,18 @@ LLM_MODEL=支持图片输入的模型</pre>
                     <label>输入主页 URL、作品链接、aweme_id 或粘贴多条分享文案
                         <textarea id="profile-quick-input" rows="5" placeholder="可粘贴抖音主页 URL、单条/多条作品链接、aweme_id，或完整分享文案。主按钮会自动判断导入方式。"></textarea>
                     </label>
-                    <p class="muted compact-copy">一个入口即可开始：主页会优先尝试本机 Chrome / Cookie / 公开扫描；多条作品链接会自动进入作品清单；已有 case_id、JSON/CSV 可在下方切换导入方式。</p>
+                    <p class="muted compact-copy">一个入口即可开始：主页会优先使用已配置的 Douyin Cookie / Web API，再按安全边界回退；多条作品链接会自动进入作品清单；已有 case_id、JSON/CSV 可在下方切换导入方式。</p>
                 </section>
                 <details class="profile-data-source-details" id="profile-data-source-details">
                     <summary>换一种导入方式</summary>
                     <div class="profile-import-mode-grid" aria-label="导入方式">
                         <button type="button" class="profile-import-card active" data-profile-import-mode="browser">
-                            <strong>主页 / 浏览器辅助</strong>
-                            <span>输入主页 URL 或 sec_user_id，必要时读取当前可见作品</span>
+                            <strong>主页 / 数据源扫描</strong>
+                            <span>Cookie / Web API 优先，必要时使用公开扫描或浏览器辅助</span>
                         </button>
                         <button type="button" class="profile-import-card" data-profile-import-mode="manual">
                             <strong>多作品链接粘贴</strong>
-                            <span>主路径：一行一条链接、分享文案或 aweme_id</span>
+                            <span>稳定回退：一行一条链接、分享文案或 aweme_id</span>
                         </button>
                         <button type="button" class="profile-import-card" data-profile-import-mode="structured">
                             <strong>JSON / CSV 导入</strong>
@@ -446,8 +415,8 @@ LLM_MODEL=支持图片输入的模型</pre>
                     <div class="profile-import-panel active" id="profile-public-section" data-profile-import-panel="browser">
                         <div class="profile-panel-heading">
                             <div>
-                                <span class="summary-title">浏览器辅助采集</span>
-                                <p class="muted compact-copy">输入主页 URL / sec_user_id。优先在本机调试 Chrome 中打开目标主页，由你确认后读取页面可见作品列表和元数据。</p>
+                                <span class="summary-title">主页扫描与高级回退</span>
+                                <p class="muted compact-copy">输入主页 URL / sec_user_id。主流程优先使用已配置的 Cookie / Web API；本机 Chrome 辅助仅在主力数据源不可用时，由你确认后读取页面可见作品列表和元数据。</p>
                             </div>
                             <div class="profile-panel-actions">
                                 <button type="button" id="profile-browser-helper-button" class="secondary-button">本机 Chrome 辅助入口</button>
@@ -769,8 +738,8 @@ https://v.douyin.com/xxxxxx/
             </dl>
             <div class="assistant-actions">
                 <button type="button" id="assistant-copy-prompt-button">复制当前拆解 Prompt</button>
-                <button type="button" data-home-route="single">单作品解析</button>
-                <button type="button" data-home-route="profile">Creator Clone</button>
+                <button type="button" data-home-route="single">单作品拆解</button>
+                <button type="button" data-home-route="profile">创作者拆解</button>
                 <button type="button" data-workbench-open-settings>打开设置</button>
                 <button type="button" id="assistant-open-preflight-button">查看 preflight</button>
                 <a class="button-link" href="/calibration">质量校准</a>

@@ -54,6 +54,14 @@
     };
   }
 
+  function settingsTarget(section) {
+    return {
+      "data-source": "douyin-data-source-settings",
+      ai: "llm-capability-settings",
+      diagnostics: "system-diagnostics-settings",
+    }[String(section || "").trim()] || "";
+  }
+
   function formatRefreshTime(value = Date.now()) {
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) {
@@ -77,9 +85,17 @@
         if (!group) {
           return;
         }
-        const collapsed = group.dataset.disabledCollapsed !== "false";
-        group.dataset.disabledCollapsed = collapsed ? "false" : "true";
+        const collapsed = group.dataset.itemsCollapsed !== "false";
+        group.dataset.itemsCollapsed = collapsed ? "false" : "true";
         button.setAttribute("aria-expanded", collapsed ? "true" : "false");
+      });
+    });
+    documentRef.querySelectorAll("[data-workbench-open-settings]").forEach((item) => {
+      item.addEventListener("click", () => {
+        const section = item.dataset.workbenchOpenSettings || "";
+        documentRef.dispatchEvent(new CustomEvent("workbench:open-settings", {
+          detail: {section, targetId: settingsTarget(section)},
+        }));
       });
     });
     documentRef.querySelectorAll("[data-workbench-coming-soon]").forEach((item) => {
@@ -98,6 +114,7 @@
     preflightBadge,
     apiFailureBadge,
     comingSoonBehavior,
+    settingsTarget,
     formatRefreshTime,
     initNavigation,
   });

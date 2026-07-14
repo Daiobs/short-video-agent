@@ -31,6 +31,8 @@ const preflightSummary = document.getElementById("preflight-summary");
 const preflightList = document.getElementById("preflight-list");
 const dataSourceStatusBadge = document.getElementById("data-source-status-badge");
 const dataSourceStatusList = document.getElementById("data-source-status-list");
+const workbenchDouyinSourceBadge = document.getElementById("workbench-douyin-source-badge");
+const workbenchDouyinSourceSummary = document.getElementById("workbench-douyin-source-summary");
 const douyinSettingsForm = document.getElementById("douyin-settings-form");
 const douyinCookieInput = document.getElementById("douyin-cookie-input");
 const douyinUserAgentInput = document.getElementById("douyin-user-agent-input");
@@ -70,7 +72,6 @@ const assistantHint = document.getElementById("assistant-hint");
 const assistantCopyPromptButton = document.getElementById("assistant-copy-prompt-button");
 const assistantOpenPreflightButton = document.getElementById("assistant-open-preflight-button");
 const assistantStrategyPlanButton = document.getElementById("assistant-strategy-plan-button");
-const workbenchSettingsButtons = Array.from(document.querySelectorAll("[data-workbench-open-settings]"));
 
 const profileForm = document.getElementById("profile-form");
 
@@ -5633,7 +5634,24 @@ function renderWorkbenchLlmStatus(llm = {}) {
 }
 
 function renderWorkbenchDataSourceStatus(status = {}) {
-  void status;
+  if (!workbenchDouyinSourceBadge || !workbenchDouyinSourceSummary) {
+    return;
+  }
+  if (status.error) {
+    workbenchDouyinSourceBadge.textContent = "读取失败";
+    workbenchDouyinSourceBadge.className = "status-badge warning";
+    workbenchDouyinSourceSummary.textContent = "暂时无法读取本机配置；可打开抖音数据源设置重试。";
+    return;
+  }
+  if (status.has_cookie) {
+    workbenchDouyinSourceBadge.textContent = "主力数据源已配置";
+    workbenchDouyinSourceBadge.className = "status-badge success";
+    workbenchDouyinSourceSummary.textContent = "Douyin Cookie / Web API 已配置，主页扫描会优先使用该数据源。";
+    return;
+  }
+  workbenchDouyinSourceBadge.textContent = "待配置";
+  workbenchDouyinSourceBadge.className = "status-badge muted-badge";
+  workbenchDouyinSourceSummary.textContent = "Douyin Cookie / Web API 尚未配置；主页扫描可使用公开回退或手动作品链接。";
 }
 
 function renderWorkbenchPreflightStatus(preflight = {}) {
@@ -5693,20 +5711,16 @@ function renderDataSourceStatus(status = {}) {
     renderWorkbenchDataSourceStatus(status);
     return;
   }
-  dataSourceStatusBadge.textContent = status.configured ? "增强已配置" : "主路径可用";
-  dataSourceStatusBadge.className = `status-badge ${status.configured ? "success" : "muted-badge"}`;
-  const sources = normalizeItems(status.sources);
+  dataSourceStatusBadge.textContent = status.has_cookie ? "主力数据源已配置" : "待配置";
+  dataSourceStatusBadge.className = `status-badge ${status.has_cookie ? "success" : "muted-badge"}`;
   dataSourceStatusList.innerHTML = `
     <dl>
       <dt>Cookie API</dt><dd>${status.has_cookie ? "已配置" : "未配置"}</dd>
       <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
       <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
       ${renderDouyinCookieDiagnosticsRows(status.cookie_diagnostics || {})}
-      <dt>当前策略</dt><dd>${escapeHtml(status.status_message || "")}</dd>
+      <dt>当前策略</dt><dd>Douyin Cookie / Web API 优先用于主页扫描；失败后回退到公开扫描、手动链接或高级工具。</dd>
     </dl>
-    <ul class="preflight-contract-summary">
-      ${sources.map((source) => `<li><strong>${escapeHtml(source.label || source.id)}</strong>：${escapeHtml(source.message || "")}</li>`).join("")}
-    </ul>
   `;
   if (douyinCookieInput) {
     douyinCookieInput.value = "";
@@ -5803,6 +5817,7 @@ async function loadDataSourceStatus() {
     if (dataSourceStatusList) {
       dataSourceStatusList.textContent = `${error.error_code || "ERROR"}：${error.message || "无法读取数据源设置"}`;
     }
+    renderWorkbenchDataSourceStatus({error: true});
   }
 }
 
@@ -5954,16 +5969,26 @@ function openSettingsModal() {
   });
 }
 
+function openWorkbenchSettings(targetId = "") {
+  openSettingsModal();
+  if (targetId === "douyin-data-source-settings") {
+    loadDataSourceStatus().catch(() => {});
+  } else if (targetId === "llm-capability-settings") {
+    loadLlmStatus().catch(() => {});
+  }
+  window.setTimeout(() => {
+    document.getElementById(targetId)?.scrollIntoView({behavior: "smooth", block: "start"});
+  }, 120);
+}
+
 function markWorkbenchPreflightFailed() {
   const fallback = window.WorkbenchShell?.apiFailureBadge("本地状态")
     || {label: "本地状态待确认", status: "partial"};
   setWorkbenchStatus("security", fallback.label, fallback.status);
 }
 
-workbenchSettingsButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    openSettingsModal();
-  });
+document.addEventListener("workbench:open-settings", (event) => {
+  openWorkbenchSettings(event.detail?.targetId || "");
 });
 
 function updateAssistantContext(route = routeFromHash()) {

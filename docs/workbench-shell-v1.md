@@ -13,11 +13,10 @@ Workbench Shell v1 将现有首页重组为本地“短视频拆解工作台”�
 ```text
 workbench-shell
 ├── workbench-sidebar
-│   ├── 短视频拆解中心
-│   ├── 素材资产管理
-│   ├── 平台与采集
-│   ├── 规则与校准
-│   └── 系统
+│   ├── 主要工作流
+│   ├── 配置与诊断
+│   ├── 高级工具 / 备用采集（默认折叠）
+│   └── 未来模块（默认折叠）
 └── workbench-main-shell
     ├── workbench-topbar
     ├── workbench-content
@@ -26,12 +25,15 @@ workbench-shell
 
 真实可用入口：
 
-- 拆解工作台
-- 单作品解析
-- Creator Clone Lab
-- 本机 Chrome 辅助入口
-- 质量校准样本
-- 系统设置
+- 工作台
+- 单作品拆解
+- 创作者拆解
+- 质量校准
+- 抖音数据源
+- AI 能力设置
+- 系统诊断
+
+本机 Chrome 辅助属于默认折叠的高级备用采集能力，不与主页扫描主力数据源并列展示。
 
 默认折叠的占位入口：
 
@@ -41,8 +43,6 @@ workbench-shell
 - 创作者样本库
 - platform_lab 测试中心
 - 拆解 Prompt 库
-- 输出目录浏览器
-- 数据边界说明
 
 占位入口由 `workbench.js` 在浏览器内拦截，只显示“尚未接入”说明，不调用后端 API。
 
@@ -59,7 +59,7 @@ workbench-shell
 
 ## 4 步宏观流程
 
-1. 素材导入：单作品、主页/多作品、本地视频、JSON/CSV、已有 Case、本机 Chrome 辅助。
+1. 素材导入：单作品、创作者主页、Douyin Cookie / Web API、作品链接、JSON/CSV 与已有 Case。
 2. 证据富化：视频、关键帧、contact sheet、ASR、OCR、评论和指标快照。
 3. 爆款拆解：钩子、画面、镜头、文案、人设、标题话题、转化与复用公式。
 4. 克隆规则 / 复用输出：Creator Clone 报告、Strategy Generator、JSON、HTML/Markdown 报告和下一批拍摄方案。
@@ -74,7 +74,14 @@ workbench-shell
 - `GET /api/settings/llm`
 - `GET /api/settings/data-sources`
 
-根据最新界面约束，顶部只保留“本地安全模式”和“LLM”两个状态徽标，以及设置按钮。ffmpeg、ffprobe、yt-dlp、ASR、OCR、Chrome 和数据源详情仍在设置弹窗的“本地工作流预检”与“创作者蒸馏数据源”中展示，避免顶部状态条变成工具清单。
+根据最新界面约束，顶部只保留“本地安全模式”和“LLM”两个状态徽标，以及设置按钮。ffmpeg、ffprobe、yt-dlp、ASR、OCR、Chrome 和数据源详情仍在设置弹窗的“本地工作流预检”与“抖音数据源”中展示，避免顶部状态条变成工具清单。
+
+## 数据源主次
+
+- 用户配置 Douyin Cookie 后，Cookie / Web API 是主页作品扫描的主力数据源。
+- Cookie 未配置、失效或请求失败时，回退到公开扫描或手动作品链接。
+- 本机 Chrome 辅助位于“高级工具 / 备用采集”，只读取页面可见作品列表和元数据。
+- 本轮只修正产品语义和入口位置，不修改 `DataSourceManager`、Provider、数据库或任务执行逻辑。
 
 预检支持单独刷新并显示最后刷新时间。状态值统一映射为：
 
@@ -122,7 +129,11 @@ workbench-shell
 - 非本机 Host 被拒绝
 - 写操作校验本机 Origin / Referer
 - Chrome 辅助扫描需要一次性 token 和用户确认
-- 不在页面、日志或 localStorage 中保存 Cookie 原文、API Key、登录 token 或签名媒体 URL
+- Douyin Cookie 由用户主动配置，仅保存在本机。
+- 已保存 Cookie 不回显原文。
+- Cookie 不进入数据库、素材包、Prompt 或日志。
+- 本机 Chrome 辅助不读取 Cookie。
+- API Key、登录 token 和签名媒体 URL 不写入页面或日志。
 
 ## 静态资源与响应式
 
@@ -135,9 +146,10 @@ workbench-shell
 ## 验证记录
 
 - `origin/main` 基线：`338 passed, 1 warning`
-- Workbench Shell 分支：`339 passed, 1 warning`
+- Workbench Shell 分支：`340 passed, 1 warning`
 - JavaScript 语法：`workbench.js`、`app.js` 均通过 Node `--check`
-- 浏览器冒烟：默认 `#workbench`、`#single`、`#profile`、Hash 刷新恢复、设置与 preflight 刷新、AI 助手、coming-soon 提示、`/calibration`、单作品错误回退均通过
+- 页面回归：默认 `#workbench`、`#single`、`#profile`、设置定向、侧栏折叠和 coming-soon 行为均有静态或纯 JavaScript 测试覆盖
+- 安全回归：保存测试 Cookie 后，首页和数据源状态 API 均不返回完整值或哨兵片段
 - 兼容检查：原关键 DOM ID 全部存在，Creator Strategy 区域仍存在，本机 Chrome 确认框仍存在
 - 响应式检查：1024px 与 390px 视口无页面级横向溢出，手机端设置按钮与单作品表单可操作
 - 浏览器控制台：无 error / warning
