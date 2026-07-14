@@ -193,41 +193,98 @@ LLM_MODEL=支持图片输入的模型</pre>
 
 <main class="page workbench-content workbench-page">
     <section class="home-panel" id="home-workbench" data-home-panel="workbench">
-        <section class="panel workbench-hero-panel">
-            <div class="entry-label">Creator Intelligence Workbench</div>
-            <h2>短视频拆解工作台</h2>
-            <p class="muted">把单条作品、创作者主页、素材包和本地工具状态组织到一个控制台里。第一版只重组入口和状态，不改变解析、下载、富化、蒸馏和策略生成逻辑。</p>
-            <div class="workbench-stepper" aria-label="短视频拆解工作台 4 步流程">
-                <article>
-                    <span>1</span>
-                    <strong>素材导入</strong>
-                    <p>单作品、创作者主页、Douyin Cookie / Web API、作品链接、JSON / CSV 与已有 Case。</p>
-                </article>
-                <article>
-                    <span>2</span>
-                    <strong>证据富化</strong>
-                    <p>视频下载、关键帧、contact sheet、ASR、OCR、评论与指标快照状态。</p>
-                </article>
-                <article>
-                    <span>3</span>
-                    <strong>爆款拆解</strong>
-                    <p>开头钩子、画面结构、镜头节奏、文案结构、人设表达和可复用公式。</p>
-                </article>
-                <article>
-                    <span>4</span>
-                    <strong>克隆规则 / 复用输出</strong>
-                    <p>Creator Clone 报告、Creator Strategy Generator、HTML 报告和下一步拍摄建议。</p>
-                </article>
-            </div>
-            <div class="workbench-action-grid">
-                <button type="button" class="workbench-action-card" data-home-route="single">
-                    <strong>进入单作品拆解</strong>
-                    <span>输入作品链接，生成 Case 素材包和单条拆解。</span>
-                </button>
-                <button type="button" class="workbench-action-card" data-home-route="profile">
-                    <strong>进入创作者拆解</strong>
-                    <span>导入主页或多条作品，选择样本后富化并蒸馏。</span>
-                </button>
+        <section class="workbench-console" data-workbench-overview-root aria-labelledby="workbench-console-title" aria-busy="true">
+            <header class="workbench-console-header">
+                <div>
+                    <div class="entry-label">Task Console</div>
+                    <h2 id="workbench-console-title">任务控制台</h2>
+                </div>
+                <button type="button" id="workbench-overview-refresh" class="workbench-refresh-button">刷新概览</button>
+            </header>
+
+            <p id="workbench-overview-announcement" class="workbench-overview-announcement" role="status" aria-live="polite">正在读取本地任务...</p>
+
+            <section class="workbench-capability-strip" id="workbench-capabilities" aria-label="本地能力状态">
+                <div class="workbench-capability-item pending">
+                    <span>抖音数据源</span>
+                    <strong>读取中</strong>
+                </div>
+                <div class="workbench-capability-item pending">
+                    <span>LLM</span>
+                    <strong>读取中</strong>
+                </div>
+                <div class="workbench-capability-item pending">
+                    <span>本地工具</span>
+                    <strong>读取中</strong>
+                </div>
+                <div class="workbench-capability-item pending">
+                    <span>运行任务</span>
+                    <strong>读取中</strong>
+                </div>
+            </section>
+
+            <div id="workbench-source-warning" class="workbench-source-warning hidden" role="status"></div>
+
+            <section class="workbench-priority" id="workbench-priority" aria-labelledby="workbench-priority-title">
+                <header class="workbench-section-heading">
+                    <div>
+                        <span>开始新任务</span>
+                        <h3 id="workbench-priority-title">选择分析对象</h3>
+                    </div>
+                </header>
+                <div class="workbench-new-task-grid">
+                    <button type="button" class="workbench-new-task-button" data-workbench-static-route="single">
+                        <strong>分析单条作品</strong>
+                        <span>从作品链接生成 Case 与拆解结果</span>
+                    </button>
+                    <button type="button" class="workbench-new-task-button" data-workbench-static-route="profile">
+                        <strong>分析创作者账号</strong>
+                        <span>导入作品池并完成富化、蒸馏与策略复用</span>
+                    </button>
+                </div>
+            </section>
+
+            <section class="workbench-recents" aria-label="最近记录">
+                <section class="workbench-recent-section" aria-labelledby="workbench-recent-cases-title">
+                    <header>
+                        <h3 id="workbench-recent-cases-title">最近 Case</h3>
+                        <span>最多 5 条</span>
+                    </header>
+                    <div id="workbench-recent-cases" class="workbench-recent-list">
+                        <p class="workbench-empty-state">正在读取...</p>
+                    </div>
+                </section>
+                <section class="workbench-recent-section" aria-labelledby="workbench-recent-creators-title">
+                    <header>
+                        <h3 id="workbench-recent-creators-title">Creator 报告</h3>
+                        <span>最多 5 条</span>
+                    </header>
+                    <div id="workbench-recent-creators" class="workbench-recent-list">
+                        <p class="workbench-empty-state">正在读取...</p>
+                    </div>
+                </section>
+                <section class="workbench-recent-section" aria-labelledby="workbench-recent-strategies-title">
+                    <header>
+                        <h3 id="workbench-recent-strategies-title">Strategy Plan</h3>
+                        <span>最多 5 条</span>
+                    </header>
+                    <div id="workbench-recent-strategies" class="workbench-recent-list">
+                        <p class="workbench-empty-state">正在读取...</p>
+                    </div>
+                </section>
+                <section class="workbench-recent-section" aria-labelledby="workbench-recent-failures-title">
+                    <header>
+                        <h3 id="workbench-recent-failures-title">失败任务</h3>
+                        <span>最多 5 条</span>
+                    </header>
+                    <div id="workbench-recent-failures" class="workbench-recent-list">
+                        <p class="workbench-empty-state">正在读取...</p>
+                    </div>
+                </section>
+            </section>
+
+            <div class="workbench-compact-flow" aria-label="工作流：导入、富化、拆解、复用">
+                <span>导入</span><b aria-hidden="true">→</b><span>富化</span><b aria-hidden="true">→</b><span>拆解</span><b aria-hidden="true">→</b><span>复用</span>
             </div>
         </section>
     </section>
@@ -707,5 +764,6 @@ https://v.douyin.com/xxxxxx/
 
 <script src="/static/workbench.js?v={{ static_version }}"></script>
 <script src="/static/app.js?v={{ static_version }}"></script>
+<script src="/static/workbench-tasks.js?v={{ static_version }}"></script>
 </body>
 </html>

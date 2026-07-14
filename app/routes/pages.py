@@ -16,6 +16,7 @@ templates = Jinja2Templates(directory="app/templates")
 def _static_version() -> str:
     paths = [
         Path("app/static/workbench.js"),
+        Path("app/static/workbench-tasks.js"),
         Path("app/static/app.js"),
         Path("app/static/case_detail.js"),
         Path("app/static/calibration.js"),

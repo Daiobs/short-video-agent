@@ -275,6 +275,7 @@ def test_home_uses_versioned_static_assets() -> None:
     response = client.get("/")
     assert response.status_code == 200
     assert "/static/workbench.js?v=" in response.text
+    assert "/static/workbench-tasks.js?v=" in response.text
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
     assert 'data-profile-build-max-items="150"' in response.text
@@ -282,7 +283,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "单作品解析" in response.text
     assert "创作者蒸馏" in response.text
     assert "短视频爆款分析素材包生成器" in response.text
-    assert "短视频拆解工作台" in response.text
+    assert "任务控制台" in response.text
     assert "本地运行的短视频分析、素材富化与创作者策略生成控制台" in response.text
     assert "Workbench Shell v1" in response.text
     assert 'class="workbench-main workbench-main-shell"' in response.text
@@ -314,9 +315,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "输出目录浏览器" in response.text
     assert "数据边界" not in response.text
     assert "LLM / ASR / OCR 设置" not in response.text
-    assert "素材导入" in response.text
-    assert "爆款拆解" in response.text
-    assert "克隆规则 / 复用输出" in response.text
+    assert 'class="workbench-compact-flow"' in response.text
+    assert "导入</span>" in response.text
+    assert "富化</span>" in response.text
+    assert "拆解</span>" in response.text
+    assert "复用</span>" in response.text
     assert "AI 拆解助手" in response.text
     assert 'id="ai-assistant-toggle"' in response.text
     assert 'id="ai-assistant-panel"' in response.text
@@ -646,11 +649,17 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="llm-capability-settings"' in response.text
     assert 'id="system-diagnostics-settings"' in response.text
     home_workbench = response.text.split('id="home-workbench"', 1)[1].split('id="home-single"', 1)[0]
-    assert "进入单作品拆解" in home_workbench
-    assert "进入创作者拆解" in home_workbench
+    assert "分析单条作品" in home_workbench
+    assert "分析创作者账号" in home_workbench
     assert "本机 Chrome 辅助" not in home_workbench
     assert "配置抖音数据源" not in home_workbench
-    assert "workbench-overview-grid" not in home_workbench
+    assert "data-workbench-overview-root" in home_workbench
+    assert 'id="workbench-priority"' in home_workbench
+    assert 'id="workbench-capabilities"' in home_workbench
+    assert "最近 Case" in home_workbench
+    assert "Creator 报告" in home_workbench
+    assert "Strategy Plan" in home_workbench
+    assert "失败任务" in home_workbench
     topbar = response.text.split('class="site-header workbench-topbar"', 1)[1].split('</header>', 1)[0]
     assert 'id="settings-toggle"' in topbar
     assert response.text.index('id="settings-toggle"') < response.text.index('id="home-workbench"')
@@ -666,7 +675,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "workbench-macro-stepper" not in home_profile
     assert "workbench-process-panel" not in stylesheet
     assert "workbench-macro-stepper" not in stylesheet
-    assert 'class="workbench-stepper"' in home_workbench
+    assert 'class="workbench-compact-flow"' in home_workbench
     assert response.text.count("data-profile-stage-nav=") == 6
     assert 'class="profile-flow-strip profile-main-flow"' in response.text
     assert "function commitCreatorCloneUnifiedInput" in script
@@ -1248,7 +1257,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function updateAssistantContext" in script
     assert ".workbench-sidebar" in stylesheet
     assert ".workbench-status-strip" in stylesheet
-    assert ".workbench-stepper" in stylesheet
+    assert ".workbench-console" in stylesheet
+    assert ".workbench-compact-flow" in stylesheet
     assert ".ai-assistant-toggle" in stylesheet
 
 
@@ -1291,6 +1301,136 @@ process.stdout.write(JSON.stringify(output));
     assert result["comingSoon"]["disabled"] is True
     assert result["comingSoon"]["shouldFetch"] is False
     assert "尚未接入" in result["comingSoon"]["message"]
+
+
+def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; task-console behavior is covered by manual smoke testing.")
+
+    source = Path("app/static/workbench-tasks.js").read_text(encoding="utf-8")
+    runner = f"""
+(async () => {{
+  const classList = () => {{
+    const values = new Set(["hidden"]);
+    return {{
+      add(...names) {{ names.forEach((name) => values.add(name)); }},
+      remove(...names) {{ names.forEach((name) => values.delete(name)); }},
+      contains(name) {{ return values.has(name); }},
+    }};
+  }};
+  const element = () => ({{
+    innerHTML: "",
+    textContent: "",
+    disabled: false,
+    classList: classList(),
+    addEventListener() {{}},
+  }});
+  const root = {{
+    setAttribute() {{}},
+    addEventListener() {{}},
+    contains() {{ return true; }},
+    querySelectorAll() {{ return []; }},
+  }};
+  const elements = {{
+    "workbench-capabilities": element(),
+    "workbench-priority": element(),
+    "workbench-source-warning": element(),
+    "workbench-overview-announcement": element(),
+    "workbench-overview-refresh": element(),
+    "workbench-recent-cases": element(),
+    "workbench-recent-creators": element(),
+    "workbench-recent-strategies": element(),
+    "workbench-recent-failures": element(),
+  }};
+  global.window = globalThis;
+  global.location = {{origin: "http://127.0.0.1:8765"}};
+  global.document = {{
+    querySelector() {{ return root; }},
+    getElementById(id) {{ return elements[id] || null; }},
+    addEventListener() {{}},
+    dispatchEvent() {{}},
+  }};
+  global.CustomEvent = class CustomEvent {{ constructor(name, options) {{ this.type = name; this.detail = options?.detail; }} }};
+  let shouldFail = false;
+  let payload = {{
+    running_tasks: Array.from({{length: 5}}, (_, index) => ({{
+      task_id: `job_${{index + 1}}`, title: `正在富化 ${{index + 1}}`, status: "running", progress: 30,
+    }})),
+    resumable_tasks: [{{task_id: "clone_1", title: "可继续创作者", status: "resumable"}}],
+    recent_cases: [{{title: "部分结果下仍显示的 Case", type: "单作品 Case", status: "ready"}}],
+    recent_creator_reports: [], recent_strategy_plans: [], recent_failures: [],
+    capabilities: {{running_task_count: 500}},
+    source_errors: [],
+    meta: {{partial: true, truncated_sources: ["creator_runtime"]}},
+  }};
+  global.fetch = async () => {{
+    if (shouldFail) throw new Error("offline");
+    return {{ok: true, json: async () => payload}};
+  }};
+  eval({json.dumps(source)});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const running = elements["workbench-priority"].innerHTML;
+  const partialWarning = elements["workbench-source-warning"].innerHTML;
+  const partialOnly = elements["workbench-source-warning"].classList.contains("partial-only");
+  const recentCase = elements["workbench-recent-cases"].innerHTML;
+  const capabilities = elements["workbench-capabilities"].innerHTML;
+
+  payload = {{...payload, capabilities: {{running_task_count: 5}}, meta: {{partial: false, truncated_sources: []}}}};
+  await WorkbenchTasks.refresh();
+  const runningExact = elements["workbench-priority"].innerHTML;
+
+  payload = {{...payload, running_tasks: [], capabilities: {{running_task_count: 0}}}};
+  await WorkbenchTasks.refresh();
+  const resumable = elements["workbench-priority"].innerHTML;
+
+  payload = {{...payload, resumable_tasks: []}};
+  await WorkbenchTasks.refresh();
+  const empty = elements["workbench-priority"].innerHTML;
+
+  shouldFail = true;
+  await WorkbenchTasks.refresh();
+  const failed = elements["workbench-priority"].innerHTML;
+  const announcement = elements["workbench-overview-announcement"].textContent;
+
+  process.stdout.write(JSON.stringify({{
+    running, runningExact, partialWarning, partialOnly, recentCase, capabilities, resumable, empty, failed, announcement,
+  }}));
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert "正在运行" in result["running"]
+    assert "显示 5 / 共 500 个运行任务" in result["running"]
+    assert "5 个任务" in result["runningExact"]
+    assert "显示 5 / 共" not in result["runningExact"]
+    assert "继续上次任务" not in result["running"]
+    assert result["partialOnly"] is True
+    assert "当前展示部分结果" in result["partialWarning"]
+    assert "创作者任务索引仅展示最近一部分记录，较早的任务或报告可能未列出。" in result["partialWarning"]
+    assert "完整历史浏览将在后续资产库阶段提供。" in result["partialWarning"]
+    assert "部分状态已安全降级" not in result["partialWarning"]
+    assert "creator_runtime" not in result["partialWarning"]
+    assert "部分结果下仍显示的 Case" in result["recentCase"]
+    assert "运行任务" in result["capabilities"]
+    assert "500" in result["capabilities"]
+    assert "继续上次任务" in result["resumable"]
+    assert "选择分析对象" in result["empty"]
+    assert "分析单条作品" in result["empty"]
+    assert "分析创作者账号" in result["empty"]
+    assert "分析单条作品" in result["failed"]
+    assert "概览读取失败" in result["announcement"]
 
 
 def test_creator_clone_import_baseline_behavior_runs_in_javascript() -> None:

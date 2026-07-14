@@ -272,6 +272,54 @@ def _runtime_outputs_gitignore_status() -> dict:
     }
 
 
+def local_tools_summary_payload() -> dict:
+    """Summarize local executables/modules without network or subprocess calls."""
+
+    checks = [
+        _required_module_status(
+            "websocket",
+            label="Chrome DevTools websocket",
+            install_hint="缺少 websocket-client。",
+        ),
+        _command_or_module_status(
+            "yt-dlp",
+            "yt_dlp",
+            label="yt-dlp",
+            install_hint="未检测到 yt-dlp。",
+        ),
+        _binary_status("ffmpeg"),
+        _binary_status("ffprobe"),
+        _module_status(
+            ["faster_whisper"],
+            provider=settings.asr_provider,
+            label="ASR",
+            install_hint="未检测到 faster-whisper。",
+        ),
+        _module_status(
+            ["rapidocr_onnxruntime", "rapidocr"],
+            provider=settings.ocr_provider,
+            label="OCR",
+            install_hint="未检测到 rapidocr-onnxruntime。",
+        ),
+    ]
+    public_checks = [
+        {
+            "id": str(item.get("id") or ""),
+            "label": str(item.get("label") or ""),
+            "status": str(item.get("status") or "missing"),
+            "available": bool(item.get("available")),
+        }
+        for item in checks
+    ]
+    ready_count = sum(1 for item in public_checks if item["status"] == "ready")
+    return {
+        "status": "ready" if ready_count == len(public_checks) else "partial",
+        "ready_count": ready_count,
+        "total_count": len(public_checks),
+        "checks": public_checks,
+    }
+
+
 def preflight_status_payload() -> dict:
     llm = llm_status_payload()
     checks = [
