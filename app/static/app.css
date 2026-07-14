@@ -397,100 +397,6 @@ p {
     line-height: 1.5;
 }
 
-.workbench-data-source-panel {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    margin-top: 18px;
-}
-
-.workbench-data-source-panel h3 {
-    margin: 0;
-}
-
-.workbench-data-source-panel p {
-    margin: 8px 0 0;
-}
-
-.workbench-data-source-heading {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 4px;
-}
-
-.workbench-process-panel {
-    padding: 22px 28px;
-}
-
-.workbench-macro-stepper {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    align-items: start;
-    gap: 0;
-}
-
-.workbench-macro-stepper article {
-    position: relative;
-    display: grid;
-    justify-items: center;
-    gap: 6px;
-    min-height: 76px;
-    color: #9ca3af;
-    text-align: center;
-}
-
-.workbench-macro-stepper article::before {
-    content: "";
-    position: absolute;
-    top: 15px;
-    left: calc(-50% + 18px);
-    width: calc(100% - 36px);
-    height: 2px;
-    background: #d1d5db;
-}
-
-.workbench-macro-stepper article:first-child::before {
-    display: none;
-}
-
-.workbench-macro-stepper span {
-    position: relative;
-    z-index: 1;
-    display: inline-grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    border: 2px solid #d1d5db;
-    border-radius: 999px;
-    background: #fff;
-    color: #6b7280;
-    font-size: 13px;
-    font-weight: 950;
-}
-
-.workbench-macro-stepper strong {
-    color: #6b7280;
-    font-size: 15px;
-}
-
-.workbench-macro-stepper small {
-    color: #94a3b8;
-    font-size: 12px;
-    font-weight: 700;
-}
-
-.workbench-macro-stepper article.active span {
-    border-color: #2563eb;
-    color: #2563eb;
-}
-
-.workbench-macro-stepper article.active strong {
-    color: #111827;
-}
-
 .data-source-safety-note ul {
     display: grid;
     gap: 5px;
@@ -5524,11 +5430,6 @@ footer {
     .workbench-action-grid,
     .assistant-actions {
         grid-template-columns: 1fr;
-    }
-
-    .workbench-data-source-panel {
-        align-items: stretch;
-        flex-direction: column;
     }
 
     .workbench-status-strip {

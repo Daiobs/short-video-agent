@@ -641,7 +641,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'settingsToggle?.addEventListener("click", openSettingsModal);' in script
     settings_modal_handler = script.split("function openSettingsModal()", 1)[1].split("function markWorkbenchPreflightFailed", 1)[0]
     assert 'settingsModal.classList.remove("hidden");' in settings_modal_handler
-    assert 'id="workbench-douyin-source-card"' in response.text
+    assert 'id="workbench-douyin-source-card"' not in response.text
     assert 'id="douyin-data-source-settings"' in response.text
     assert 'id="llm-capability-settings"' in response.text
     assert 'id="system-diagnostics-settings"' in response.text
@@ -654,24 +654,37 @@ def test_home_uses_versioned_static_assets() -> None:
     topbar = response.text.split('class="site-header workbench-topbar"', 1)[1].split('</header>', 1)[0]
     assert 'id="settings-toggle"' in topbar
     assert response.text.index('id="settings-toggle"') < response.text.index('id="home-workbench"')
-    assert "Cookie 结构检查通过" in script
-    assert "API 可用性请通过右上角齿轮运行自检" in script
-    data_source_renderer = script.split("function renderWorkbenchDataSourceStatus", 1)[1].split("function renderWorkbenchPreflightStatus", 1)[0]
-    assert "cookie_diagnostics?.looks_complete" in data_source_renderer
-    assert "masked_cookie" not in data_source_renderer
-    assert "present_important_keys" not in data_source_renderer
+    assert "function renderWorkbenchDataSourceStatus" not in script
+    assert "workbenchDouyinSourceBadge" not in script
+    assert "workbenchDouyinSourceSummary" not in script
     assert 'const shouldShowResultContainer = !["import", "export"].includes(activeStage)' in script
     assert 'id="profile-results-card"' in response.text
     assert 'id="creator-clone-result-card"' in response.text
     assert response.text.index('id="profile-results-card"') < response.text.index('id="creator-clone-result-card"')
+    home_profile = response.text.split('id="home-profile"', 1)[1]
+    assert "workbench-process-panel" not in home_profile
+    assert "workbench-macro-stepper" not in home_profile
+    assert "workbench-process-panel" not in stylesheet
+    assert "workbench-macro-stepper" not in stylesheet
+    assert 'class="workbench-stepper"' in home_workbench
+    assert response.text.count("data-profile-stage-nav=") == 6
+    assert 'class="profile-flow-strip profile-main-flow"' in response.text
+    assert "function commitCreatorCloneUnifiedInput" in script
+    render_profile_results = script[
+        script.index("function renderProfileResults") : script.index("function renderProfileCaptureAudit")
+    ]
+    assert "commitCreatorCloneUnifiedInput();" in render_profile_results
+    assert "clearCreatorCloneUnifiedInput();" not in render_profile_results
     poll_distill = script[
         script.index("async function pollCreatorCloneDistillJob") : script.index("// Creator Clone: distillation")
     ]
-    assert "const rendered = safeRenderCreatorCloneResult(" in poll_distill
-    assert "applyCreatorCloneDistillPayload(resultPayload);" in poll_distill
+    assert "let rendered = safeRenderCreatorCloneResult(" in poll_distill
+    assert "applyCreatorIntelligencePayload(resultPayload);" in poll_distill
     assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});" in poll_distill
-    assert poll_distill.index("await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});") < poll_distill.rindex("applyCreatorCloneDistillPayload(resultPayload);")
+    assert poll_distill.index("applyCreatorIntelligencePayload(resultPayload);") < poll_distill.index("safeRenderCreatorCloneResult(")
+    assert poll_distill.index("safeRenderCreatorCloneResult(") < poll_distill.index("await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});")
     assert "function safeRenderCreatorCloneResult" in script
+    assert 'creatorCloneResultCard?.classList.remove("hidden", "stage-hidden")' in script
     assert "REPORT_RENDER_FAILED" in script
     assert "报告文件同步失败，已使用任务结果直接渲染。" in poll_distill
     assert "function hasCreatorCloneResultPayload" in script
@@ -1032,7 +1045,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "样本富化完成，正在调用大模型蒸馏创作者规则" in script
     assert "function renderProfileQueuePipeline" in script
     assert "profilePipelineStatusClass" in script
-    assert "creatorCloneResultCard.scrollIntoView" in script
+    assert "creatorCloneResultCard?.scrollIntoView" in script
     assert "auto_analyze: false" in script
     assert "profileAutoAnalyze" not in script
     assert "样本证据完整度" in script
@@ -1278,6 +1291,184 @@ process.stdout.write(JSON.stringify(output));
     assert result["comingSoon"]["disabled"] is True
     assert result["comingSoon"]["shouldFetch"] is False
     assert "尚未接入" in result["comingSoon"]["message"]
+
+
+def test_creator_clone_import_baseline_behavior_runs_in_javascript() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; creator import state is covered by manual smoke testing.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    state_functions = source[
+        source.index("function creatorCloneUnifiedInputValue") : source.index("function hasCreatorCloneImportInput")
+    ]
+    runner = (
+        'var profileQuickInput = {value: "https://www.douyin.com/user/creator-a"};\n'
+        'var profileQuickInputRestoredValue = "";\n'
+        + state_functions
+        + "\n"
+        + "const beforeCommit = hasPendingQuickImportInput();\n"
+        + "commitCreatorCloneUnifiedInput();\n"
+        + "const afterCommit = hasPendingQuickImportInput();\n"
+        + "const retainedValue = profileQuickInput.value;\n"
+        + 'profileQuickInput.value = "https://www.douyin.com/user/creator-b";\n'
+        + "const afterEdit = hasPendingQuickImportInput();\n"
+        + "process.stdout.write(JSON.stringify({beforeCommit, afterCommit, retainedValue, afterEdit}));\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result == {
+        "beforeCommit": True,
+        "afterCommit": False,
+        "retainedValue": "https://www.douyin.com/user/creator-a",
+        "afterEdit": True,
+    }
+
+
+def test_creator_clone_distill_success_report_recovery_runs_in_javascript() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; report recovery is covered by manual smoke testing.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    visibility_functions = source[
+        source.index("function hasRenderedCreatorCloneReport") : source.index("function renderCreatorCloneResult")
+    ]
+    poll_function = source[
+        source.index("async function pollCreatorCloneDistillJob") : source.index("// Creator Clone: distillation")
+    ]
+    runner = (
+        "var scenario = '';\n"
+        "var runtimeApplied = false;\n"
+        "var runtimeState = null;\n"
+        "var reportPresent = false;\n"
+        "var promptPresent = false;\n"
+        "var profileStageView = 'distill';\n"
+        "var currentCloneSetId = '';\n"
+        "var currentCreatorRuntimeReport = null;\n"
+        "var profileScanStatus = {textContent: ''};\n"
+        "var order = [];\n"
+        "var renderCalls = 0;\n"
+        "var hydrateCalls = 0;\n"
+        "function makeClassList() {\n"
+        "  const values = new Set(['hidden', 'stage-hidden']);\n"
+        "  return {add(...items) { items.forEach((item) => values.add(item)); }, remove(...items) { items.forEach((item) => values.delete(item)); }, contains(item) { return values.has(item); }};\n"
+        "}\n"
+        "var creatorCloneResultCard = {classList: makeClassList(), scrollIntoView() {}};\n"
+        "var creatorCloneResult = {querySelector(selector) {\n"
+        "  if (selector === '.creator-distillation-report') return reportPresent ? {} : null;\n"
+        "  if (selector === '.prompt-preview') return promptPresent ? {} : null;\n"
+        "  return null;\n"
+        "}};\n"
+        "var window = {setTimeout(resolve) { resolve(); }};\n"
+        "function setProfileStageView(stage) { profileStageView = stage; }\n"
+        "function renderCreatorCloneNextAction() {}\n"
+        "function renderJobStatus() {}\n"
+        "function rememberRecentCreatorCloneSetId() {}\n"
+        "function formatNumber(value) { return String(value); }\n"
+        "function hasCreatorCloneResultPayload(value) { return Boolean(value && typeof value === 'object' && Object.keys(value).length); }\n"
+        "function applyCreatorIntelligencePayload(payload) {\n"
+        "  runtimeApplied = true;\n"
+        "  runtimeState = payload.creator_intelligence?.runtime_state || null;\n"
+        "  order.push('apply');\n"
+        "}\n"
+        "function safeRenderCreatorCloneResult(result) {\n"
+        "  renderCalls += 1;\n"
+        "  order.push(`render:${runtimeApplied}`);\n"
+        "  if ((scenario === 'job_render_failure' || scenario === 'both_failure') && renderCalls === 1) return false;\n"
+        "  currentCreatorRuntimeReport = result || null;\n"
+        "  reportPresent = Boolean(result && Object.keys(result).length);\n"
+        "  promptPresent = !reportPresent;\n"
+        "  revealCreatorCloneResultCard({scroll: false});\n"
+        "  return true;\n"
+        "}\n"
+        "async function hydrateCreatorCloneReportFromSet() {\n"
+        "  hydrateCalls += 1;\n"
+        "  order.push('hydrate');\n"
+        "  if (scenario === 'hydrate_failure' || scenario === 'both_failure') {\n"
+        "    const error = new Error('报告文件同步失败，已使用任务结果直接渲染。');\n"
+        "    error.error_code = 'REPORT_SYNC_FAILED';\n"
+        "    throw error;\n"
+        "  }\n"
+        "  currentCreatorRuntimeReport = {summary: 'persisted'};\n"
+        "  reportPresent = true;\n"
+        "  promptPresent = false;\n"
+        "  revealCreatorCloneResultCard({scroll: false});\n"
+        "  return {};\n"
+        "}\n"
+        "function applyCreatorCloneDistillPayload() {}\n"
+        "var activePayload = null;\n"
+        "async function fetch() { return {}; }\n"
+        "async function readJsonResponse() { return activePayload; }\n"
+        + visibility_functions
+        + "\n"
+        + poll_function
+        + "\n"
+        + "async function runScenario(nextScenario) {\n"
+        + "  scenario = nextScenario; runtimeApplied = false; runtimeState = null; reportPresent = false; promptPresent = false;\n"
+        + "  profileStageView = 'distill'; currentCloneSetId = ''; currentCreatorRuntimeReport = null; profileScanStatus.textContent = '';\n"
+        + "  order = []; renderCalls = 0; hydrateCalls = 0; creatorCloneResultCard.classList = makeClassList();\n"
+        + "  activePayload = {job: {status: 'success', result_json: {set: {set_id: 'set_demo'}, result: {summary: 'ready'}, creator_intelligence: {runtime_state: {workflow: {state: 'DONE'}}}}}};\n"
+        + "  await pollCreatorCloneDistillJob('job_demo');\n"
+        + "  return {order, runtime: runtimeState?.workflow?.state || '', stage: profileStageView, reportPresent, hidden: creatorCloneResultCard.classList.contains('hidden'), stageHidden: creatorCloneResultCard.classList.contains('stage-hidden'), status: profileScanStatus.textContent, renderCalls, hydrateCalls};\n"
+        + "}\n"
+        + "(async () => {\n"
+        + "  const output = {\n"
+        + "    hydrateFailure: await runScenario('hydrate_failure'),\n"
+        + "    jobRenderFailure: await runScenario('job_render_failure'),\n"
+        + "    bothFailure: await runScenario('both_failure'),\n"
+        + "  };\n"
+        + "  process.stdout.write(JSON.stringify(output));\n"
+        + "})().catch((error) => { console.error(error); process.exit(1); });\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    hydrate_failure = result["hydrateFailure"]
+    assert hydrate_failure["order"][0:2] == ["apply", "render:true"]
+    assert hydrate_failure["runtime"] == "DONE"
+    assert hydrate_failure["stage"] == "export"
+    assert hydrate_failure["reportPresent"] is True
+    assert hydrate_failure["hidden"] is False
+    assert hydrate_failure["stageHidden"] is False
+    assert "REPORT_SYNC_FAILED" in hydrate_failure["status"]
+
+    job_render_failure = result["jobRenderFailure"]
+    assert job_render_failure["order"][0:3] == ["apply", "render:true", "hydrate"]
+    assert job_render_failure["runtime"] == "DONE"
+    assert job_render_failure["stage"] == "export"
+    assert job_render_failure["reportPresent"] is True
+    assert job_render_failure["hidden"] is False
+    assert job_render_failure["stageHidden"] is False
+    assert job_render_failure["status"] == "创作者蒸馏完成。"
+
+    both_failure = result["bothFailure"]
+    assert both_failure["stage"] == "export"
+    assert both_failure["reportPresent"] is False
+    assert both_failure["hidden"] is False
+    assert both_failure["stageHidden"] is False
+    assert both_failure["status"].startswith("REPORT_RENDER_FAILED")
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:

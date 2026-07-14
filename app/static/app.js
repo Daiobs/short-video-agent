@@ -31,8 +31,6 @@ const preflightSummary = document.getElementById("preflight-summary");
 const preflightList = document.getElementById("preflight-list");
 const dataSourceStatusBadge = document.getElementById("data-source-status-badge");
 const dataSourceStatusList = document.getElementById("data-source-status-list");
-const workbenchDouyinSourceBadge = document.getElementById("workbench-douyin-source-badge");
-const workbenchDouyinSourceSummary = document.getElementById("workbench-douyin-source-summary");
 const douyinSettingsForm = document.getElementById("douyin-settings-form");
 const douyinCookieInput = document.getElementById("douyin-cookie-input");
 const douyinUserAgentInput = document.getElementById("douyin-user-agent-input");
@@ -1642,6 +1640,10 @@ function setCreatorCloneRestoredInput(value = "") {
   }
 }
 
+function commitCreatorCloneUnifiedInput() {
+  profileQuickInputRestoredValue = creatorCloneUnifiedInputValue();
+}
+
 function clearCreatorCloneUnifiedInput() {
   if (profileQuickInput) {
     profileQuickInput.value = "";
@@ -2723,6 +2725,7 @@ function renderProfileResults(payload) {
   renderProfileTable();
   updateCreatorCloneSelectionStatus();
   updateProfileChromeContinueButton();
+  commitCreatorCloneUnifiedInput();
   if (profileStageView === "import") {
     setProfileStageView("select");
   } else {
@@ -2740,7 +2743,6 @@ function renderProfileResults(payload) {
       {scroll: false},
     );
   }
-  clearCreatorCloneUnifiedInput();
 }
 
 function renderProfileCaptureAudit(audit) {
@@ -5107,11 +5109,27 @@ function creatorCloneOverviewFromSet(set) {
 }
 
 // Creator Clone: export
+function hasRenderedCreatorCloneReport() {
+  return Boolean(creatorCloneResult?.querySelector(".creator-distillation-report"));
+}
+
+function hasRenderedCreatorCloneOutput() {
+  return hasRenderedCreatorCloneReport() || Boolean(creatorCloneResult?.querySelector(".prompt-preview"));
+}
+
+function revealCreatorCloneResultCard({scroll = false} = {}) {
+  setProfileStageView("export");
+  creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
+  if (scroll) {
+    creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
+  }
+  renderCreatorCloneNextAction();
+  return hasRenderedCreatorCloneOutput();
+}
+
 function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {}) {
   currentCreatorRuntimeReport = result || null;
   currentDistillPrompt = prompt || currentDistillPrompt || "";
-  setProfileStageView("export");
-  creatorCloneResultCard.classList.remove("hidden");
   if (creatorStrategyPlanCard) {
     creatorStrategyPlanCard.classList.toggle("hidden", !result);
   }
@@ -5130,9 +5148,6 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
     creatorCloneExportActions.open = false;
     creatorCloneExportActions.classList.add("hidden");
     creatorCloneExportActions.hidden = true;
-  }
-  if (options.scroll !== false) {
-    creatorCloneResultCard.scrollIntoView({behavior: "smooth", block: "start"});
   }
   const overview = result?.sample_overview || creatorCloneOverviewFromSet(set);
   creatorCloneConfidence.textContent = overview.confidence || (result ? "distilled" : "prompt only");
@@ -5157,7 +5172,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
       ${renderCreatorCloneEvidenceOverview(overview)}
       <pre class="prompt-preview">${escapeHtml(currentDistillPrompt.slice(0, 3000))}</pre>
     `;
-    renderCreatorCloneNextAction();
+    revealCreatorCloneResultCard({scroll: options.scroll !== false});
     return;
   }
   const contentProfile = result.content_profile || overview.content_profile || {};
@@ -5169,17 +5184,23 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
     </section>
     ${renderCreatorDistillationReport(result, overview, templateLabel)}
   `;
-  renderCreatorCloneNextAction();
+  revealCreatorCloneResultCard({scroll: options.scroll !== false});
 }
 
 function safeRenderCreatorCloneResult(result, set, prompt, exports = {}, options = {}) {
   try {
     renderCreatorCloneResult(result, set, prompt, exports, options);
+    const expectedReport = hasCreatorCloneResultPayload(result);
+    const outputReady = expectedReport ? hasRenderedCreatorCloneReport() : hasRenderedCreatorCloneOutput();
+    if (!outputReady) {
+      throw new Error(expectedReport ? "蒸馏报告节点未生成。" : "蒸馏输出节点未生成。");
+    }
+    creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
     return true;
   } catch (error) {
     console.error("Creator clone report render failed", error);
     setProfileStageView("export", {scroll: options.scroll === true});
-    creatorCloneResultCard?.classList.remove("hidden");
+    creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
     if (creatorStrategyPlanCard) {
       creatorStrategyPlanCard.classList.add("hidden");
     }
@@ -5349,9 +5370,14 @@ async function hydrateCreatorCloneReportFromSet(setId, options = {}) {
         : null;
   const prompt = payload.prompt || fallbackPayload.prompt || "";
   const exportsPayload = payload.exports || fallbackPayload.exports || {};
-  renderCreatorCloneResult(result, payload.set || fallbackPayload.set, prompt, exportsPayload, {
+  const rendered = safeRenderCreatorCloneResult(result, payload.set || fallbackPayload.set, prompt, exportsPayload, {
     scroll: options.scroll === true,
   });
+  if (!rendered) {
+    const error = new Error("持久化创作者蒸馏报告无法渲染。");
+    error.error_code = "REPORT_RENDER_FAILED";
+    throw error;
+  }
   return payload;
 }
 
@@ -5427,36 +5453,55 @@ async function pollCreatorCloneDistillJob(jobId) {
   if (job.status === "success") {
     renderJobStatus(job);
     const resultPayload = job.result_json || {};
+    applyCreatorIntelligencePayload(resultPayload);
     const setId = resultPayload.set?.set_id || "";
     if (setId) {
       currentCloneSetId = setId;
       rememberRecentCreatorCloneSetId(setId);
-      const rendered = safeRenderCreatorCloneResult(
+      let rendered = safeRenderCreatorCloneResult(
         resultPayload.result || null,
         resultPayload.set,
         resultPayload.prompt || "",
         resultPayload.exports || {},
         {scroll: false},
       );
+      const successMessage = resultPayload.batch_distill?.batch_count
+        ? `分批蒸馏完成：${formatNumber(resultPayload.batch_distill.batch_count)} 个批次，已生成总汇总。`
+        : "创作者蒸馏完成。";
       profileScanStatus.textContent = rendered
-        ? (resultPayload.batch_distill?.batch_count
-          ? `分批蒸馏完成：${formatNumber(resultPayload.batch_distill.batch_count)} 个批次，已生成总汇总。`
-          : "创作者蒸馏完成。")
-        : "创作者蒸馏完成，但首屏报告渲染失败，正在尝试恢复报告文件。";
+        ? successMessage
+        : "创作者蒸馏完成，但任务结果渲染失败，正在恢复持久化报告。";
+      let hydrateError = null;
       try {
         await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});
-        if (rendered) {
-          profileScanStatus.textContent = resultPayload.batch_distill?.batch_count
-            ? `分批蒸馏完成：${formatNumber(resultPayload.batch_distill.batch_count)} 个批次，已生成总汇总。`
-            : "创作者蒸馏完成。";
-        }
-        return;
+        rendered = hasRenderedCreatorCloneOutput();
       } catch (error) {
-        profileScanStatus.textContent = rendered
-          ? `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告文件同步失败，已使用任务结果直接渲染。"}`
-          : `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告文件同步失败，任务结果渲染也失败，请刷新页面重试。"}`;
+        hydrateError = error;
+        if (rendered) {
+          rendered = safeRenderCreatorCloneResult(
+            resultPayload.result || null,
+            resultPayload.set,
+            resultPayload.prompt || "",
+            resultPayload.exports || {},
+            {scroll: false},
+          );
+        }
+      }
+      const expectsReport = hasCreatorCloneResultPayload(resultPayload.result)
+        || hasCreatorCloneResultPayload(currentCreatorRuntimeReport);
+      const reportVisible = expectsReport ? hasRenderedCreatorCloneReport() : hasRenderedCreatorCloneOutput();
+      if (rendered && reportVisible) {
+        revealCreatorCloneResultCard({scroll: false});
+        profileScanStatus.textContent = hydrateError
+          ? `${hydrateError.error_code || "REPORT_SYNC_FAILED"}：${hydrateError.message || "报告文件同步失败，已使用任务结果直接渲染。"}`
+          : successMessage;
         return;
       }
+      profileScanStatus.textContent = "REPORT_RENDER_FAILED：任务结果与持久化报告均无法渲染，请重新打开报告或再次蒸馏。";
+      creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
+      setProfileStageView("export");
+      renderCreatorCloneNextAction();
+      return;
     }
     applyCreatorCloneDistillPayload(resultPayload);
     return;
@@ -5632,30 +5677,6 @@ function renderWorkbenchLlmStatus(llm = {}) {
   setWorkbenchStatus("llm", "LLM 未配置", "disabled");
 }
 
-function renderWorkbenchDataSourceStatus(status = {}) {
-  if (!workbenchDouyinSourceBadge || !workbenchDouyinSourceSummary) {
-    return;
-  }
-  if (status.error) {
-    workbenchDouyinSourceBadge.textContent = "读取失败";
-    workbenchDouyinSourceBadge.className = "status-badge warning";
-    workbenchDouyinSourceSummary.textContent = "暂时无法读取本机配置；请通过右上角齿轮打开设置并重试。";
-    return;
-  }
-  if (status.has_cookie) {
-    const structureReady = Boolean(status.cookie_diagnostics?.looks_complete);
-    workbenchDouyinSourceBadge.textContent = structureReady ? "已配置 · 待自检" : "配置待检查";
-    workbenchDouyinSourceBadge.className = `status-badge ${structureReady ? "success" : "warning"}`;
-    workbenchDouyinSourceSummary.textContent = structureReady
-      ? "Cookie 结构检查通过；API 可用性请通过右上角齿轮运行自检。"
-      : "Cookie 已配置，但结构可能不完整；请通过右上角齿轮检查或更新配置。";
-    return;
-  }
-  workbenchDouyinSourceBadge.textContent = "待配置";
-  workbenchDouyinSourceBadge.className = "status-badge muted-badge";
-  workbenchDouyinSourceSummary.textContent = "Douyin Cookie / Web API 尚未配置；请通过右上角齿轮管理，或使用公开回退与手动作品链接。";
-}
-
 function renderWorkbenchPreflightStatus(preflight = {}) {
   void preflight;
   setWorkbenchStatus("security", "本地安全模式", "ready");
@@ -5710,7 +5731,6 @@ async function loadPreflightStatus() {
 
 function renderDataSourceStatus(status = {}) {
   if (!dataSourceStatusBadge || !dataSourceStatusList) {
-    renderWorkbenchDataSourceStatus(status);
     return;
   }
   dataSourceStatusBadge.textContent = status.has_cookie ? "主力数据源已配置" : "待配置";
@@ -5737,7 +5757,6 @@ function renderDataSourceStatus(status = {}) {
   if (douyinClearCookieInput) {
     douyinClearCookieInput.checked = false;
   }
-  renderWorkbenchDataSourceStatus(status);
 }
 
 function renderDouyinCookieDiagnosticsRows(diagnostics = {}) {
@@ -5819,7 +5838,6 @@ async function loadDataSourceStatus() {
     if (dataSourceStatusList) {
       dataSourceStatusList.textContent = `${error.error_code || "ERROR"}：${error.message || "无法读取数据源设置"}`;
     }
-    renderWorkbenchDataSourceStatus({error: true});
   }
 }
 
