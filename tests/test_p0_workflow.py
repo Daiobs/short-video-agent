@@ -304,7 +304,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "案例报告库" in response.text
     assert 'data-workbench-coming-soon="案例报告库"' in response.text
     assert 'data-workbench-open-settings' not in response.text
-    assert 'id="settings-toggle"' in response.text
+    assert response.text.count('id="settings-toggle"') == 1
     assert "Provider 管理" not in response.text
     assert "platform_lab 测试中心" in response.text
     assert 'data-workbench-coming-soon="platform_lab 测试中心"' in response.text
@@ -321,6 +321,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="ai-assistant-toggle"' in response.text
     assert 'id="ai-assistant-panel"' in response.text
     assert 'id="assistant-macro-step"' in response.text
+    assistant_panel = response.text.split('id="ai-assistant-panel"', 1)[1].split('</section>', 1)[0]
+    assert "打开设置" not in assistant_panel
+    assert "preflight" not in assistant_panel.lower()
+    assert 'id="assistant-open-preflight-button"' not in response.text
     assert 'data-workbench-status="security"' in response.text
     assert 'data-workbench-status="llm"' in response.text
     assert 'data-workbench-status="ffmpeg"' not in response.text
@@ -633,6 +637,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'group.dataset.itemsCollapsed = collapsed ? "false" : "true";' in workbench_script
     assert ".workbench-nav-group[data-items-collapsed=\"true\"] .workbench-nav-item" in stylesheet
     assert "function settingsTarget" not in workbench_script
+    assert "assistantOpenPreflightButton" not in script
+    assert 'settingsToggle?.addEventListener("click", openSettingsModal);' in script
+    settings_modal_handler = script.split("function openSettingsModal()", 1)[1].split("function markWorkbenchPreflightFailed", 1)[0]
+    assert 'settingsModal.classList.remove("hidden");' in settings_modal_handler
     assert 'id="workbench-douyin-source-card"' in response.text
     assert 'id="douyin-data-source-settings"' in response.text
     assert 'id="llm-capability-settings"' in response.text
@@ -643,6 +651,15 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "本机 Chrome 辅助" not in home_workbench
     assert "配置抖音数据源" not in home_workbench
     assert "workbench-overview-grid" not in home_workbench
+    topbar = response.text.split('class="site-header workbench-topbar"', 1)[1].split('</header>', 1)[0]
+    assert 'id="settings-toggle"' in topbar
+    assert response.text.index('id="settings-toggle"') < response.text.index('id="home-workbench"')
+    assert "Cookie 结构检查通过" in script
+    assert "API 可用性请通过右上角齿轮运行自检" in script
+    data_source_renderer = script.split("function renderWorkbenchDataSourceStatus", 1)[1].split("function renderWorkbenchPreflightStatus", 1)[0]
+    assert "cookie_diagnostics?.looks_complete" in data_source_renderer
+    assert "masked_cookie" not in data_source_renderer
+    assert "present_important_keys" not in data_source_renderer
     assert 'const shouldShowResultContainer = !["import", "export"].includes(activeStage)' in script
     assert 'id="profile-results-card"' in response.text
     assert 'id="creator-clone-result-card"' in response.text

@@ -70,7 +70,6 @@ const assistantMacroStep = document.getElementById("assistant-macro-step");
 const assistantNextStep = document.getElementById("assistant-next-step");
 const assistantHint = document.getElementById("assistant-hint");
 const assistantCopyPromptButton = document.getElementById("assistant-copy-prompt-button");
-const assistantOpenPreflightButton = document.getElementById("assistant-open-preflight-button");
 const assistantStrategyPlanButton = document.getElementById("assistant-strategy-plan-button");
 
 const profileForm = document.getElementById("profile-form");
@@ -5640,18 +5639,21 @@ function renderWorkbenchDataSourceStatus(status = {}) {
   if (status.error) {
     workbenchDouyinSourceBadge.textContent = "读取失败";
     workbenchDouyinSourceBadge.className = "status-badge warning";
-    workbenchDouyinSourceSummary.textContent = "暂时无法读取本机配置；可打开抖音数据源设置重试。";
+    workbenchDouyinSourceSummary.textContent = "暂时无法读取本机配置；请通过右上角齿轮打开设置并重试。";
     return;
   }
   if (status.has_cookie) {
-    workbenchDouyinSourceBadge.textContent = "主力数据源已配置";
-    workbenchDouyinSourceBadge.className = "status-badge success";
-    workbenchDouyinSourceSummary.textContent = "Douyin Cookie / Web API 已配置，主页扫描会优先使用该数据源。";
+    const structureReady = Boolean(status.cookie_diagnostics?.looks_complete);
+    workbenchDouyinSourceBadge.textContent = structureReady ? "已配置 · 待自检" : "配置待检查";
+    workbenchDouyinSourceBadge.className = `status-badge ${structureReady ? "success" : "warning"}`;
+    workbenchDouyinSourceSummary.textContent = structureReady
+      ? "Cookie 结构检查通过；API 可用性请通过右上角齿轮运行自检。"
+      : "Cookie 已配置，但结构可能不完整；请通过右上角齿轮检查或更新配置。";
     return;
   }
   workbenchDouyinSourceBadge.textContent = "待配置";
   workbenchDouyinSourceBadge.className = "status-badge muted-badge";
-  workbenchDouyinSourceSummary.textContent = "Douyin Cookie / Web API 尚未配置；主页扫描可使用公开回退或手动作品链接。";
+  workbenchDouyinSourceSummary.textContent = "Douyin Cookie / Web API 尚未配置；请通过右上角齿轮管理，或使用公开回退与手动作品链接。";
 }
 
 function renderWorkbenchPreflightStatus(preflight = {}) {
@@ -5936,7 +5938,7 @@ async function readJsonResponse(response) {
   return payload;
 }
 
-settingsToggle.addEventListener("click", openSettingsModal);
+settingsToggle?.addEventListener("click", openSettingsModal);
 
 settingsClose.addEventListener("click", () => {
   settingsModal.classList.add("hidden");
@@ -6031,13 +6033,6 @@ assistantCopyPromptButton?.addEventListener("click", async () => {
   }
   await navigator.clipboard.writeText(text);
   showAssistantHint("已复制当前可用 Prompt。");
-});
-
-assistantOpenPreflightButton?.addEventListener("click", () => {
-  openSettingsModal();
-  window.setTimeout(() => {
-    preflightSummary?.scrollIntoView({behavior: "smooth", block: "center"});
-  }, 120);
 });
 
 assistantStrategyPlanButton?.addEventListener("click", () => {
