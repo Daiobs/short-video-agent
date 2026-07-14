@@ -59,6 +59,16 @@ const jobPhase = document.getElementById("job-phase");
 const jobResult = document.getElementById("job-result");
 const homeRouteButtons = Array.from(document.querySelectorAll("[data-home-route]"));
 const homePanels = Array.from(document.querySelectorAll("[data-home-panel]"));
+const workbenchStatusPills = Array.from(document.querySelectorAll("[data-workbench-status]"));
+const aiAssistantToggle = document.getElementById("ai-assistant-toggle");
+const aiAssistantPanel = document.getElementById("ai-assistant-panel");
+const aiAssistantClose = document.getElementById("ai-assistant-close");
+const assistantCurrentStage = document.getElementById("assistant-current-stage");
+const assistantMacroStep = document.getElementById("assistant-macro-step");
+const assistantNextStep = document.getElementById("assistant-next-step");
+const assistantHint = document.getElementById("assistant-hint");
+const assistantCopyPromptButton = document.getElementById("assistant-copy-prompt-button");
+const assistantStrategyPlanButton = document.getElementById("assistant-strategy-plan-button");
 
 const profileForm = document.getElementById("profile-form");
 
@@ -195,19 +205,22 @@ function setStatus(element, value) {
 }
 
 function setHomeRoute(route, updateHash = true) {
-  const activeRoute = ["single", "profile"].includes(route) ? route : "single";
+  const activeRoute = window.WorkbenchShell?.normalizeRoute(route)
+    || (["workbench", "single", "profile"].includes(route) ? route : "workbench");
+  const visiblePanelRoute = activeRoute;
   homePanels.forEach((panel) => {
-    panel.classList.toggle("hidden", panel.dataset.homePanel !== activeRoute);
+    panel.classList.toggle("hidden", panel.dataset.homePanel !== visiblePanelRoute);
   });
   homeRouteButtons.forEach((button) => {
-    const active = button.dataset.homeRoute === activeRoute;
+    const isNavItem = button.classList.contains("workbench-nav-item");
+    const active = isNavItem && button.dataset.homeRoute === activeRoute && !button.dataset.workbenchFocus;
     button.classList.toggle("active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
   if (updateHash) {
     history.replaceState(null, "", `#${activeRoute}`);
   }
-  if (activeRoute === "profile" && !chromeHelperStatusLoaded) {
+  if (visiblePanelRoute === "profile" && !chromeHelperStatusLoaded) {
     chromeHelperStatusLoaded = true;
     loadChromeHelperStatus({silent: true}).catch(() => {
       if (profileChromeStatus) {
@@ -215,13 +228,16 @@ function setHomeRoute(route, updateHash = true) {
       }
     });
   }
-  if (activeRoute === "profile") {
+  if (visiblePanelRoute === "profile") {
     restoreRecentCreatorCloneSet().catch(() => {});
   }
+  updateAssistantContext(activeRoute);
 }
 
 function routeFromHash() {
-  return window.location.hash.replace("#", "") || "single";
+  return window.WorkbenchShell?.routeFromHash(window.location.hash)
+    || window.location.hash.replace("#", "")
+    || "workbench";
 }
 
 function isSafeCreatorCloneSetId(value) {
@@ -1527,6 +1543,7 @@ function renderLlmStatus(llm) {
   if (llmClearKeyInput) {
     llmClearKeyInput.checked = false;
   }
+  renderWorkbenchLlmStatus(llm);
 }
 
 function sortCreatorSampleViewItems(items, sortBy) {
@@ -1621,6 +1638,10 @@ function setCreatorCloneRestoredInput(value = "") {
   if (profileQuickInput) {
     profileQuickInput.value = restoredValue;
   }
+}
+
+function commitCreatorCloneUnifiedInput() {
+  profileQuickInputRestoredValue = creatorCloneUnifiedInputValue();
 }
 
 function clearCreatorCloneUnifiedInput() {
@@ -1966,7 +1987,8 @@ function renderProfileStageView() {
     }
   });
   if (profileResultsCard) {
-    const shouldShowResultContainer = activeStage !== "import" && (activeCreatorSampleViewItems().length || currentCloneSetId || currentCreatorRuntimeReport);
+    const shouldShowResultContainer = !["import", "export"].includes(activeStage)
+      && (activeCreatorSampleViewItems().length || currentCloneSetId || currentCreatorRuntimeReport);
     profileResultsCard.classList.toggle("hidden", !shouldShowResultContainer);
   }
 }
@@ -2703,6 +2725,7 @@ function renderProfileResults(payload) {
   renderProfileTable();
   updateCreatorCloneSelectionStatus();
   updateProfileChromeContinueButton();
+  commitCreatorCloneUnifiedInput();
   if (profileStageView === "import") {
     setProfileStageView("select");
   } else {
@@ -2720,7 +2743,6 @@ function renderProfileResults(payload) {
       {scroll: false},
     );
   }
-  clearCreatorCloneUnifiedInput();
 }
 
 function renderProfileCaptureAudit(audit) {
@@ -3599,10 +3621,20 @@ async function runCreatorCloneNextAction() {
   return handleWizardPrimaryAction();
 }
 
+function profileSelectionSetsEqual(left, right) {
+  if (left.size !== right.size) {
+    return false;
+  }
+  return [...left].every((key) => right.has(key));
+}
+
 function setProfileSelection(items) {
   const selectedIds = new Set(items.map(sampleViewItemKey));
+  const selectionChanged = !profileSelectionSetsEqual(profileSelectedKeys, selectedIds);
   profileSelectedKeys = selectedIds;
-  invalidateCreatorRuntimeReportForSelectionChange();
+  if (selectionChanged) {
+    invalidateCreatorRuntimeReportForSelectionChange();
+  }
   document.querySelectorAll("[data-profile-select]").forEach((input) => {
     input.checked = selectedIds.has(input.value) && !input.disabled;
   });
@@ -5087,11 +5119,27 @@ function creatorCloneOverviewFromSet(set) {
 }
 
 // Creator Clone: export
+function hasRenderedCreatorCloneReport() {
+  return Boolean(creatorCloneResult?.querySelector(".creator-distillation-report"));
+}
+
+function hasRenderedCreatorCloneOutput() {
+  return hasRenderedCreatorCloneReport() || Boolean(creatorCloneResult?.querySelector(".prompt-preview"));
+}
+
+function revealCreatorCloneResultCard({scroll = false} = {}) {
+  setProfileStageView("export");
+  creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
+  if (scroll) {
+    creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
+  }
+  renderCreatorCloneNextAction();
+  return hasRenderedCreatorCloneOutput();
+}
+
 function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {}) {
   currentCreatorRuntimeReport = result || null;
   currentDistillPrompt = prompt || currentDistillPrompt || "";
-  setProfileStageView("export");
-  creatorCloneResultCard.classList.remove("hidden");
   if (creatorStrategyPlanCard) {
     creatorStrategyPlanCard.classList.toggle("hidden", !result);
   }
@@ -5110,9 +5158,6 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
     creatorCloneExportActions.open = false;
     creatorCloneExportActions.classList.add("hidden");
     creatorCloneExportActions.hidden = true;
-  }
-  if (options.scroll !== false) {
-    creatorCloneResultCard.scrollIntoView({behavior: "smooth", block: "start"});
   }
   const overview = result?.sample_overview || creatorCloneOverviewFromSet(set);
   creatorCloneConfidence.textContent = overview.confidence || (result ? "distilled" : "prompt only");
@@ -5137,7 +5182,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
       ${renderCreatorCloneEvidenceOverview(overview)}
       <pre class="prompt-preview">${escapeHtml(currentDistillPrompt.slice(0, 3000))}</pre>
     `;
-    renderCreatorCloneNextAction();
+    revealCreatorCloneResultCard({scroll: options.scroll !== false});
     return;
   }
   const contentProfile = result.content_profile || overview.content_profile || {};
@@ -5149,17 +5194,23 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
     </section>
     ${renderCreatorDistillationReport(result, overview, templateLabel)}
   `;
-  renderCreatorCloneNextAction();
+  revealCreatorCloneResultCard({scroll: options.scroll !== false});
 }
 
 function safeRenderCreatorCloneResult(result, set, prompt, exports = {}, options = {}) {
   try {
     renderCreatorCloneResult(result, set, prompt, exports, options);
+    const expectedReport = hasCreatorCloneResultPayload(result);
+    const outputReady = expectedReport ? hasRenderedCreatorCloneReport() : hasRenderedCreatorCloneOutput();
+    if (!outputReady) {
+      throw new Error(expectedReport ? "蒸馏报告节点未生成。" : "蒸馏输出节点未生成。");
+    }
+    creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
     return true;
   } catch (error) {
     console.error("Creator clone report render failed", error);
     setProfileStageView("export", {scroll: options.scroll === true});
-    creatorCloneResultCard?.classList.remove("hidden");
+    creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
     if (creatorStrategyPlanCard) {
       creatorStrategyPlanCard.classList.add("hidden");
     }
@@ -5329,9 +5380,14 @@ async function hydrateCreatorCloneReportFromSet(setId, options = {}) {
         : null;
   const prompt = payload.prompt || fallbackPayload.prompt || "";
   const exportsPayload = payload.exports || fallbackPayload.exports || {};
-  renderCreatorCloneResult(result, payload.set || fallbackPayload.set, prompt, exportsPayload, {
+  const rendered = safeRenderCreatorCloneResult(result, payload.set || fallbackPayload.set, prompt, exportsPayload, {
     scroll: options.scroll === true,
   });
+  if (!rendered) {
+    const error = new Error("持久化创作者蒸馏报告无法渲染。");
+    error.error_code = "REPORT_RENDER_FAILED";
+    throw error;
+  }
   return payload;
 }
 
@@ -5407,38 +5463,158 @@ async function pollCreatorCloneDistillJob(jobId) {
   if (job.status === "success") {
     renderJobStatus(job);
     const resultPayload = job.result_json || {};
+    applyCreatorIntelligencePayload(resultPayload);
     const setId = resultPayload.set?.set_id || "";
     if (setId) {
       currentCloneSetId = setId;
       rememberRecentCreatorCloneSetId(setId);
+      let rendered = safeRenderCreatorCloneResult(
+        resultPayload.result || null,
+        resultPayload.set,
+        resultPayload.prompt || "",
+        resultPayload.exports || {},
+        {scroll: false},
+      );
+      const successMessage = resultPayload.batch_distill?.batch_count
+        ? `分批蒸馏完成：${formatNumber(resultPayload.batch_distill.batch_count)} 个批次，已生成总汇总。`
+        : "创作者蒸馏完成。";
+      profileScanStatus.textContent = rendered
+        ? successMessage
+        : "创作者蒸馏完成，但任务结果渲染失败，正在恢复持久化报告。";
+      let hydrateError = null;
       try {
         await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});
-        profileScanStatus.textContent = resultPayload.batch_distill?.batch_count
-          ? `分批蒸馏完成：${formatNumber(resultPayload.batch_distill.batch_count)} 个批次，已生成总汇总。`
-          : "创作者蒸馏完成。";
-        return;
+        rendered = hasRenderedCreatorCloneOutput();
       } catch (error) {
-        const rendered = safeRenderCreatorCloneResult(resultPayload.result || null, resultPayload.set, resultPayload.prompt || "", resultPayload.exports || {});
-        profileScanStatus.textContent = rendered
-          ? `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告文件同步失败，已使用任务结果直接渲染。"}`
-          : `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告文件同步失败，任务结果渲染也失败，请刷新页面重试。"}`;
-        return;
+        hydrateError = error;
+        if (rendered) {
+          rendered = safeRenderCreatorCloneResult(
+            resultPayload.result || null,
+            resultPayload.set,
+            resultPayload.prompt || "",
+            resultPayload.exports || {},
+            {scroll: false},
+          );
+        }
       }
+      const expectsReport = hasCreatorCloneResultPayload(resultPayload.result)
+        || hasCreatorCloneResultPayload(currentCreatorRuntimeReport);
+      const reportVisible = expectsReport ? hasRenderedCreatorCloneReport() : hasRenderedCreatorCloneOutput();
+      if (rendered && reportVisible) {
+        revealCreatorCloneResultCard({scroll: false});
+        const statusMessage = hydrateError
+          ? `${hydrateError.error_code || "REPORT_SYNC_FAILED"}：${hydrateError.message || "报告文件同步失败，已使用任务结果直接渲染。"}`
+          : successMessage;
+        profileScanStatus.textContent = statusMessage;
+        return {
+          completed: true,
+          rendered: true,
+          setId,
+          resultPayload,
+          statusMessage,
+        };
+      }
+      profileScanStatus.textContent = "REPORT_RENDER_FAILED：任务结果与持久化报告均无法渲染，请重新打开报告或再次蒸馏。";
+      creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
+      setProfileStageView("export");
+      renderCreatorCloneNextAction();
+      return {
+        completed: true,
+        rendered: false,
+        setId,
+        resultPayload,
+        statusMessage: profileScanStatus.textContent,
+      };
     }
     applyCreatorCloneDistillPayload(resultPayload);
-    return;
+    return {
+      completed: true,
+      rendered: hasRenderedCreatorCloneOutput(),
+      setId: currentCreatorCloneSetId(),
+      resultPayload,
+      statusMessage: profileScanStatus.textContent,
+    };
   }
   if (job.status === "failed") {
     jobMessage.className = "job-message failed";
     jobMessage.textContent = `${job.error_code || "ERROR"}：${job.message || "蒸馏失败"}`;
     profileScanStatus.textContent = jobMessage.textContent;
     updateCreatorCloneSelectionStatus();
-    return;
+    return {completed: false, rendered: false};
   }
   await new Promise((resolve) => {
     window.setTimeout(resolve, 900);
   });
   return pollCreatorCloneDistillJob(jobId);
+}
+
+function waitForCreatorCloneReportPaint() {
+  return new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    window.setTimeout(resolve, 0);
+  });
+}
+
+async function finalizeCreatorCloneDistillView(completion, {inputValueAtStart = "", scroll = true} = {}) {
+  if (!completion?.completed) {
+    return false;
+  }
+  const currentInputValue = creatorCloneUnifiedInputValue();
+  const inputWasNotChangedDuringTask = currentInputValue === String(inputValueAtStart || "").trim();
+  if (inputWasNotChangedDuringTask) {
+    commitCreatorCloneUnifiedInput();
+  }
+
+  const resultPayload = completion.resultPayload || {};
+  applyCreatorIntelligencePayload(resultPayload);
+  const setId = completion.setId || resultPayload.set?.set_id || currentCreatorCloneSetId();
+  if (!hasRenderedCreatorCloneOutput() && setId) {
+    try {
+      await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});
+    } catch (error) {
+      if (hasCreatorCloneResultPayload(resultPayload.result) || resultPayload.prompt) {
+        safeRenderCreatorCloneResult(
+          resultPayload.result || null,
+          resultPayload.set,
+          resultPayload.prompt || "",
+          resultPayload.exports || {},
+          {scroll: false},
+        );
+      } else {
+        profileScanStatus.textContent = `${error.error_code || "REPORT_SYNC_FAILED"}：${error.message || "报告同步失败，请重新打开报告。"}`;
+      }
+    }
+  }
+
+  if (!inputWasNotChangedDuringTask && hasPendingQuickImportInput()) {
+    return hasRenderedCreatorCloneOutput();
+  }
+
+  revealCreatorCloneResultCard({scroll: false});
+  await waitForCreatorCloneReportPaint();
+
+  const outputReady = hasRenderedCreatorCloneOutput();
+  if (!outputReady) {
+    profileScanStatus.textContent = "REPORT_RENDER_FAILED：报告已生成，但页面没有生成报告节点，请重新打开报告。";
+    return false;
+  }
+
+  // Reapply the export stage after the distill function unlocks its controls;
+  // the committed input baseline keeps later wizard renders on this stage.
+  setProfileStageView("export");
+  creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
+  renderCreatorCloneNextAction();
+  creatorCloneResultCard?.classList.remove("hidden", "stage-hidden");
+  if (completion.statusMessage) {
+    profileScanStatus.textContent = completion.statusMessage;
+  }
+  if (scroll) {
+    creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
+  }
+  return true;
 }
 
 // Creator Clone: distillation
@@ -5468,6 +5644,8 @@ async function distillSelectedCreatorClone(options = {}) {
   }
   setCreatorCloneDistillButtonsLocked(true);
   renderCreatorCloneNextAction();
+  const inputValueAtStart = creatorCloneUnifiedInputValue();
+  let completion = null;
   try {
     const selectedIds = selected.map(sampleViewItemKey);
     await syncCreatorCloneWorkflowSelection();
@@ -5492,7 +5670,7 @@ async function distillSelectedCreatorClone(options = {}) {
     });
     const payload = await readJsonResponse(response);
     profileScanStatus.textContent = `已创建创作者蒸馏任务：${payload.selected_count || selected.length} 条样本。`;
-    await pollCreatorCloneDistillJob(payload.job_id);
+    completion = await pollCreatorCloneDistillJob(payload.job_id);
   } catch (error) {
     profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "蒸馏失败"}`;
     jobMessage.className = "job-message failed";
@@ -5501,6 +5679,9 @@ async function distillSelectedCreatorClone(options = {}) {
     setCreatorCloneDistillButtonsLocked(false);
     updateCreatorCloneSelectionStatus();
     renderCreatorCloneNextAction();
+  }
+  if (completion?.completed) {
+    await finalizeCreatorCloneDistillView(completion, {inputValueAtStart, scroll: true});
   }
 }
 
@@ -5521,6 +5702,8 @@ async function batchDistillSelectedCreatorClone(options = {}) {
   setProfileStageView("distill", {scroll: true});
   setCreatorCloneDistillButtonsLocked(true);
   renderCreatorCloneNextAction();
+  const inputValueAtStart = creatorCloneUnifiedInputValue();
+  let completion = null;
   try {
     await syncCreatorCloneWorkflowSelection();
     await markCreatorCloneDistillationStarted();
@@ -5544,7 +5727,7 @@ async function batchDistillSelectedCreatorClone(options = {}) {
     });
     const payload = await readJsonResponse(response);
     profileScanStatus.textContent = `已创建分批蒸馏任务：${payload.selected_count || selected.length} 条样本，${payload.batch_count || 1} 个批次。`;
-    await pollCreatorCloneDistillJob(payload.job_id);
+    completion = await pollCreatorCloneDistillJob(payload.job_id);
   } catch (error) {
     profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "分批蒸馏失败"}`;
     jobMessage.className = "job-message failed";
@@ -5553,6 +5736,9 @@ async function batchDistillSelectedCreatorClone(options = {}) {
     setCreatorCloneDistillButtonsLocked(false);
     updateCreatorCloneSelectionStatus();
     renderCreatorCloneNextAction();
+  }
+  if (completion?.completed) {
+    await finalizeCreatorCloneDistillView(completion, {inputValueAtStart, scroll: true});
   }
 }
 
@@ -5565,16 +5751,54 @@ async function loadLlmStatus() {
     llmStatusBadge.textContent = "读取失败";
     llmStatusList.textContent = `${error.error_code || "ERROR"}：${error.message || "无法读取 AI 配置"}`;
     testLlmButton.disabled = true;
+    setWorkbenchStatus("llm", "LLM 读取失败", "missing");
   }
+}
+
+function setWorkbenchStatus(id, label, status = "partial") {
+  const pill = workbenchStatusPills.find((item) => item.dataset.workbenchStatus === id);
+  if (!pill) {
+    return;
+  }
+  pill.textContent = label;
+  const badgeState = window.WorkbenchShell?.normalizeBadgeState(status)
+    || (["ready", "missing", "disabled", "partial"].includes(status) ? status : "partial");
+  pill.className = `workbench-status-pill ${badgeState}`;
+}
+
+function workbenchStatusLabel(item = {}, fallbackLabel = "") {
+  const badge = window.WorkbenchShell?.preflightBadge(item, fallbackLabel);
+  if (badge) {
+    return badge.label;
+  }
+  const status = item.status || "partial";
+  const label = item.label || fallbackLabel || item.id || "检查项";
+  const suffix = {ready: "可用", missing: "缺失", disabled: "关闭", partial: "待确认"}[status] || status;
+  return `${label} ${suffix}`;
+}
+
+function renderWorkbenchLlmStatus(llm = {}) {
+  if (llm.configured) {
+    setWorkbenchStatus("llm", `LLM ${llm.model || "已配置"}`, "ready");
+    return;
+  }
+  setWorkbenchStatus("llm", "LLM 未配置", "disabled");
+}
+
+function renderWorkbenchPreflightStatus(preflight = {}) {
+  void preflight;
+  setWorkbenchStatus("security", "本地安全模式", "ready");
 }
 
 function renderPreflightStatus(preflight) {
   if (!preflightSummary || !preflightList) {
+    renderWorkbenchPreflightStatus(preflight || {});
     return;
   }
   const summary = preflight.summary || {};
   preflightCopySnippets = [];
-  preflightSummary.textContent = `就绪 ${summary.ready_count || 0}/${summary.total_count || 0}，缺失 ${summary.missing_count || 0}，关闭 ${summary.disabled_count || 0}。`;
+  const refreshedAt = window.WorkbenchShell?.formatRefreshTime(Date.now()) || "刚刚";
+  preflightSummary.textContent = `就绪 ${summary.ready_count || 0}/${summary.total_count || 0}，缺失 ${summary.missing_count || 0}，关闭 ${summary.disabled_count || 0}。最后刷新 ${refreshedAt}。`;
   preflightList.innerHTML = normalizeItems(preflight.checks)
     .map((item) => {
       const status = item.status || "unknown";
@@ -5600,6 +5824,7 @@ function renderPreflightStatus(preflight) {
       `;
     })
     .join("");
+  renderWorkbenchPreflightStatus(preflight || {});
 }
 
 async function loadPreflightStatus() {
@@ -5616,20 +5841,16 @@ function renderDataSourceStatus(status = {}) {
   if (!dataSourceStatusBadge || !dataSourceStatusList) {
     return;
   }
-  dataSourceStatusBadge.textContent = status.configured ? "增强已配置" : "主路径可用";
-  dataSourceStatusBadge.className = `status-badge ${status.configured ? "success" : "muted-badge"}`;
-  const sources = normalizeItems(status.sources);
+  dataSourceStatusBadge.textContent = status.has_cookie ? "主力数据源已配置" : "待配置";
+  dataSourceStatusBadge.className = `status-badge ${status.has_cookie ? "success" : "muted-badge"}`;
   dataSourceStatusList.innerHTML = `
     <dl>
       <dt>Cookie API</dt><dd>${status.has_cookie ? "已配置" : "未配置"}</dd>
       <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
       <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
       ${renderDouyinCookieDiagnosticsRows(status.cookie_diagnostics || {})}
-      <dt>当前策略</dt><dd>${escapeHtml(status.status_message || "")}</dd>
+      <dt>当前策略</dt><dd>Douyin Cookie / Web API 优先用于主页扫描；失败后回退到公开扫描、手动链接或高级工具。</dd>
     </dl>
-    <ul class="preflight-contract-summary">
-      ${sources.map((source) => `<li><strong>${escapeHtml(source.label || source.id)}</strong>：${escapeHtml(source.message || "")}</li>`).join("")}
-    </ul>
   `;
   if (douyinCookieInput) {
     douyinCookieInput.value = "";
@@ -5843,14 +6064,7 @@ async function readJsonResponse(response) {
   return payload;
 }
 
-settingsToggle.addEventListener("click", () => {
-  settingsModal.classList.remove("hidden");
-  loadPreflightStatus().catch(() => {
-    if (preflightSummary) {
-      preflightSummary.textContent = "本地工具预检失败，请查看后端日志。";
-    }
-  });
-});
+settingsToggle?.addEventListener("click", openSettingsModal);
 
 settingsClose.addEventListener("click", () => {
   settingsModal.classList.add("hidden");
@@ -5865,7 +6079,96 @@ settingsModal.addEventListener("click", (event) => {
 homeRouteButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setHomeRoute(button.dataset.homeRoute);
+    if (button.dataset.workbenchFocus === "chrome") {
+      window.setTimeout(() => {
+        profilePublicSection?.scrollIntoView({behavior: "smooth", block: "start"});
+      }, 120);
+    }
   });
+});
+
+function openSettingsModal() {
+  settingsModal.classList.remove("hidden");
+  loadPreflightStatus().catch(() => {
+    if (preflightSummary) {
+      preflightSummary.textContent = "本地工具预检失败，请查看后端日志。";
+    }
+    markWorkbenchPreflightFailed();
+  });
+}
+
+function markWorkbenchPreflightFailed() {
+  const fallback = window.WorkbenchShell?.apiFailureBadge("本地状态")
+    || {label: "本地状态待确认", status: "partial"};
+  setWorkbenchStatus("security", fallback.label, fallback.status);
+}
+
+function updateAssistantContext(route = routeFromHash()) {
+  if (!assistantCurrentStage || !assistantNextStep || !assistantMacroStep) {
+    return;
+  }
+  const activeRoute = ["workbench", "single", "profile"].includes(route) ? route : "workbench";
+  if (activeRoute === "single") {
+    assistantCurrentStage.textContent = "单作品解析";
+    assistantMacroStep.textContent = loadedHomeCase ? "3. 爆款拆解" : "1. 素材导入";
+    assistantNextStep.textContent = loadedHomeCase ? "查看单条拆解结果，或复制 Prompt 继续人工分析。" : "粘贴单条作品链接，生成素材包和拆解报告。";
+  } else if (activeRoute === "profile") {
+    assistantCurrentStage.textContent = `Creator Clone Lab · ${creatorCloneCurrentStep?.textContent || "导入素材"}`;
+    assistantMacroStep.textContent = currentCreatorRuntimeReport
+      ? "4. 克隆规则 / 复用输出"
+      : (creatorCloneEnrichmentRunning ? "2. 证据富化" : "1. 素材导入 / 选择样本");
+    assistantNextStep.textContent = currentCreatorRuntimeReport
+      ? "查看创作者蒸馏报告，或生成下一批创作方案。"
+      : "按 6 步流程导入素材、选择样本、富化证据并进入蒸馏。";
+  } else {
+    assistantCurrentStage.textContent = "拆解工作台";
+    assistantMacroStep.textContent = "4 步流程概览";
+    assistantNextStep.textContent = "选择单作品解析或 Creator Clone，进入对应的现有流程。";
+  }
+}
+
+function showAssistantHint(message) {
+  if (!assistantHint) {
+    return;
+  }
+  assistantHint.textContent = message;
+}
+
+aiAssistantToggle?.addEventListener("click", () => {
+  const hidden = aiAssistantPanel?.classList.toggle("hidden");
+  aiAssistantToggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+  updateAssistantContext();
+});
+
+aiAssistantClose?.addEventListener("click", () => {
+  aiAssistantPanel?.classList.add("hidden");
+  aiAssistantToggle?.setAttribute("aria-expanded", "false");
+});
+
+document.addEventListener("workbench:coming-soon", (event) => {
+  aiAssistantPanel?.classList.remove("hidden");
+  aiAssistantToggle?.setAttribute("aria-expanded", "true");
+  showAssistantHint(event.detail?.message || "该模块尚未接入，本轮只保留工作台信息架构位置。");
+});
+
+assistantCopyPromptButton?.addEventListener("click", async () => {
+  const text = currentDistillPrompt || (loadedHomeCase ? buildFullPrompt(loadedHomeCase) : "");
+  if (!text) {
+    showAssistantHint("当前还没有可复制的拆解 Prompt。请先完成单作品素材包或创作者蒸馏。");
+    return;
+  }
+  await navigator.clipboard.writeText(text);
+  showAssistantHint("已复制当前可用 Prompt。");
+});
+
+assistantStrategyPlanButton?.addEventListener("click", () => {
+  setHomeRoute("profile");
+  if (creatorStrategyPlanCard && !creatorStrategyPlanCard.classList.contains("hidden")) {
+    creatorStrategyPlanCard.scrollIntoView({behavior: "smooth", block: "start"});
+    showAssistantHint("已跳转到 Strategy Plan。");
+    return;
+  }
+  showAssistantHint("当前还没有 Strategy Plan。请先完成创作者蒸馏后再生成下一批创作方案。");
 });
 
 window.addEventListener("hashchange", () => {
@@ -6459,6 +6762,8 @@ window.addEventListener("beforeunload", (event) => {
 
 loadLlmStatus();
 loadDataSourceStatus();
-loadPreflightStatus().catch(() => {});
+loadPreflightStatus().catch(() => {
+  markWorkbenchPreflightFailed();
+});
 renderCreatorCloneNextAction();
-setHomeRoute(routeFromHash(), false);
+setHomeRoute(routeFromHash(), !window.location.hash);

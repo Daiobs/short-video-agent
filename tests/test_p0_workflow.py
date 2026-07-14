@@ -274,6 +274,7 @@ def test_case_build_persists_beauty_content_category_guess(tmp_path: Path) -> No
 def test_home_uses_versioned_static_assets() -> None:
     response = client.get("/")
     assert response.status_code == 200
+    assert "/static/workbench.js?v=" in response.text
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
     assert 'data-profile-build-max-items="150"' in response.text
@@ -281,6 +282,62 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "单作品解析" in response.text
     assert "创作者蒸馏" in response.text
     assert "短视频爆款分析素材包生成器" in response.text
+    assert "短视频拆解工作台" in response.text
+    assert "本地运行的短视频分析、素材富化与创作者策略生成控制台" in response.text
+    assert "Workbench Shell v1" in response.text
+    assert 'class="workbench-main workbench-main-shell"' in response.text
+    assert 'class="page workbench-content workbench-page"' in response.text
+    assert 'id="home-workbench"' in response.text
+    assert 'data-home-panel="workbench"' in response.text
+    assert "主要工作流" in response.text
+    assert "配置与诊断" not in response.text
+    assert "高级工具 / 备用采集" in response.text
+    assert "未来模块" in response.text
+    assert "素材资产管理" not in response.text
+    assert "平台与采集" not in response.text
+    assert "规则与校准" not in response.text
+    assert response.text.count('data-workbench-nav-group data-items-collapsed="true"') == 2
+    assert 'class="workbench-nav-group-icon"' in response.text
+    assert 'class="workbench-nav-chevron"' in response.text
+    assert 'data-workbench-nav-toggle' in response.text
+    assert "拆解工作台" in response.text
+    assert "案例报告库" in response.text
+    assert 'data-workbench-coming-soon="案例报告库"' in response.text
+    assert 'data-workbench-open-settings' not in response.text
+    assert response.text.count('id="settings-toggle"') == 1
+    assert "Provider 管理" not in response.text
+    assert "platform_lab 测试中心" in response.text
+    assert 'data-workbench-coming-soon="platform_lab 测试中心"' in response.text
+    assert "拆解 Prompt 库" in response.text
+    assert "本机 Chrome 辅助" in response.text
+    assert "本地运行状态</button>" not in response.text
+    assert "输出目录浏览器" in response.text
+    assert "数据边界" not in response.text
+    assert "LLM / ASR / OCR 设置" not in response.text
+    assert "素材导入" in response.text
+    assert "爆款拆解" in response.text
+    assert "克隆规则 / 复用输出" in response.text
+    assert "AI 拆解助手" in response.text
+    assert 'id="ai-assistant-toggle"' in response.text
+    assert 'id="ai-assistant-panel"' in response.text
+    assert 'id="assistant-macro-step"' in response.text
+    assistant_panel = response.text.split('id="ai-assistant-panel"', 1)[1].split('</section>', 1)[0]
+    assert "打开设置" not in assistant_panel
+    assert "preflight" not in assistant_panel.lower()
+    assert 'id="assistant-open-preflight-button"' not in response.text
+    assert 'data-workbench-status="security"' in response.text
+    assert 'data-workbench-status="llm"' in response.text
+    assert 'data-workbench-status="ffmpeg"' not in response.text
+    assert 'data-workbench-status="ffprobe"' not in response.text
+    assert 'data-workbench-status="yt-dlp"' not in response.text
+    assert 'data-workbench-status="asr"' not in response.text
+    assert 'data-workbench-status="ocr"' not in response.text
+    assert 'data-workbench-status="chrome"' not in response.text
+    assert 'data-workbench-status="platform_lab"' not in response.text
+    assert 'id="settings-toggle"' in response.text
+    assert "自动发布" not in response.text
+    assert "账号矩阵" not in response.text
+    assert "养号" not in response.text
     assert "默认清晰度偏好" not in response.text
     assert 'type="hidden" id="quality-preference" value="1080"' in response.text
     assert "主页 URL / sec_user_id" in response.text
@@ -317,8 +374,13 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-capture-audit"' in response.text
     assert 'id="profile-decision-board"' in response.text
     assert 'id="profile-segments-preview"' in response.text
-    assert "默认不依赖 Cookie" in response.text
-    assert "Cookie / Web API 仅作为可选增强层" in response.text
+    assert "主页扫描优先使用已配置的 Douyin Cookie / Web API" in response.text
+    assert "Douyin Cookie / Web API 是当前主页作品扫描的主力数据源" in response.text
+    assert "Douyin Cookie 由用户主动配置，仅保存在本机。" in response.text
+    assert "已保存 Cookie 不回显原文。" in response.text
+    assert "Cookie 不进入数据库、素材包、Prompt 或日志。" in response.text
+    assert "本机 Chrome 辅助不读取 Cookie。" in response.text
+    assert "不读取 Cookie 原文" not in response.text
     assert "不绕风控" in response.text
     assert "Creator Distillation" in response.text
     assert "浏览器辅助采集" in response.text
@@ -491,7 +553,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "写入富化归档" in response.text
     assert "本地工作流预检" in response.text
     assert "本机 Chrome 助手使用提示" in response.text
-    assert "创作者蒸馏数据源" in response.text
+    assert "抖音数据源" in response.text
     assert "生成下一批创作方案" in response.text
     assert 'id="creator-strategy-plan-card"' in response.text
     assert 'id="generate-creator-strategy-button"' in response.text
@@ -506,6 +568,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "大模型蒸馏" in response.text
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     script = Path("app/static/app.js").read_text(encoding="utf-8")
+    workbench_script = Path("app/static/workbench.js").read_text(encoding="utf-8")
     assert "function getWizardStep" not in script
     assert "function getCreatorCloneStage" not in script
     assert "function renderCreatorCloneNextAction" in script
@@ -566,13 +629,62 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "正在恢复上次素材池" in script
     assert "已恢复上次创作者蒸馏报告" in script
     assert "已恢复上次素材池" in script
+    assert 'const isNavItem = button.classList.contains("workbench-nav-item");' in script
+    assert "isNavItem && button.dataset.homeRoute === activeRoute && !button.dataset.workbenchFocus" in script
+    assert "function normalizeRoute" in workbench_script
+    assert "function normalizeBadgeState" in workbench_script
+    assert "function comingSoonBehavior" in workbench_script
+    assert 'group.dataset.itemsCollapsed = collapsed ? "false" : "true";' in workbench_script
+    assert ".workbench-nav-group[data-items-collapsed=\"true\"] .workbench-nav-item" in stylesheet
+    assert "function settingsTarget" not in workbench_script
+    assert "assistantOpenPreflightButton" not in script
+    assert 'settingsToggle?.addEventListener("click", openSettingsModal);' in script
+    settings_modal_handler = script.split("function openSettingsModal()", 1)[1].split("function markWorkbenchPreflightFailed", 1)[0]
+    assert 'settingsModal.classList.remove("hidden");' in settings_modal_handler
+    assert 'id="workbench-douyin-source-card"' not in response.text
+    assert 'id="douyin-data-source-settings"' in response.text
+    assert 'id="llm-capability-settings"' in response.text
+    assert 'id="system-diagnostics-settings"' in response.text
+    home_workbench = response.text.split('id="home-workbench"', 1)[1].split('id="home-single"', 1)[0]
+    assert "进入单作品拆解" in home_workbench
+    assert "进入创作者拆解" in home_workbench
+    assert "本机 Chrome 辅助" not in home_workbench
+    assert "配置抖音数据源" not in home_workbench
+    assert "workbench-overview-grid" not in home_workbench
+    topbar = response.text.split('class="site-header workbench-topbar"', 1)[1].split('</header>', 1)[0]
+    assert 'id="settings-toggle"' in topbar
+    assert response.text.index('id="settings-toggle"') < response.text.index('id="home-workbench"')
+    assert "function renderWorkbenchDataSourceStatus" not in script
+    assert "workbenchDouyinSourceBadge" not in script
+    assert "workbenchDouyinSourceSummary" not in script
+    assert 'const shouldShowResultContainer = !["import", "export"].includes(activeStage)' in script
+    assert 'id="profile-results-card"' in response.text
+    assert 'id="creator-clone-result-card"' in response.text
+    assert response.text.index('id="profile-results-card"') < response.text.index('id="creator-clone-result-card"')
+    home_profile = response.text.split('id="home-profile"', 1)[1]
+    assert "workbench-process-panel" not in home_profile
+    assert "workbench-macro-stepper" not in home_profile
+    assert "workbench-process-panel" not in stylesheet
+    assert "workbench-macro-stepper" not in stylesheet
+    assert 'class="workbench-stepper"' in home_workbench
+    assert response.text.count("data-profile-stage-nav=") == 6
+    assert 'class="profile-flow-strip profile-main-flow"' in response.text
+    assert "function commitCreatorCloneUnifiedInput" in script
+    render_profile_results = script[
+        script.index("function renderProfileResults") : script.index("function renderProfileCaptureAudit")
+    ]
+    assert "commitCreatorCloneUnifiedInput();" in render_profile_results
+    assert "clearCreatorCloneUnifiedInput();" not in render_profile_results
     poll_distill = script[
         script.index("async function pollCreatorCloneDistillJob") : script.index("// Creator Clone: distillation")
     ]
-    assert "applyCreatorCloneDistillPayload(resultPayload);" in poll_distill
+    assert "let rendered = safeRenderCreatorCloneResult(" in poll_distill
+    assert "applyCreatorIntelligencePayload(resultPayload);" in poll_distill
     assert "await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});" in poll_distill
-    assert poll_distill.index("await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});") < poll_distill.rindex("applyCreatorCloneDistillPayload(resultPayload);")
+    assert poll_distill.index("applyCreatorIntelligencePayload(resultPayload);") < poll_distill.index("safeRenderCreatorCloneResult(")
+    assert poll_distill.index("safeRenderCreatorCloneResult(") < poll_distill.index("await hydrateCreatorCloneReportFromSet(setId, {scroll: false, fallbackPayload: resultPayload});")
     assert "function safeRenderCreatorCloneResult" in script
+    assert 'creatorCloneResultCard?.classList.remove("hidden", "stage-hidden")' in script
     assert "REPORT_RENDER_FAILED" in script
     assert "报告文件同步失败，已使用任务结果直接渲染。" in poll_distill
     assert "function hasCreatorCloneResultPayload" in script
@@ -933,7 +1045,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "样本富化完成，正在调用大模型蒸馏创作者规则" in script
     assert "function renderProfileQueuePipeline" in script
     assert "profilePipelineStatusClass" in script
-    assert "creatorCloneResultCard.scrollIntoView" in script
+    assert "creatorCloneResultCard?.scrollIntoView" in script
     assert "auto_analyze: false" in script
     assert "profileAutoAnalyze" not in script
     assert "样本证据完整度" in script
@@ -1107,7 +1219,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".profile-evidence-status.warning" in stylesheet
     assert "图文/照片" in script
     assert "图文/元数据样本会保存为蒸馏参考" in script
-    assert "API 与解析设置" in response.text
+    assert "本地能力与数据源设置" in response.text
     assert 'id="test-llm-button"' in response.text
     assert "解析结果" in response.text
     assert "关键帧总览" in response.text
@@ -1123,6 +1235,365 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="settings-modal"' in response.text
     assert 'id="download-selected-button"' not in response.text
     assert "下载并生成素材包" not in response.text
+    assert 'data-home-route="workbench"' in response.text
+    assert 'data-home-route="single"' in response.text
+    assert 'data-home-route="profile"' in response.text
+    assert "setHomeRoute(route, updateHash = true)" in script
+    assert '["workbench", "single", "profile"]' in script
+    assert "const visiblePanelRoute = activeRoute;" in script
+    assert "window.WorkbenchShell?.routeFromHash(window.location.hash)" in script
+    assert "setHomeRoute(routeFromHash(), !window.location.hash);" in script
+    assert "function renderWorkbenchPreflightStatus" in script
+    assert "function renderWorkbenchLlmStatus" in script
+    assert "function updateAssistantContext" in script
+    assert ".workbench-sidebar" in stylesheet
+    assert ".workbench-status-strip" in stylesheet
+    assert ".workbench-stepper" in stylesheet
+    assert ".ai-assistant-toggle" in stylesheet
+
+
+def test_workbench_shell_pure_behaviors() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; workbench browser behavior is covered by manual smoke testing.")
+
+    source = Path("app/static/workbench.js").read_text(encoding="utf-8")
+    runner = f"""
+global.window = globalThis;
+global.document = {{readyState: "loading", addEventListener() {{}}}};
+eval({json.dumps(source)});
+const output = {{
+  routes: ["", "#single", "profile", "#unknown", " #WORKBENCH "].map(WorkbenchShell.routeFromHash),
+  ready: WorkbenchShell.preflightBadge({{status: "ready", label: "ffmpeg"}}),
+  unknown: WorkbenchShell.preflightBadge({{status: "unexpected", label: "OCR"}}),
+  failure: WorkbenchShell.apiFailureBadge("preflight"),
+  comingSoon: WorkbenchShell.comingSoonBehavior("案例报告库"),
+}};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["routes"] == ["workbench", "single", "profile", "workbench", "workbench"]
+    assert result["ready"] == {"status": "ready", "label": "ffmpeg 可用"}
+    assert result["unknown"] == {"status": "partial", "label": "OCR 待确认"}
+    assert result["failure"] == {"status": "partial", "label": "preflight 读取失败"}
+    assert result["comingSoon"]["disabled"] is True
+    assert result["comingSoon"]["shouldFetch"] is False
+    assert "尚未接入" in result["comingSoon"]["message"]
+
+
+def test_creator_clone_import_baseline_behavior_runs_in_javascript() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; creator import state is covered by manual smoke testing.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    state_functions = source[
+        source.index("function creatorCloneUnifiedInputValue") : source.index("function hasCreatorCloneImportInput")
+    ]
+    runner = (
+        'var profileQuickInput = {value: "https://www.douyin.com/user/creator-a"};\n'
+        'var profileQuickInputRestoredValue = "";\n'
+        + state_functions
+        + "\n"
+        + "const beforeCommit = hasPendingQuickImportInput();\n"
+        + "commitCreatorCloneUnifiedInput();\n"
+        + "const afterCommit = hasPendingQuickImportInput();\n"
+        + "const retainedValue = profileQuickInput.value;\n"
+        + 'profileQuickInput.value = "https://www.douyin.com/user/creator-b";\n'
+        + "const afterEdit = hasPendingQuickImportInput();\n"
+        + "process.stdout.write(JSON.stringify({beforeCommit, afterCommit, retainedValue, afterEdit}));\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result == {
+        "beforeCommit": True,
+        "afterCommit": False,
+        "retainedValue": "https://www.douyin.com/user/creator-a",
+        "afterEdit": True,
+    }
+
+
+def test_creator_clone_distill_success_report_recovery_runs_in_javascript() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; report recovery is covered by manual smoke testing.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    visibility_functions = source[
+        source.index("function hasRenderedCreatorCloneReport") : source.index("function renderCreatorCloneResult")
+    ]
+    poll_function = source[
+        source.index("async function pollCreatorCloneDistillJob") : source.index("// Creator Clone: distillation")
+    ]
+    runner = (
+        "var scenario = '';\n"
+        "var runtimeApplied = false;\n"
+        "var runtimeState = null;\n"
+        "var reportPresent = false;\n"
+        "var promptPresent = false;\n"
+        "var profileStageView = 'distill';\n"
+        "var currentCloneSetId = '';\n"
+        "var currentCreatorRuntimeReport = null;\n"
+        "var profileScanStatus = {textContent: ''};\n"
+        "var order = [];\n"
+        "var renderCalls = 0;\n"
+        "var hydrateCalls = 0;\n"
+        "function makeClassList() {\n"
+        "  const values = new Set(['hidden', 'stage-hidden']);\n"
+        "  return {add(...items) { items.forEach((item) => values.add(item)); }, remove(...items) { items.forEach((item) => values.delete(item)); }, contains(item) { return values.has(item); }};\n"
+        "}\n"
+        "var creatorCloneResultCard = {classList: makeClassList(), scrollIntoView() {}};\n"
+        "var creatorCloneResult = {querySelector(selector) {\n"
+        "  if (selector === '.creator-distillation-report') return reportPresent ? {} : null;\n"
+        "  if (selector === '.prompt-preview') return promptPresent ? {} : null;\n"
+        "  return null;\n"
+        "}};\n"
+        "var window = {setTimeout(resolve) { resolve(); }};\n"
+        "function setProfileStageView(stage) { profileStageView = stage; }\n"
+        "function renderCreatorCloneNextAction() {}\n"
+        "function renderJobStatus() {}\n"
+        "function rememberRecentCreatorCloneSetId() {}\n"
+        "function formatNumber(value) { return String(value); }\n"
+        "function hasCreatorCloneResultPayload(value) { return Boolean(value && typeof value === 'object' && Object.keys(value).length); }\n"
+        "function applyCreatorIntelligencePayload(payload) {\n"
+        "  runtimeApplied = true;\n"
+        "  runtimeState = payload.creator_intelligence?.runtime_state || null;\n"
+        "  order.push('apply');\n"
+        "}\n"
+        "function safeRenderCreatorCloneResult(result) {\n"
+        "  renderCalls += 1;\n"
+        "  order.push(`render:${runtimeApplied}`);\n"
+        "  if ((scenario === 'job_render_failure' || scenario === 'both_failure') && renderCalls === 1) return false;\n"
+        "  currentCreatorRuntimeReport = result || null;\n"
+        "  reportPresent = Boolean(result && Object.keys(result).length);\n"
+        "  promptPresent = !reportPresent;\n"
+        "  revealCreatorCloneResultCard({scroll: false});\n"
+        "  return true;\n"
+        "}\n"
+        "async function hydrateCreatorCloneReportFromSet() {\n"
+        "  hydrateCalls += 1;\n"
+        "  order.push('hydrate');\n"
+        "  if (scenario === 'hydrate_failure' || scenario === 'both_failure') {\n"
+        "    const error = new Error('报告文件同步失败，已使用任务结果直接渲染。');\n"
+        "    error.error_code = 'REPORT_SYNC_FAILED';\n"
+        "    throw error;\n"
+        "  }\n"
+        "  currentCreatorRuntimeReport = {summary: 'persisted'};\n"
+        "  reportPresent = true;\n"
+        "  promptPresent = false;\n"
+        "  revealCreatorCloneResultCard({scroll: false});\n"
+        "  return {};\n"
+        "}\n"
+        "function applyCreatorCloneDistillPayload() {}\n"
+        "var activePayload = null;\n"
+        "async function fetch() { return {}; }\n"
+        "async function readJsonResponse() { return activePayload; }\n"
+        + visibility_functions
+        + "\n"
+        + poll_function
+        + "\n"
+        + "async function runScenario(nextScenario) {\n"
+        + "  scenario = nextScenario; runtimeApplied = false; runtimeState = null; reportPresent = false; promptPresent = false;\n"
+        + "  profileStageView = 'distill'; currentCloneSetId = ''; currentCreatorRuntimeReport = null; profileScanStatus.textContent = '';\n"
+        + "  order = []; renderCalls = 0; hydrateCalls = 0; creatorCloneResultCard.classList = makeClassList();\n"
+        + "  activePayload = {job: {status: 'success', result_json: {set: {set_id: 'set_demo'}, result: {summary: 'ready'}, creator_intelligence: {runtime_state: {workflow: {state: 'DONE'}}}}}};\n"
+        + "  await pollCreatorCloneDistillJob('job_demo');\n"
+        + "  return {order, runtime: runtimeState?.workflow?.state || '', stage: profileStageView, reportPresent, hidden: creatorCloneResultCard.classList.contains('hidden'), stageHidden: creatorCloneResultCard.classList.contains('stage-hidden'), status: profileScanStatus.textContent, renderCalls, hydrateCalls};\n"
+        + "}\n"
+        + "(async () => {\n"
+        + "  const output = {\n"
+        + "    hydrateFailure: await runScenario('hydrate_failure'),\n"
+        + "    jobRenderFailure: await runScenario('job_render_failure'),\n"
+        + "    bothFailure: await runScenario('both_failure'),\n"
+        + "  };\n"
+        + "  process.stdout.write(JSON.stringify(output));\n"
+        + "})().catch((error) => { console.error(error); process.exit(1); });\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    hydrate_failure = result["hydrateFailure"]
+    assert hydrate_failure["order"][0:2] == ["apply", "render:true"]
+    assert hydrate_failure["runtime"] == "DONE"
+    assert hydrate_failure["stage"] == "export"
+    assert hydrate_failure["reportPresent"] is True
+    assert hydrate_failure["hidden"] is False
+    assert hydrate_failure["stageHidden"] is False
+    assert "REPORT_SYNC_FAILED" in hydrate_failure["status"]
+
+    job_render_failure = result["jobRenderFailure"]
+    assert job_render_failure["order"][0:3] == ["apply", "render:true", "hydrate"]
+    assert job_render_failure["runtime"] == "DONE"
+    assert job_render_failure["stage"] == "export"
+    assert job_render_failure["reportPresent"] is True
+    assert job_render_failure["hidden"] is False
+    assert job_render_failure["stageHidden"] is False
+    assert job_render_failure["status"] == "创作者蒸馏完成。"
+
+    both_failure = result["bothFailure"]
+    assert both_failure["stage"] == "export"
+    assert both_failure["reportPresent"] is False
+    assert both_failure["hidden"] is False
+    assert both_failure["stageHidden"] is False
+    assert both_failure["status"].startswith("REPORT_RENDER_FAILED")
+
+
+def test_creator_clone_distill_finalizes_report_after_unlock_in_javascript() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; final report visibility is covered by manual smoke testing.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    finalizer = source[
+        source.index("function waitForCreatorCloneReportPaint") : source.index("// Creator Clone: distillation")
+    ]
+    single_flow = source[
+        source.index("async function distillSelectedCreatorClone") : source.index("async function batchDistillSelectedCreatorClone")
+    ]
+    batch_flow = source[
+        source.index("async function batchDistillSelectedCreatorClone") : source.index("async function loadLlmStatus")
+    ]
+    assert single_flow.index("setCreatorCloneDistillButtonsLocked(false)") < single_flow.index("await finalizeCreatorCloneDistillView")
+    assert single_flow.index("updateCreatorCloneSelectionStatus()") < single_flow.index("await finalizeCreatorCloneDistillView")
+    assert batch_flow.index("setCreatorCloneDistillButtonsLocked(false)") < batch_flow.index("await finalizeCreatorCloneDistillView")
+    assert batch_flow.index("updateCreatorCloneSelectionStatus()") < batch_flow.index("await finalizeCreatorCloneDistillView")
+
+    runner = (
+        'var profileQuickInput = {value: "https://www.douyin.com/user/creator-a"};\n'
+        'var profileQuickInputRestoredValue = "";\n'
+        'var profileStageView = "distill";\n'
+        'var reportPresent = true;\n'
+        'var promptPresent = false;\n'
+        'var commitCalls = 0;\n'
+        'var scrollCalls = 0;\n'
+        'var profileScanStatus = {textContent: ""};\n'
+        'function makeClassList() {\n'
+        '  const values = new Set(["hidden", "stage-hidden"]);\n'
+        '  return {add(...items) { items.forEach((item) => values.add(item)); }, remove(...items) { items.forEach((item) => values.delete(item)); }, contains(item) { return values.has(item); }};\n'
+        '}\n'
+        'var creatorCloneResultCard = {classList: makeClassList(), scrollIntoView() { scrollCalls += 1; }};\n'
+        'function creatorCloneUnifiedInputValue() { return profileQuickInput.value.trim(); }\n'
+        'function commitCreatorCloneUnifiedInput() { profileQuickInputRestoredValue = creatorCloneUnifiedInputValue(); commitCalls += 1; }\n'
+        'function hasPendingQuickImportInput() { return Boolean(creatorCloneUnifiedInputValue() && creatorCloneUnifiedInputValue() !== profileQuickInputRestoredValue); }\n'
+        'function applyCreatorIntelligencePayload() {}\n'
+        'function currentCreatorCloneSetId() { return "clone_demo"; }\n'
+        'function hasRenderedCreatorCloneOutput() { return reportPresent || promptPresent; }\n'
+        'function hasCreatorCloneResultPayload(value) { return Boolean(value && Object.keys(value).length); }\n'
+        'async function hydrateCreatorCloneReportFromSet() { reportPresent = true; }\n'
+        'function safeRenderCreatorCloneResult() { reportPresent = true; return true; }\n'
+        'function revealCreatorCloneResultCard() { profileStageView = "export"; creatorCloneResultCard.classList.remove("hidden", "stage-hidden"); return hasRenderedCreatorCloneOutput(); }\n'
+        'function setProfileStageView(stage) { profileStageView = stage; }\n'
+        'function renderCreatorCloneNextAction() {}\n'
+        'var window = {requestAnimationFrame(callback) { callback(); }, setTimeout(callback) { callback(); }};\n'
+        + finalizer
+        + "\n"
+        + "(async () => {\n"
+        + "  const result = await finalizeCreatorCloneDistillView({completed: true, rendered: true, setId: 'clone_demo', resultPayload: {result: {summary: 'ready'}}, statusMessage: '创作者蒸馏完成。'}, {inputValueAtStart: profileQuickInput.value, scroll: true});\n"
+        + "  process.stdout.write(JSON.stringify({result, profileStageView, pending: hasPendingQuickImportInput(), commitCalls, scrollCalls, hidden: creatorCloneResultCard.classList.contains('hidden'), stageHidden: creatorCloneResultCard.classList.contains('stage-hidden'), status: profileScanStatus.textContent}));\n"
+        + "})().catch((error) => { console.error(error); process.exit(1); });\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result == {
+        "result": True,
+        "profileStageView": "export",
+        "pending": False,
+        "commitCalls": 1,
+        "scrollCalls": 1,
+        "hidden": False,
+        "stageHidden": False,
+        "status": "创作者蒸馏完成。",
+    }
+
+
+def test_profile_selection_refresh_only_invalidates_report_when_selection_changes() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; selection refresh behavior is covered by manual smoke testing.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    selection_functions = source[
+        source.index("function profileSelectionSetsEqual") : source.index("function selectedBuildableSampleViewItems")
+    ]
+    runner = (
+        'var profileSelectedKeys = new Set(["sample_a", "sample_b"]);\n'
+        'var invalidations = 0;\n'
+        'var syncCalls = 0;\n'
+        'function sampleViewItemKey(item) { return item.sample_id; }\n'
+        'function invalidateCreatorRuntimeReportForSelectionChange() { invalidations += 1; }\n'
+        'function updateCreatorCloneSelectionStatus() {}\n'
+        'function scheduleCreatorCloneSelectionSync() { syncCalls += 1; }\n'
+        'var document = {querySelectorAll() { return []; }};\n'
+        + selection_functions
+        + "\n"
+        + "setProfileSelection([{sample_id: 'sample_b'}, {sample_id: 'sample_a'}]);\n"
+        + "const unchangedInvalidations = invalidations;\n"
+        + "setProfileSelection([{sample_id: 'sample_a'}, {sample_id: 'sample_c'}]);\n"
+        + "process.stdout.write(JSON.stringify({unchangedInvalidations, invalidations, syncCalls, selected: [...profileSelectedKeys].sort()}));\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result == {
+        "unchangedInvalidations": 0,
+        "invalidations": 1,
+        "syncCalls": 2,
+        "selected": ["sample_a", "sample_c"],
+    }
 
 
 def test_calibration_page_uses_versioned_static_assets() -> None:
@@ -1143,7 +1614,7 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "创作者克隆实验室" in readme
     assert "单主线 Wizard" in readme
     assert "DataSourceManager" in readme
-    assert "Cookie Web API 只是可选增强层" in readme
+    assert "Cookie / Web API，多作品链接、公开扫描和本机 Chrome 辅助作为回退" in readme
     assert "公开网站 / 本机助手模式的目标边界" in readme
     assert "`handoff_manifest.json` 必须带有安全契约声明" in readme
     assert "公开站 / 本机助手边界" in readme
@@ -1514,6 +1985,35 @@ def test_data_source_settings_masks_cookie(monkeypatch) -> None:
     assert status["cookie_diagnostics"]["has_cookie"] is True
     assert status["cookie_diagnostics"]["pair_count"] == 1
     assert "very-secret-cookie-value" not in json.dumps(status["cookie_diagnostics"], ensure_ascii=False)
+
+
+def test_workbench_never_renders_saved_douyin_cookie() -> None:
+    from app.services.runtime_settings import update_douyin_runtime_settings
+
+    secret = (
+        "sessionid=prefix-value; "
+        "secret_cookie_marker=COOKIE_SENTINEL_DO_NOT_RENDER; "
+        "odin_tt=suffix9876"
+    )
+    update_douyin_runtime_settings(
+        {
+            "cookie": secret,
+            "user_agent": "Browser UA",
+            "referer": "https://www.douyin.com/",
+        }
+    )
+
+    page_response = client.get("/")
+    status_response = client.get("/api/settings/data-sources")
+
+    assert page_response.status_code == 200
+    assert status_response.status_code == 200
+    assert secret not in page_response.text
+    assert secret not in status_response.text
+    assert "COOKIE_SENTINEL_DO_NOT_RENDER" not in page_response.text
+    assert "COOKIE_SENTINEL_DO_NOT_RENDER" not in status_response.text
+    assert status_response.json()["data_sources"]["has_cookie"] is True
+    assert status_response.json()["data_sources"]["masked_cookie"] != secret
 
 
 def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypatch, tmp_path) -> None:
@@ -9287,8 +9787,8 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert '<div class="profile-selection-toolbar" id="profile-selection-section" aria-label="素材选样工具栏">' in response.text
     assert "素材列表" in response.text
     assert "主页扫描</button>" not in response.text
-    assert "默认不依赖 Cookie" in response.text
-    assert "Cookie / Web API 仅作为可选增强层" in response.text
+    assert "主页扫描优先使用已配置的 Douyin Cookie / Web API" in response.text
+    assert "Cookie / Web API 优先" in response.text
     assert "不绕验证码、不绕风控" in response.text
     assert "JSON / CSV 导入" in response.text
     assert "已有 Case 导入" in response.text

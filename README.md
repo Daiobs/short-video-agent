@@ -29,7 +29,7 @@
 1. 单作品解析：当前可用。围绕一条视频完成链接输入、解析、下载、生成素材包、AI 拆解和 case 查看。
 2. 创作者克隆实验室：P3.0 当前推进中。用于导入一个创作者或账号的对标素材，自由选择 N 条样本，通过大模型蒸馏出选题规则、表达方式、爆款公式和 AI 创作者克隆规则。
 
-当前阶段的创作者克隆实验室已经收敛为单主线 Wizard：导入素材 -> 构建素材池 -> 选择 N 条样本 -> 证据富化 -> 大模型蒸馏 -> 可视化输出。页面只保留一个主按钮 `Start Creator Analysis` 驱动下一步；多作品链接粘贴是稳定主路径，浏览器辅助采集和 Cookie Web API 是可选增强层。系统不会自动下载全部作品，也不会自动发布；选中作品后才进入素材包或蒸馏流程。
+当前阶段的创作者克隆实验室已经收敛为单主线 Wizard：导入素材 -> 构建素材池 -> 选择 N 条样本 -> 证据富化 -> 大模型蒸馏 -> 可视化输出。页面只保留一个主按钮 `Start Creator Analysis` 驱动下一步；主页扫描优先使用用户主动配置的 Douyin Cookie / Web API，多作品链接、公开扫描和本机 Chrome 辅助作为回退。系统不会自动下载全部作品，也不会自动发布；选中作品后才进入素材包或蒸馏流程。
 
 ## Creator Clone Lab / 创作者克隆实验室
 
@@ -41,16 +41,23 @@
 
 数据源由 `DataSourceManager` 统一调度：
 
-- `manual_links`：稳定主路径。支持一行一个链接、整段分享文案、纯 aweme_id 和混合输入，会自动去重。
-- `browser_dom`：浏览器辅助采集。只读取本机 Chrome 当前页面可见作品列表和元数据，不读取 Cookie 或登录 token。
-- `cookie_api`：可选增强层。配置 `DOUYIN_COOKIE`、`DOUYIN_USER_AGENT` 和 `DOUYIN_REFERER` 后，会尝试调用抖音 Web API `/aweme/v1/web/user/post/` 补充作品列表；失败会回退到公开页或提示使用多作品链接 / 浏览器辅助。
+- `cookie_api`：主页扫描主力数据源。用户主动配置 `DOUYIN_COOKIE`、`DOUYIN_USER_AGENT` 和 `DOUYIN_REFERER` 后，系统优先尝试抖音 Web API `/aweme/v1/web/user/post/`；失败再进入安全回退。
+- `manual_links`：稳定回退。支持一行一个链接、整段分享文案、纯 aweme_id 和混合输入，会自动去重。
+- `browser_dom`：高级备用采集。只读取本机 Chrome 当前页面可见作品列表和元数据，不读取 Cookie 或登录 token。
 - `external_api`：预留授权数据源，不作为默认路径。
 - JSON / CSV 导入：支持 `items`、`samples`、`aweme_list`、`awemeList`，兼容 `aweme_id / awemeId / id`、`title / desc`、`author / nickname`、`cover_url / cover`、`statistics.digg_count` 等字段。
 - 已有 Case 导入：轻量版支持粘贴 `case_id`，把已有素材包作为更高理解度样本参与蒸馏。
 
 Cookie 和大模型 API 可以在右上角设置弹窗中修改，保存到本机 `.local_settings.json`。该文件已加入 `.gitignore`，不会进入数据库、素材包、Prompt 或 Git；接口响应只显示是否配置和脱敏状态。`.env` 仍可作为默认配置，页面保存的本机运行时配置优先级更高。
 
-Cookie 设置用于提高 Web API 成功率，不作为登录态要求，不写入日志、素材包、Prompt 或 Git：
+Cookie 设置用于主页 Web API 扫描，不作为绕过平台验证的手段。安全边界固定为：
+
+- Douyin Cookie 由用户主动配置，仅保存在本机。
+- 已保存 Cookie 不回显原文。
+- Cookie 不进入数据库、素材包、Prompt 或日志。
+- 本机 Chrome 辅助不读取 Cookie。
+
+环境变量示例：
 
 ```env
 DOUYIN_COOKIE=
@@ -91,7 +98,7 @@ DOUYIN_REFERER=https://www.douyin.com/
 
 - 部分抖音主页即使 URL 有效，公开 HTTP 请求也只会返回浏览器校验脚本，例如包含 `_$jsvmprt`、`byted_acrawler`、`__ac_nonce` 或验证码标记。此时系统会返回 `DOUYIN_RISK_CONTROL`。
 - `DOUYIN_RISK_CONTROL` 代表平台没有返回公开作品列表，不是主页 URL 格式错误，也不是图文/照片作品导致。
-- 当前项目边界是不绕验证码、不绕风控、不做签名破解；Cookie API 只是可选增强，遇到风控、结构不可解析或 Cookie 失效时，推荐改用“多作品链接粘贴”“浏览器辅助采集”“JSON / CSV 导入”或“已有 Case 导入”继续整理素材池。
+- 当前项目边界是不绕验证码、不绕风控、不做签名破解；Cookie API 是主页扫描的主力数据源，但遇到风控、结构不可解析或 Cookie 失效时，推荐改用“多作品链接粘贴”“浏览器辅助采集”“JSON / CSV 导入”或“已有 Case 导入”继续整理素材池。
 - 多作品粘贴是当前账号级分析的稳定入口；支持一行一个作品链接、整段分享文案、纯 aweme_id 和混合输入，并会显示识别、去重、忽略无效内容的统计。
 - 作品池富化队列默认一次最多处理 150 条可下载视频，可通过 `PROFILE_BUILD_MAX_ITEMS` 调整。每条作品会逐条复用单作品解析、下载、素材包生成、enrichment 归档、可选 ASR/OCR 和可选 AI 拆解流程；某条失败不影响后续条目。大模型蒸馏仍默认最多选择 20 条代表样本，避免上下文过长。
 - 后续如果确认要继续增强账号级扫描，应优先完善授权数据源和浏览器可见信息交接，不做 A_Bogus / X_Bogus、验证码绕过或隐式登录态依赖。
@@ -194,7 +201,7 @@ http://127.0.0.1:8765/
 
 ## 自用版本机 Chrome 辅助采集
 
-Creator Clone Lab 首页只保留一个主动作：`Start Creator Analysis`。默认先围绕你填写的作品链接或主页信息构建素材池；如果公开主页读取受限，可以展开备用动作，使用“本机 Chrome 辅助采集”作为自用兜底。Cookie Web API 只是可选增强层，不是默认依赖。
+Creator Clone Lab 首页只保留一个主动作：`Start Creator Analysis`。主页输入会优先使用用户主动配置的 Douyin Cookie / Web API；Cookie 未配置、失效或接口受限时，可使用多作品链接、公开扫描，或展开高级工具使用“本机 Chrome 辅助采集”作为自用兜底。
 
 默认模式使用专用本地 profile：`outputs/local_chrome_profile/`。这样不会碰你的日常 Chrome 登录态，但第一次使用时需要在这个 Chrome 窗口里自行登录或过验证。可以手动执行：
 
