@@ -217,7 +217,9 @@ function setHomeRoute(route, updateHash = true) {
     button.classList.toggle("active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
-  if (updateHash) {
+  const hashRoute = window.location.hash.replace(/^#/, "").trim().toLowerCase();
+  const shouldRepairHash = Boolean(window.location.hash) && !["workbench", "single", "profile"].includes(hashRoute);
+  if (updateHash || shouldRepairHash) {
     history.replaceState(null, "", `#${activeRoute}`);
   }
   if (visiblePanelRoute === "profile" && !chromeHelperStatusLoaded) {
@@ -6085,6 +6087,96 @@ homeRouteButtons.forEach((button) => {
       }, 120);
     }
   });
+});
+
+function safeWorkbenchInternalUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || ""), window.location.origin);
+  } catch {
+    return "";
+  }
+  if (url.origin !== window.location.origin || url.search || url.hash) {
+    return "";
+  }
+  if (/^\/cases\/[A-Za-z0-9_-]{1,100}$/.test(url.pathname)) {
+    return url.pathname;
+  }
+  if (/^\/api\/creator-clone\/sets\/clone_[a-f0-9]{32}\/files\/creator_clone\.(?:html|md)$/i.test(url.pathname)) {
+    return url.pathname;
+  }
+  return "";
+}
+
+function notifyWorkbenchTargetResult(ok, message = "") {
+  document.dispatchEvent(new CustomEvent("workbench:target-result", {
+    detail: {ok, message},
+  }));
+}
+
+document.addEventListener("workbench:navigate", (event) => {
+  const route = String(event.detail?.route || "");
+  if (!["single", "profile"].includes(route)) {
+    return;
+  }
+  setHomeRoute(route);
+  window.scrollTo({top: 0, behavior: "smooth"});
+});
+
+document.addEventListener("workbench:open-url", (event) => {
+  const openUrl = safeWorkbenchInternalUrl(event.detail?.open_url);
+  if (openUrl) {
+    window.open(openUrl, "_blank", "noopener,noreferrer");
+  }
+});
+
+document.addEventListener("workbench:open-target", async (event) => {
+  const target = event.detail?.target;
+  const route = String(target?.route || "");
+  if (!["single", "profile"].includes(route)) {
+    notifyWorkbenchTargetResult(false, "任务目标无效，概览未执行跳转。");
+    return;
+  }
+  if (route === "single") {
+    const resourceId = String(target?.resource_id || "");
+    const openUrl = safeWorkbenchInternalUrl(event.detail?.open_url);
+    const caseMatch = openUrl.match(/^\/cases\/([A-Za-z0-9_-]{1,100})$/);
+    if (caseMatch && (!resourceId || resourceId === caseMatch[1])) {
+      window.location.assign(openUrl);
+      return;
+    }
+    setHomeRoute("single");
+    window.scrollTo({top: 0, behavior: "smooth"});
+    notifyWorkbenchTargetResult(true);
+    return;
+  }
+
+  const setId = String(target?.resource_id || "");
+  if (!setId) {
+    setHomeRoute("profile");
+    window.scrollTo({top: 0, behavior: "smooth"});
+    notifyWorkbenchTargetResult(true);
+    return;
+  }
+  if (!isSafeCreatorCloneSetId(setId)) {
+    notifyWorkbenchTargetResult(false, "Creator set 标识无效，未恢复任何本地素材池。");
+    return;
+  }
+
+  resetCreatorClonePoolForNewProfile();
+  rememberRecentCreatorCloneSetId(setId);
+  recentCreatorCloneRestoreAttempted = false;
+  const restored = await restoreRecentCreatorCloneSet();
+  setHomeRoute("profile");
+  const stage = String(target?.stage || "");
+  if (restored && ["import", "pool", "select", "enrich", "distill", "export"].includes(stage)) {
+    setProfileStageView(stage, {scroll: false});
+  }
+  window.scrollTo({top: 0, behavior: "smooth"});
+  notifyWorkbenchTargetResult(
+    restored,
+    restored ? "" : "指定 Creator set 无法恢复，请在创作者页面重新导入。",
+  );
 });
 
 function openSettingsModal() {

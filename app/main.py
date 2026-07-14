@@ -18,6 +18,7 @@ from app.routes import (
     profile,
     settings as settings_routes,
     videos,
+    workbench,
 )
 from app.services.local_chrome import is_loopback_client
 
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(local_helper.router)
     app.include_router(downloads.router)
     app.include_router(settings_routes.router)
+    app.include_router(workbench.router)
     return app
 
 

@@ -1,8 +1,75 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import datetime, timezone
+
 from app.config import settings
 from app.services.profile_scan import inspect_douyin_cookie, test_douyin_cookie_api
-from app.services.runtime_settings import effective_douyin_settings, update_douyin_runtime_settings
+from app.services.runtime_settings import (
+    effective_douyin_settings,
+    load_local_settings,
+    update_douyin_runtime_settings,
+    update_local_section,
+)
+
+
+DOUYIN_HEALTH_SECTION = "douyin_health"
+
+
+def _cookie_fingerprint(value: str) -> str:
+    cleaned = (value or "").strip()
+    return hashlib.sha256(cleaned.encode("utf-8")).hexdigest() if cleaned else ""
+
+
+def _store_douyin_health(status: str, message: str = "", *, checked: bool = False) -> None:
+    effective = effective_douyin_settings()
+    update_local_section(
+        DOUYIN_HEALTH_SECTION,
+        {
+            "status": status,
+            "message": str(message or "")[:240],
+            "cookie_fingerprint": _cookie_fingerprint(effective["cookie"]),
+            "checked_at": datetime.now(timezone.utc).isoformat() if checked else "",
+        },
+    )
+
+
+def douyin_source_health_payload() -> dict:
+    """Return the last known source state without performing a platform request."""
+
+    effective = effective_douyin_settings()
+    cookie = (effective["cookie"] or "").strip()
+    if not cookie:
+        return {
+            "configured": False,
+            "status": "not_configured",
+            "label": "未配置",
+            "last_checked_at": "",
+            "status_message": "未配置 Douyin Cookie；仍可使用手动链接或本机 Chrome 辅助。",
+        }
+
+    payload = load_local_settings()
+    health = payload.get(DOUYIN_HEALTH_SECTION)
+    health = health if isinstance(health, dict) else {}
+    same_cookie = health.get("cookie_fingerprint") == _cookie_fingerprint(cookie)
+    status = str(health.get("status") or "pending") if same_cookie else "pending"
+    if status == "success":
+        label = "自检成功"
+        message = "最近一次 Cookie Web API 自检成功。"
+    elif status == "failed":
+        label = "自检失败"
+        message = "最近一次 Cookie Web API 自检失败，可改用手动链接或本机 Chrome 辅助。"
+    else:
+        status = "pending"
+        label = "已配置待自检"
+        message = "已配置 Douyin Cookie，尚未完成当前 Cookie 的 API 自检。"
+    return {
+        "configured": True,
+        "status": status,
+        "label": label,
+        "last_checked_at": str(health.get("checked_at") or "") if same_cookie else "",
+        "status_message": message,
+    }
 
 
 def mask_cookie(value: str) -> str:
@@ -74,7 +141,8 @@ def data_source_status_payload() -> dict:
             "Cookie 不是默认依赖，也不用于绕验证码或风控。",
             "公开扫描失败时，请使用多作品链接粘贴或浏览器辅助采集。",
         ],
-}
+        "health": douyin_source_health_payload(),
+    }
 
 
 def normalize_cookie_input(value: str) -> str:
@@ -85,6 +153,7 @@ def normalize_cookie_input(value: str) -> str:
 
 
 def update_douyin_settings_payload(payload: dict) -> dict:
+    previous_cookie_fingerprint = _cookie_fingerprint(effective_douyin_settings()["cookie"])
     values = {
         "user_agent": payload.get("user_agent", effective_douyin_settings()["user_agent"]),
         "referer": payload.get("referer", effective_douyin_settings()["referer"]),
@@ -94,6 +163,9 @@ def update_douyin_settings_payload(payload: dict) -> dict:
     elif str(payload.get("douyin_cookie") or payload.get("cookie") or "").strip():
         values["cookie"] = normalize_cookie_input(str(payload.get("douyin_cookie") or payload.get("cookie") or ""))
     update_douyin_runtime_settings(values)
+    current_cookie = effective_douyin_settings()["cookie"]
+    if _cookie_fingerprint(current_cookie) != previous_cookie_fingerprint:
+        _store_douyin_health("pending" if current_cookie.strip() else "not_configured")
     return data_source_status_payload()
 
 
@@ -103,8 +175,19 @@ def test_douyin_settings_payload(payload: dict) -> dict:
     if profile_url.startswith("MS4w") and not sec_user_id:
         sec_user_id = profile_url
         profile_url = ""
-    return test_douyin_cookie_api(
+    result = test_douyin_cookie_api(
         profile_url=profile_url,
         sec_user_id=sec_user_id,
         count=int(payload.get("count") or 5),
     )
+    result_status = str(result.get("status") or "")
+    if result_status == "ok":
+        _store_douyin_health("success", str(result.get("message") or ""), checked=True)
+    elif result_status == "not_configured":
+        _store_douyin_health("not_configured", str(result.get("message") or ""), checked=False)
+    elif result_status in {"config_only", "invalid_target"}:
+        # The target was not testable, so retain the last Cookie health result.
+        pass
+    else:
+        _store_douyin_health("failed", str(result.get("message") or ""), checked=True)
+    return result
