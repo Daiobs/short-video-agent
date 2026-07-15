@@ -1,7 +1,6 @@
 // Settings
 const settingsToggle = document.getElementById("settings-toggle");
 const settingsModal = document.getElementById("settings-modal");
-const settingsDrawer = document.getElementById("settings-drawer");
 const settingsClose = document.getElementById("settings-close");
 const singleForm = document.getElementById("single-form");
 const singleButton = document.getElementById("single-button");
@@ -198,6 +197,23 @@ let recentCreatorCloneRestoreAttempted = false;
 const RECENT_CREATOR_CLONE_SET_STORAGE_KEY = "shortVideoAgent.recentCreatorCloneSetId";
 const RECENT_PROFILE_BUILD_STATE_STORAGE_KEY = "shortVideoAgent.recentProfileBuildState";
 const RECENT_PROFILE_STAGE_STORAGE_KEY = "shortVideoAgent.recentProfileStage";
+
+const creatorReportView = window.CreatorReportView?.createRenderer({
+  compactReportList,
+  creatorStrategyFromResult,
+  formatNumber,
+  normalizeItems,
+  publicValueHasContent,
+  qualityLabelFromScore,
+  renderCompactPerformanceSegments,
+  renderCreatorCloneEvidenceOverview,
+  renderFormulaCards,
+  renderPublicCard,
+  renderPublicFields,
+  renderPublicList,
+  renderTopicBuckets,
+  cleanPublicReportText,
+}) || null;
 
 function setStatus(element, value) {
   if (element) {
@@ -1532,49 +1548,6 @@ function renderPublicAnalysisReport(result) {
       ${renderPublicCard("下一步", renderPublicList(result.next_actions, "暂无下一步建议。"))}
     </div>
   `;
-}
-
-function renderLlmStatus(llm) {
-  const configured = Boolean(llm.configured);
-  llmStatusBadge.textContent = configured ? "已启用" : "未配置";
-  llmStatusBadge.classList.toggle("success", configured);
-  llmStatusBadge.classList.toggle("muted-badge", !configured);
-  testLlmButton.disabled = !configured;
-  llmConfigHint.classList.toggle("hidden", configured);
-  llmStatusList.innerHTML = `
-    <dl>
-      <dt>Provider</dt><dd>${escapeHtml(llm.provider || "disabled")}</dd>
-      <dt>API Base</dt><dd>${escapeHtml(llm.api_base || "")}</dd>
-      <dt>Model</dt><dd>${escapeHtml(llm.model || "未配置")}</dd>
-      <dt>API Key</dt><dd>${llm.has_api_key ? `已配置 ${escapeHtml(llm.masked_api_key || "")}` : "未配置"}</dd>
-      <dt>图片帧数</dt><dd>${escapeHtml(llm.llm_max_keyframes ?? "")}</dd>
-      <dt>Temperature</dt><dd>${escapeHtml(llm.temperature ?? "")}</dd>
-    </dl>
-    <p class="muted compact-copy">${escapeHtml(llm.status_message || "")}</p>
-  `;
-  if (llmProviderInput) {
-    llmProviderInput.value = llm.provider || "disabled";
-  }
-  if (llmApiBaseInput) {
-    llmApiBaseInput.value = llm.api_base || "";
-  }
-  if (llmModelInput) {
-    llmModelInput.value = llm.model || "";
-  }
-  if (llmTimeoutInput) {
-    llmTimeoutInput.value = llm.timeout_seconds || 90;
-  }
-  if (llmTemperatureInput) {
-    llmTemperatureInput.value = llm.temperature ?? 0.2;
-  }
-  if (llmApiKeyInput) {
-    llmApiKeyInput.value = "";
-    llmApiKeyInput.placeholder = llm.has_api_key ? `留空保留当前 Key（${llm.masked_api_key || "已配置"}）` : "粘贴 API Key";
-  }
-  if (llmClearKeyInput) {
-    llmClearKeyInput.checked = false;
-  }
-  renderWorkbenchLlmStatus(llm);
 }
 
 function sortCreatorSampleViewItems(items, sortBy) {
@@ -4549,229 +4522,6 @@ function creatorReportViewModelFromResult(result = {}, overview = {}, templateLa
   };
 }
 
-function renderDistillationFormulaList(strategy, result) {
-  const templates = normalizeItems(strategy.templates);
-  const formulas = normalizeItems(result.transferable_formulas);
-  if (templates.length || formulas.length) {
-    return renderFormulaCards(templates.length ? templates : formulas);
-  }
-  const fallback = compactReportList(
-    strategy.content_strategy,
-    result.creator_clone_spec?.structure_rules,
-    result.creator_clone_spec?.visual_rules,
-    result.expression_patterns?.opening_hooks,
-  ).slice(0, 4);
-  return renderPublicList(fallback, "本次没有返回独立公式，建议先从内容策略中人工提炼 2-3 个可复用拍法。");
-}
-
-function renderDistillationIdeaList(strategy, result) {
-  const ideas = normalizeItems(strategy.idea_bank);
-  const candidates = normalizeItems(result.candidate_ideas);
-  if (ideas.length || candidates.length) {
-    return renderCandidateIdeas(ideas.length ? ideas : candidates);
-  }
-  const buckets = normalizeItems(result.topic_buckets).map((item) => {
-    if (!item || typeof item !== "object") {
-      return item;
-    }
-    return item.name || item.title || item.description || formatReportValue(item);
-  });
-  return renderPublicList(buckets.slice(0, 6), "本次没有返回独立选题库，可先基于爆款共性手动生成候选选题。");
-}
-
-function renderDistillationSegmentGrid(segments = {}) {
-  return `
-    <div class="creator-segment-grid">
-      <section>
-        <h5>高赞：情绪 / 身份共鸣</h5>
-        ${renderSegmentSampleList(segments.highest_like_samples, "like_count", "赞", "暂无高赞分层。")}
-      </section>
-      <section>
-        <h5>高评：讨论 / 参与钩子</h5>
-        ${renderSegmentSampleList(segments.highest_comment_samples, "comment_count", "评", "暂无高评分层。")}
-      </section>
-      <section>
-        <h5>高分享：转发理由</h5>
-        ${renderSegmentSampleList(segments.highest_share_samples, "share_count", "分享", "暂无高分享分层。")}
-      </section>
-      <section>
-        <h5>高收藏：模板 / 复看价值</h5>
-        ${renderSegmentSampleList(segments.highest_collect_samples, "collect_count", "收藏", "暂无高收藏分层。")}
-      </section>
-    </div>
-  `;
-}
-
-function reportValueHasAny(...values) {
-  return values.some((value) => publicValueHasContent(value));
-}
-
-function renderThinkingPatternBlock(patterns = {}) {
-  return `
-    ${renderPublicFields([
-      ["熟悉与新鲜感", patterns.novelty_vs_familiarity],
-    ])}
-    <h5>观众假设</h5>
-    ${renderPublicList(patterns.assumptions, "暂无观众假设。")}
-    <h5>张力来源</h5>
-    ${renderPublicList(patterns.tension_sources, "暂无张力判断。")}
-    <h5>细节选择规则</h5>
-    ${renderPublicList(patterns.detail_selection_rules, "暂无细节选择规则。")}
-  `;
-}
-
-function renderExpressionPatternBlock(patterns = {}, spec = {}) {
-  const values = compactReportList(
-    patterns.opening_hooks,
-    patterns.scene_order,
-    patterns.shot_types,
-    patterns.subtitle_voice,
-    patterns.visual_style,
-    patterns.ending_patterns,
-    spec.expression_rules,
-    spec.visual_rules,
-    spec.ending_rules,
-  );
-  return renderPublicList(values, "暂无表达/视觉规律。");
-}
-
-function renderCloneRulesBlock(spec = {}, strategy = {}) {
-  return `
-    ${renderPublicFields([
-      ["Taste", spec.taste],
-      ["字幕/文案语气", spec.caption_voice],
-    ])}
-    <h5>选题规则</h5>
-    ${renderPublicList(spec.topic_selection_rules || strategy.content_strategy, "暂无选题规则。")}
-    <h5>结构规则</h5>
-    ${renderPublicList(spec.structure_rules, "暂无结构规则。")}
-    <h5>自检规则</h5>
-    ${renderPublicList(spec.self_check_rubric || strategy.validation_rules, "暂无自检规则。")}
-  `;
-}
-
-function renderCreatorReportHero({viewModel, summary, templateLabel, overview, positioningText}) {
-  const evidence = viewModel?.evidence_counts || {};
-  const counts = overview?.understanding_counts || {};
-  const selectedCount = Number(evidence.selected_count ?? overview?.selected_count ?? 0);
-  const sampleCount = Number(evidence.sample_count ?? overview?.sample_count ?? 0);
-  const confidence = viewModel?.confidence_label || overview?.confidence || "";
-  const evidenceLine = viewModel?.confidence_note
-    || `完整 ${formatNumber(counts.full || evidence.understanding_full || 0)} · 部分 ${formatNumber(counts.partial || evidence.understanding_partial || 0)} · 仅元数据 ${formatNumber(counts.metadata_only || evidence.understanding_metadata_only || 0)}`;
-  const mediaLine = [evidence.with_video, evidence.with_keyframes, evidence.with_asr, evidence.with_ocr, evidence.with_comments]
-    .some((value) => value !== undefined)
-    ? `视频 ${formatNumber(evidence.with_video || 0)} · 关键帧 ${formatNumber(evidence.with_keyframes || 0)} · ASR ${formatNumber(evidence.with_asr || 0)} · OCR ${formatNumber(evidence.with_ocr || 0)} · 评论 ${formatNumber(evidence.with_comments || 0)}`
-    : "";
-  return `
-    <article class="creator-report-hero-card">
-      <div>
-        <span>创作者蒸馏报告</span>
-        <h3>${escapeHtml(viewModel?.headline || positioningText || "账号规律已完成蒸馏")}</h3>
-        <p>${escapeHtml(viewModel?.summary || summary || "请先查看下方核心结论和可复刻公式。")}</p>
-      </div>
-      <dl>
-        <dt>分析模板</dt>
-        <dd>${escapeHtml(viewModel?.template_label || templateLabel || "自动识别")}</dd>
-        <dt>样本</dt>
-        <dd>${formatNumber(selectedCount)} / ${formatNumber(sampleCount)}</dd>
-        <dt>证据完整度</dt>
-        <dd>${escapeHtml(evidenceLine)}</dd>
-        ${mediaLine ? `<dt>证据覆盖</dt><dd>${escapeHtml(mediaLine)}</dd>` : ""}
-        ${confidence ? `<dt>置信度</dt><dd>${escapeHtml(confidence)}</dd>` : ""}
-      </dl>
-    </article>
-  `;
-}
-
-function splitCreatorReportSummary(value, options = {}) {
-  const maxParagraphs = options.maxParagraphs || 4;
-  const maxChars = options.maxChars || 130;
-  const text = cleanPublicReportText(value || "创作者蒸馏完成。");
-  if (!text) {
-    return ["创作者蒸馏完成。"];
-  }
-  const sentences = text
-    .split(/(?<=[。！？!?；])\s*/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (sentences.length <= 1) {
-    return [text];
-  }
-  const paragraphs = [];
-  sentences.forEach((sentence) => {
-    const previous = paragraphs[paragraphs.length - 1] || "";
-    if (previous && `${previous}${sentence}`.length <= maxChars) {
-      paragraphs[paragraphs.length - 1] = `${previous}${sentence}`;
-      return;
-    }
-    if (paragraphs.length < maxParagraphs) {
-      paragraphs.push(sentence);
-    }
-  });
-  return paragraphs.length ? paragraphs : [text];
-}
-
-function renderCreatorReportSummaryHero(summary) {
-  const paragraphs = splitCreatorReportSummary(summary);
-  const headline = paragraphs[0] || "创作者蒸馏完成。";
-  const rest = paragraphs.slice(1);
-  return `
-    <strong>${escapeHtml(headline)}</strong>
-    ${rest.length ? `
-      <div class="public-analysis-hero-body">
-        ${rest.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}
-      </div>
-    ` : ""}
-  `;
-}
-
-function renderCreatorReportTrafficSignals(segments, positioning, patterns, strategy) {
-  const metricSignals = compactReportList(
-    firstSegmentBrief(segments, "highest_like_samples", "高赞"),
-    firstSegmentBrief(segments, "highest_comment_samples", "高评"),
-    firstSegmentBrief(segments, "highest_share_samples", "高分享"),
-    firstSegmentBrief(segments, "highest_collect_samples", "高收藏"),
-  ).slice(0, 4);
-  const hookSignals = compactReportList(
-    strategy.hooks,
-    patterns.opening_hooks,
-    positioning.hidden_genre,
-    positioning.audience_promise,
-  ).slice(0, 8);
-  return `
-    ${metricSignals.length ? `
-      <h5>数据里最强的信号</h5>
-      ${renderPublicList(metricSignals)}
-    ` : ""}
-    <h5>抓停留 / 促互动方式</h5>
-    ${renderPublicList(hookSignals, "暂无明确钩子。")}
-  `;
-}
-
-function renderCreatorReportActionPlan(strategy, result) {
-  const nextActions = nonTechnicalReportList(
-    result.next_actions,
-    result.topic_buckets,
-  ).slice(0, 6);
-  return `
-    <h5>候选选题</h5>
-    ${renderDistillationIdeaList(strategy, result)}
-    <h5>下一步动作</h5>
-    ${renderPublicList(nextActions, "先从最高互动样本中选 3 条，人工复核开头、封面、动作和标题，再生成候选脚本。")}
-  `;
-}
-
-function renderCreatorReportChecklist(strategy, spec) {
-  const validationRules = nonTechnicalReportList(strategy.validation_rules, spec.self_check_rubric).slice(0, 6);
-  const antiPatterns = nonTechnicalReportList(strategy.anti_patterns, spec.anti_patterns).slice(0, 6);
-  return `
-    <h5>发布前自检</h5>
-    ${renderPublicList(validationRules, "暂无自检规则。")}
-    <h5>不要照搬 / 风险边界</h5>
-    ${renderPublicList(antiPatterns, "暂无风险边界。")}
-  `;
-}
-
 function firstSegmentBrief(segments, key, metricLabel) {
   const item = normalizeItems(segments?.[key])[0];
   if (!item || typeof item !== "object") {
@@ -4782,213 +4532,6 @@ function firstSegmentBrief(segments, key, metricLabel) {
   return metricValue !== undefined && metricValue !== null && metricValue !== ""
     ? `${metricLabel}代表：${title}（${formatNumber(metricValue)}）`
     : `${metricLabel}代表：${title}`;
-}
-
-function renderCreatorDistillationEvidenceDetails(overview, result, reportViewModel = null) {
-  const thinking = result.thinking_patterns || {};
-  const patterns = result.expression_patterns || {};
-  const spec = result.creator_clone_spec || {};
-  const strategy = creatorStrategyFromResult(result) || {};
-  const viewModel = reportViewModel || result.creator_report_view_model || null;
-  const hasThinking = reportValueHasAny(thinking.assumptions, thinking.tension_sources, thinking.detail_selection_rules, thinking.novelty_vs_familiarity);
-  const hasExpression = reportValueHasAny(
-    patterns.opening_hooks,
-    patterns.scene_order,
-    patterns.shot_types,
-    patterns.subtitle_voice,
-    patterns.visual_style,
-    patterns.ending_patterns,
-    spec.expression_rules,
-    spec.visual_rules,
-  );
-  return `
-    <details class="creator-report-evidence-details">
-      <summary>报告依据：样本、证据完整度和后台细节</summary>
-      ${renderCreatorCloneEvidenceOverview(overview)}
-      ${renderCompactPerformanceSegments(result.performance_segments || {})}
-      <div class="creator-report-evidence-inner">
-        ${reportValueHasAny(result.topic_buckets) ? `
-          <section>
-            <h5>选题桶</h5>
-            ${renderTopicBuckets(result.topic_buckets)}
-          </section>
-        ` : ""}
-        ${hasThinking ? `
-          <section>
-            <h5>思维模式</h5>
-            ${renderThinkingPatternBlock(thinking)}
-          </section>
-        ` : ""}
-        ${hasExpression ? `
-          <section>
-            <h5>表达 / 视觉依据</h5>
-            ${renderExpressionPatternBlock(patterns, spec)}
-          </section>
-        ` : ""}
-        ${reportValueHasAny(strategy.templates, result.transferable_formulas) ? `
-          <section>
-            <h5>原始公式字段</h5>
-            ${renderDistillationFormulaList(strategy, result)}
-          </section>
-        ` : ""}
-        ${reportValueHasAny(result.evidence_gaps) ? `
-          <section>
-            <h5>证据缺口</h5>
-            ${renderPublicList(result.evidence_gaps)}
-          </section>
-        ` : ""}
-        ${reportValueHasAny(viewModel?.technical_notes) ? `
-          <section>
-            <h5>运行备注</h5>
-            ${renderPublicList(viewModel.technical_notes)}
-          </section>
-        ` : ""}
-      </div>
-    </details>
-  `;
-}
-
-function renderCreatorReportSampleEvidence(items = []) {
-  const rows = normalizeItems(items).filter((item) => item && typeof item === "object").slice(0, 6);
-  if (!rows.length) {
-    return '<p class="muted compact-copy">暂无样本证据引用；请优先查看高互动样本并补齐关键帧/ASR/OCR。</p>';
-  }
-  return `
-    <ul class="public-report-list creator-evidence-reference-list">
-      ${rows.map((item) => {
-        const metric = item.metric_label
-          ? `${item.metric_label} ${formatNumber(item.metric_value || 0)}`
-          : item.metric
-            ? `${item.metric} ${formatNumber(item.metric_value || 0)}`
-            : "";
-        const evidence = item.evidence_level ? `证据 ${item.evidence_level}` : "";
-        const meta = [metric, evidence, item.sample_id].filter(Boolean).join(" · ");
-        return `<li><strong>${escapeHtml(item.title || "代表样本")}</strong>${meta ? ` <span class="muted">(${escapeHtml(meta)})</span>` : ""}${item.reason ? `<br><span class="muted">${escapeHtml(item.reason)}</span>` : ""}</li>`;
-      }).join("")}
-    </ul>
-  `;
-}
-
-function renderCreatorReportLowConfidence(valueUpgrade = {}) {
-  const reasons = normalizeItems(valueUpgrade.low_confidence_reasons || valueUpgrade.evidence_gaps).slice(0, 6);
-  if (!valueUpgrade.low_confidence && !reasons.length) {
-    return '<p class="muted compact-copy">当前没有明显低置信提示。</p>';
-  }
-  return `
-    <div class="creator-low-confidence-note">
-      <strong>低置信提示</strong>
-      ${renderPublicList(reasons, "证据不足的结论会在这里显示。")}
-    </div>
-  `;
-}
-
-function renderCreatorReportDiagnostics(valueUpgrade = {}, quality = {}) {
-  const diagnostics = valueUpgrade.diagnostics || {};
-  if (!diagnostics.source_label && !diagnostics.coverage_text && !diagnostics.quality_label) {
-    return "";
-  }
-  const score = diagnostics.quality_score ?? quality.quality_score ?? quality.score;
-  const missing = normalizeItems(diagnostics.missing_evidence_labels).slice(0, 5);
-  return `
-    <div class="creator-report-diagnostics">
-      <div class="creator-report-diagnostic-grid">
-        <article>
-          <span>报告来源</span>
-          <strong>${escapeHtml(diagnostics.source_label || "待确认")}</strong>
-        </article>
-        <article>
-          <span>质量判断</span>
-          <strong>${escapeHtml(diagnostics.quality_label || qualityLabelFromScore(score))}${score !== undefined && score !== null ? ` · ${formatNumber(score)}/100` : ""}</strong>
-        </article>
-        <article class="wide">
-          <span>证据覆盖</span>
-          <strong>${escapeHtml(diagnostics.coverage_text || "暂无证据覆盖统计")}</strong>
-        </article>
-      </div>
-      ${diagnostics.is_fallback && diagnostics.fallback_reason ? `<p class="creator-report-source-warning">${escapeHtml(diagnostics.fallback_reason)}</p>` : ""}
-      ${missing.length ? `<p class="muted compact-copy">优先补齐：${escapeHtml(missing.join("、"))}</p>` : ""}
-    </div>
-  `;
-}
-
-function renderCreatorReportQualitySummary(valueUpgrade = {}) {
-  const quality = valueUpgrade.quality || {};
-  const score = quality.quality_score ?? quality.score;
-  const missing = normalizeItems(quality.missing_evidence).slice(0, 4);
-  const warnings = normalizeItems(quality.warnings).slice(0, 3);
-  const diagnostics = renderCreatorReportDiagnostics(valueUpgrade, quality);
-  if (score === undefined && !missing.length && !warnings.length && !diagnostics) {
-    return "";
-  }
-  return `
-    <div class="creator-report-quality-summary">
-      ${diagnostics}
-      ${score !== undefined ? `<p><strong>报告质量：</strong>${formatNumber(score)} / 100</p>` : ""}
-      ${missing.length ? `<h5>缺少的证据或落地项</h5>${renderPublicList(missing)}` : ""}
-      ${warnings.length ? `<h5>质量提醒</h5>${renderPublicList(warnings)}` : ""}
-    </div>
-  `;
-}
-
-function renderCreatorDistillationReport(result, overview, templateLabel) {
-  const viewModel = creatorReportViewModelFromResult(result, overview, templateLabel);
-  const strategy = creatorStrategyFromResult(result) || {};
-  const positioning = result.creator_positioning || {};
-  const patterns = result.expression_patterns || {};
-  const thinking = result.thinking_patterns || {};
-  const spec = result.creator_clone_spec || {};
-  const segments = result.performance_segments || {};
-  const sections = viewModel.sections || {};
-  const valueUpgrade = viewModel.value_upgrade || {};
-  const positioningText = viewModel.headline || strategy.positioning || positioning.what_the_creator_sells || result.summary || "待补充";
-  const observation = valueUpgrade.observation || {};
-  const explanation = valueUpgrade.explanation || {};
-  const execution = valueUpgrade.execution || {};
-  const repeatablePatterns = normalizeItems(sections.repeatable_patterns).slice(0, 6);
-  const executionBody = `
-    ${renderPublicList(execution.bullets || sections.next_actions, "先从最高互动样本中选 3 条，人工复核开头、封面、动作和标题，再生成候选脚本。")}
-    <h5>下一条内容建议</h5>
-    ${renderPublicList(execution.next_content_suggestions || sections.next_ideas, "本次没有返回独立选题库，可先基于爆款共性手动生成候选选题。")}
-  `;
-  return `
-    <section class="creator-distillation-report" aria-label="创作者蒸馏核心报告">
-      ${renderCreatorReportHero({
-        viewModel,
-        summary: viewModel.summary || result.summary,
-        templateLabel,
-        overview,
-        positioningText,
-      })}
-      <div class="public-report-grid creator-distillation-grid creator-decision-grid">
-        ${renderPublicCard("1. 观察：这个账号做了什么", `
-          ${renderPublicFields([
-            ["定位", positioningText],
-            ["观众承诺", positioning.audience_promise],
-            ["隐藏类型", positioning.hidden_genre],
-            ["观众假设", positioning.audience_assumption],
-          ])}
-          <h5>稳定出现的内容动作</h5>
-          ${renderPublicList(observation.bullets || sections.core_judgment?.bullets, "暂无观察结论。")}
-        `, "featured wide")}
-        ${renderPublicCard("2. 解释：为什么这些内容有效", `
-          ${renderPublicList(explanation.bullets || sections.traffic_sources?.hooks, "暂无解释结论。")}
-          <h5>样本证据</h5>
-          ${renderCreatorReportSampleEvidence(valueUpgrade.sample_evidence)}
-        `, "featured")}
-        ${renderPublicCard("3. 执行：下一条怎么拍 / 怎么写 / 怎么验证", executionBody, "featured")}
-        ${renderPublicCard("4. 可复刻结构：保留有效动作，替换具体素材", `
-          ${renderPublicList(sections.formulas, "本次没有返回独立公式，建议先从高互动样本中人工提炼 2-3 个可复用拍法。")}
-          <h5>共性创作要素</h5>
-          ${renderPublicList(repeatablePatterns, "暂无稳定共性。")}
-        `)}
-        ${renderPublicCard("5. 置信度与证据缺口", `
-          ${renderCreatorReportLowConfidence(valueUpgrade)}
-          ${renderCreatorReportQualitySummary(valueUpgrade)}
-        `)}
-      </div>
-      ${renderCreatorDistillationEvidenceDetails(overview, result, viewModel)}
-    </section>
-  `;
 }
 
 function creatorCloneMarkdownList(value, fallback = "暂无") {
@@ -5199,7 +4742,10 @@ function creatorCloneOverviewFromSet(set) {
 
 // Creator Clone: export
 function hasRenderedCreatorCloneReport() {
-  return Boolean(creatorCloneResult?.querySelector(".creator-distillation-report"));
+  return Boolean(
+    creatorReportView?.hasReport(creatorCloneResult)
+    || creatorCloneResult?.querySelector(".creator-distillation-report"),
+  );
 }
 
 function hasRenderedCreatorCloneOutput() {
@@ -5262,18 +4808,22 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
       <pre class="prompt-preview">${escapeHtml(currentDistillPrompt.slice(0, 3000))}</pre>
     `;
     revealCreatorCloneResultCard({scroll: options.scroll !== false});
-    return;
+    return true;
   }
   const contentProfile = result.content_profile || overview.content_profile || {};
   const templateLabel = contentProfile.effective_label || contentProfile.requested_label || "自动判断";
-  creatorCloneResult.innerHTML = `
-    <section class="public-analysis-hero">
-      <span>${escapeHtml(`样本 ${overview.selected_count || 0}/${overview.sample_count || 0} · ${overview.confidence || "unknown"} · ${templateLabel}`)}</span>
-      ${renderCreatorReportSummaryHero(result.summary || "创作者蒸馏完成。")}
-    </section>
-    ${renderCreatorDistillationReport(result, overview, templateLabel)}
-  `;
+  const rendered = creatorReportView?.render({
+    container: creatorCloneResult,
+    result,
+    overview,
+    templateLabel,
+    viewModel: creatorReportViewModelFromResult(result, overview, templateLabel),
+  });
+  if (!rendered) {
+    throw new Error("蒸馏报告节点未生成。");
+  }
   revealCreatorCloneResultCard({scroll: options.scroll !== false});
+  return true;
 }
 
 function safeRenderCreatorCloneResult(result, set, prompt, exports = {}, options = {}) {
@@ -5293,13 +4843,8 @@ function safeRenderCreatorCloneResult(result, set, prompt, exports = {}, options
     if (creatorStrategyPlanCard) {
       creatorStrategyPlanCard.classList.add("hidden");
     }
-    if (creatorCloneResult) {
-      creatorCloneResult.innerHTML = `
-        <section class="public-analysis-hero">
-          <span>REPORT_RENDER_FAILED</span>
-          <strong>报告已生成，但首次渲染失败。请稍后重试或刷新页面恢复完整报告。</strong>
-        </section>
-      `;
+    if (!creatorReportView?.showFailure(creatorCloneResult) && creatorCloneResult) {
+      creatorCloneResult.textContent = "REPORT_RENDER_FAILED：报告已生成，但首次渲染失败。";
     }
     profileScanStatus.textContent = "REPORT_RENDER_FAILED：报告已生成，但页面首次渲染失败，请刷新或重新打开报告。";
     renderCreatorCloneNextAction();
@@ -5850,19 +5395,6 @@ async function batchDistillSelectedCreatorClone(options = {}) {
   }
 }
 
-async function loadLlmStatus() {
-  try {
-    const response = await fetch("/api/settings/llm", {cache: "no-store"});
-    const payload = await readJsonResponse(response);
-    renderLlmStatus(payload.llm || {});
-  } catch (error) {
-    llmStatusBadge.textContent = "读取失败";
-    llmStatusList.textContent = `${error.error_code || "ERROR"}：${error.message || "无法读取 AI 配置"}`;
-    testLlmButton.disabled = true;
-    setWorkbenchStatus("llm", "LLM 读取失败", "missing");
-  }
-}
-
 function setWorkbenchStatus(id, label, status = "partial") {
   const pill = workbenchStatusPills.find((item) => item.dataset.workbenchStatus === id);
   if (!pill) {
@@ -5945,49 +5477,6 @@ async function loadPreflightStatus() {
   return payload;
 }
 
-function renderDataSourceStatus(status = {}) {
-  if (!dataSourceStatusBadge || !dataSourceStatusList) {
-    return;
-  }
-  dataSourceStatusBadge.textContent = status.has_cookie ? "主力数据源已配置" : "待配置";
-  dataSourceStatusBadge.className = `status-badge ${status.has_cookie ? "success" : "muted-badge"}`;
-  dataSourceStatusList.innerHTML = `
-    <dl>
-      <dt>Cookie API</dt><dd>${status.has_cookie ? "已配置" : "未配置"}</dd>
-      <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
-      <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
-      ${renderDouyinCookieDiagnosticsRows(status.cookie_diagnostics || {})}
-      <dt>当前策略</dt><dd>Douyin Cookie / Web API 优先用于主页扫描；失败后回退到公开扫描、手动链接或高级工具。</dd>
-    </dl>
-  `;
-  if (douyinCookieInput) {
-    douyinCookieInput.value = "";
-    douyinCookieInput.placeholder = status.has_cookie ? `留空保留当前 Cookie（${status.masked_cookie || "已配置"}）` : "粘贴 Douyin Cookie";
-  }
-  if (douyinUserAgentInput) {
-    douyinUserAgentInput.value = status.user_agent || "";
-  }
-  if (douyinRefererInput) {
-    douyinRefererInput.value = status.referer || "https://www.douyin.com/";
-  }
-  if (douyinClearCookieInput) {
-    douyinClearCookieInput.checked = false;
-  }
-}
-
-function renderDouyinCookieDiagnosticsRows(diagnostics = {}) {
-  if (!diagnostics.has_cookie) {
-    return "";
-  }
-  const important = normalizeItems(diagnostics.present_important_keys).join(" / ") || "未检测到";
-  const missing = normalizeItems(diagnostics.missing_login_keys).join(" / ") || "无";
-  return `
-    <dt>Cookie 字段</dt><dd>${formatNumber(diagnostics.pair_count || 0)} 个；登录态字段 ${formatNumber(diagnostics.login_key_count || 0)} 个</dd>
-    <dt>关键字段</dt><dd>${escapeHtml(important)}</dd>
-    <dt>缺失登录字段</dt><dd>${escapeHtml(missing)}</dd>
-  `;
-}
-
 function creatorCloneCurrentProfileValue() {
   const candidates = [
     creatorCloneUnifiedInputValue(),
@@ -6002,59 +5491,6 @@ function creatorCloneCurrentProfileValue() {
     }
   }
   return "";
-}
-
-function renderDouyinCookieTestResult(test = {}) {
-  if (!douyinCookieTestResult) {
-    return;
-  }
-  const diagnostics = test.cookie_diagnostics || {};
-  const statusClass = test.status === "ok" ? "success" : ["config_only", "not_configured"].includes(test.status) ? "muted-badge" : "warning";
-  const rows = [
-    ["自检状态", test.status || ""],
-    ["Cookie 结构", diagnostics.has_cookie ? `${formatNumber(diagnostics.pair_count || 0)} 个字段，${formatNumber(diagnostics.login_key_count || 0)} 个登录态字段` : "未配置"],
-    ["关键字段", normalizeItems(diagnostics.present_important_keys).join(" / ") || "未检测到"],
-    ["API 请求", test.api_checked ? `已请求，HTTP ${test.status_code || "未知"}` : "未请求"],
-    ["返回类型", test.api_checked ? `${test.is_json ? "JSON" : "非 JSON"}${test.content_type ? ` · ${test.content_type}` : ""}` : "未检测"],
-    ["返回作品", test.api_checked ? `${formatNumber(test.aweme_count || 0)} 条` : "未检测"],
-    ["接口消息", test.api_status_msg || ""],
-  ].filter(([, value]) => value !== "");
-  const nextSteps = normalizeItems(test.safe_next_steps);
-  const endpointResults = normalizeItems(test.endpoint_results);
-  douyinCookieTestResult.className = `settings-test-result ${statusClass}`;
-  douyinCookieTestResult.innerHTML = `
-    <strong>${escapeHtml(test.message || "Cookie API 自检完成。")}</strong>
-    <dl>
-      ${rows.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd>`).join("")}
-    </dl>
-    ${endpointResults.length ? `
-      <div class="endpoint-test-list">
-        <strong>候选接口</strong>
-        ${endpointResults.map((item) => `
-          <span>${escapeHtml(item.endpoint || "")} · ${escapeHtml(item.status || "")}${item.status_code ? ` · HTTP ${escapeHtml(String(item.status_code))}` : ""}${item.aweme_count ? ` · ${formatNumber(item.aweme_count)} 条` : ""}</span>
-        `).join("")}
-      </div>
-    ` : ""}
-    ${nextSteps.length ? `<ul>${nextSteps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul>` : ""}
-  `;
-}
-
-async function loadDataSourceStatus() {
-  if (dataSourceStatusList) {
-    dataSourceStatusList.textContent = "正在读取数据源设置...";
-  }
-  try {
-    const response = await fetch("/api/settings/data-sources", {cache: "no-store"});
-    const payload = await readJsonResponse(response);
-    renderDataSourceStatus(payload.data_sources || {});
-  } catch (error) {
-    if (dataSourceStatusBadge) {
-      dataSourceStatusBadge.textContent = "读取失败";
-    }
-    if (dataSourceStatusList) {
-      dataSourceStatusList.textContent = `${error.error_code || "ERROR"}：${error.message || "无法读取数据源设置"}`;
-    }
-  }
 }
 
 function buildFullPrompt(data) {
@@ -6171,18 +5607,6 @@ async function readJsonResponse(response) {
   }
   return payload;
 }
-
-settingsToggle?.addEventListener("click", openSettingsModal);
-
-settingsClose.addEventListener("click", () => {
-  settingsModal.classList.add("hidden");
-});
-
-settingsModal.addEventListener("click", (event) => {
-  if (event.target === settingsModal) {
-    settingsModal.classList.add("hidden");
-  }
-});
 
 homeRouteButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -6561,16 +5985,6 @@ function restoreLibraryResumeTarget() {
   }));
 }
 
-function openSettingsModal() {
-  settingsModal.classList.remove("hidden");
-  loadPreflightStatus().catch(() => {
-    if (preflightSummary) {
-      preflightSummary.textContent = "本地工具预检失败，请查看后端日志。";
-    }
-    markWorkbenchPreflightFailed();
-  });
-}
-
 function markWorkbenchPreflightFailed() {
   const fallback = window.WorkbenchShell?.apiFailureBadge("本地状态")
     || {label: "本地状态待确认", status: "partial"};
@@ -6647,145 +6061,6 @@ assistantStrategyPlanButton?.addEventListener("click", () => {
 
 window.addEventListener("hashchange", () => {
   setHomeRoute(routeFromHash(), false);
-});
-
-llmSettingsForm?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  saveLlmSettingsButton.disabled = true;
-  llmSaveResult.textContent = "正在保存...";
-  try {
-    const payload = {
-      provider: llmProviderInput?.value || "disabled",
-      api_base: llmApiBaseInput?.value || "",
-      model: llmModelInput?.value || "",
-      timeout_seconds: Number(llmTimeoutInput?.value || 90),
-      temperature: Number(llmTemperatureInput?.value || 0.2),
-      clear_api_key: Boolean(llmClearKeyInput?.checked),
-    };
-    const apiKey = String(llmApiKeyInput?.value || "").trim();
-    if (apiKey) {
-      payload.api_key = apiKey;
-    }
-    const response = await fetch("/api/settings/llm", {
-      method: "PUT",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(payload),
-    });
-    const result = await readJsonResponse(response);
-    renderLlmStatus(result.llm || {});
-    llmSaveResult.textContent = "已保存到本机运行时配置。";
-    await loadPreflightStatus().catch(() => {});
-  } catch (error) {
-    llmSaveResult.textContent = `${error.error_code || "ERROR"}：${error.message || "保存失败"}`;
-  } finally {
-    saveLlmSettingsButton.disabled = false;
-  }
-});
-
-douyinSettingsForm?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  saveDouyinSettingsButton.disabled = true;
-  douyinSaveResult.textContent = "正在保存...";
-  try {
-    const payload = {
-      user_agent: douyinUserAgentInput?.value || "",
-      referer: douyinRefererInput?.value || "https://www.douyin.com/",
-      clear_cookie: Boolean(douyinClearCookieInput?.checked),
-    };
-    const cookie = String(douyinCookieInput?.value || "").trim();
-    if (cookie) {
-      payload.douyin_cookie = cookie;
-    }
-    const response = await fetch("/api/settings/data-sources/douyin", {
-      method: "PUT",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(payload),
-    });
-    const result = await readJsonResponse(response);
-    renderDataSourceStatus(result.data_sources || {});
-    douyinSaveResult.textContent = "已保存到本机运行时配置。";
-  } catch (error) {
-    douyinSaveResult.textContent = `${error.error_code || "ERROR"}：${error.message || "保存失败"}`;
-  } finally {
-    saveDouyinSettingsButton.disabled = false;
-  }
-});
-
-testDouyinCookieButton?.addEventListener("click", async () => {
-  testDouyinCookieButton.disabled = true;
-  if (douyinCookieTestResult) {
-    douyinCookieTestResult.textContent = "正在自检 Cookie 结构和 Cookie API...";
-  }
-  try {
-    const profileValue = creatorCloneCurrentProfileValue();
-    const payload = {
-      count: 5,
-    };
-    if (/^MS4w[A-Za-z0-9_.-]+$/.test(profileValue)) {
-      payload.sec_user_id = profileValue;
-    } else {
-      payload.profile_url = firstUrlFromText(profileValue) || profileValue;
-    }
-    const response = await fetch("/api/settings/data-sources/douyin/test", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(payload),
-    });
-    const result = await readJsonResponse(response);
-    renderDouyinCookieTestResult(result.test || {});
-    await loadDataSourceStatus();
-  } catch (error) {
-    if (douyinCookieTestResult) {
-      douyinCookieTestResult.textContent = `${error.error_code || "ERROR"}：${error.message || "Cookie API 自检失败"}`;
-    }
-  } finally {
-    testDouyinCookieButton.disabled = false;
-  }
-});
-
-testLlmButton.addEventListener("click", async () => {
-  testLlmButton.disabled = true;
-  llmTestResult.textContent = "正在测试...";
-  try {
-    const response = await fetch("/api/settings/llm/test", {method: "POST"});
-    const payload = await readJsonResponse(response);
-    llmTestResult.textContent = `测试通过：${payload.test?.message || "pong"}`;
-  } catch (error) {
-    llmTestResult.textContent = `${error.error_code || "ERROR"}：${error.message || "测试失败"}`;
-  } finally {
-    await loadLlmStatus();
-  }
-});
-
-refreshPreflightButton?.addEventListener("click", async () => {
-  refreshPreflightButton.disabled = true;
-  try {
-    await loadPreflightStatus();
-  } catch (error) {
-    preflightSummary.textContent = `${error.error_code || "ERROR"}：${error.message || "本地工具预检失败"}`;
-  } finally {
-    refreshPreflightButton.disabled = false;
-  }
-});
-
-preflightList?.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-preflight-copy-index]");
-  if (!button) {
-    return;
-  }
-  const index = Number(button.dataset.preflightCopyIndex);
-  const snippet = Number.isInteger(index) ? preflightCopySnippets[index] : "";
-  const originalText = button.textContent;
-  try {
-    const copied = await copyTextToClipboard(snippet);
-    button.textContent = copied ? "已复制" : "复制失败";
-  } catch (error) {
-    button.textContent = "复制失败";
-  } finally {
-    window.setTimeout(() => {
-      button.textContent = originalText;
-    }, 1600);
-  }
 });
 
 // Single Work
@@ -7242,8 +6517,63 @@ window.addEventListener("beforeunload", (event) => {
   event.returnValue = "";
 });
 
-loadLlmStatus();
-loadDataSourceStatus();
+const settingsPanelController = window.SettingsPanel?.init({
+  elements: {
+    toggle: settingsToggle,
+    modal: settingsModal,
+    close: settingsClose,
+    llmStatusBadge,
+    llmStatusList,
+    llmConfigHint,
+    llmForm: llmSettingsForm,
+    llmProviderInput,
+    llmApiBaseInput,
+    llmModelInput,
+    llmApiKeyInput,
+    llmTimeoutInput,
+    llmTemperatureInput,
+    llmClearKeyInput,
+    saveLlmButton: saveLlmSettingsButton,
+    llmSaveResult,
+    testLlmButton,
+    llmTestResult,
+    dataSourceStatusBadge,
+    dataSourceStatusList,
+    douyinForm: douyinSettingsForm,
+    douyinCookieInput,
+    douyinUserAgentInput,
+    douyinRefererInput,
+    douyinClearCookieInput,
+    saveDouyinButton: saveDouyinSettingsButton,
+    douyinSaveResult,
+    testDouyinButton: testDouyinCookieButton,
+    douyinCookieTestResult,
+    refreshPreflightButton,
+    preflightSummary,
+    preflightList,
+  },
+  requestJson: async (url, options = {}) => readJsonResponse(await fetch(url, options)),
+  callbacks: {
+    refreshPreflight: loadPreflightStatus,
+    onPreflightFailure: markWorkbenchPreflightFailed,
+    onLlmStatus: renderWorkbenchLlmStatus,
+    onLlmLoadFailure: () => setWorkbenchStatus("llm", "LLM 读取失败", "missing"),
+    getDouyinTestPayload: () => {
+      const profileValue = creatorCloneCurrentProfileValue();
+      if (/^MS4w[A-Za-z0-9_.-]+$/.test(profileValue)) {
+        return {count: 5, sec_user_id: profileValue};
+      }
+      return {count: 5, profile_url: firstUrlFromText(profileValue) || profileValue};
+    },
+    copyPreflightSnippet: (index) => {
+      const snippet = Number.isInteger(index) ? preflightCopySnippets[index] : "";
+      return copyTextToClipboard(snippet);
+    },
+  },
+}) || null;
+
+settingsPanelController?.loadLlmStatus();
+settingsPanelController?.loadDataSourceStatus();
 loadPreflightStatus().catch(() => {
   markWorkbenchPreflightFailed();
 });

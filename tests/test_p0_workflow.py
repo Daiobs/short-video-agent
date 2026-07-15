@@ -277,6 +277,8 @@ def test_home_uses_versioned_static_assets() -> None:
     response = client.get("/")
     assert response.status_code == 200
     assert "/static/workbench.js?v=" in response.text
+    assert "/static/modules/creator-report-view.js?v=" in response.text
+    assert "/static/modules/settings-panel.js?v=" in response.text
     assert "/static/workbench-tasks.js?v=" in response.text
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
@@ -576,6 +578,9 @@ def test_home_uses_versioned_static_assets() -> None:
     stylesheet = Path("app/static/app.css").read_text(encoding="utf-8")
     script = Path("app/static/app.js").read_text(encoding="utf-8")
     workbench_script = Path("app/static/workbench.js").read_text(encoding="utf-8")
+    creator_report_script = Path("app/static/modules/creator-report-view.js").read_text(encoding="utf-8")
+    settings_script = Path("app/static/modules/settings-panel.js").read_text(encoding="utf-8")
+    frontend_scripts = script + creator_report_script + settings_script
     assert "function getWizardStep" not in script
     assert "function getCreatorCloneStage" not in script
     assert "function renderCreatorCloneNextAction" in script
@@ -662,9 +667,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".workbench-nav-group[data-items-collapsed=\"true\"] .workbench-nav-item" in stylesheet
     assert "function settingsTarget" not in workbench_script
     assert "assistantOpenPreflightButton" not in script
-    assert 'settingsToggle?.addEventListener("click", openSettingsModal);' in script
-    settings_modal_handler = script.split("function openSettingsModal()", 1)[1].split("function markWorkbenchPreflightFailed", 1)[0]
-    assert 'settingsModal.classList.remove("hidden");' in settings_modal_handler
+    assert 'global.SettingsPanel = Object.freeze({init});' in settings_script
+    assert 'elements.toggle?.addEventListener("click", open);' in settings_script
+    assert 'elements.modal.classList.remove("hidden");' in settings_script
+    assert "window.SettingsPanel?.init" in script
     assert 'id="workbench-douyin-source-card"' not in response.text
     assert 'id="douyin-data-source-settings"' in response.text
     assert 'id="llm-capability-settings"' in response.text
@@ -831,7 +837,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "ENRICH_EMPTY" not in script
     assert "ENRICH_DONE" not in script
     assert "EXPORT_EMPTY" not in script
-    assert "/api/settings/data-sources" in script
+    assert "/api/settings/data-sources" in settings_script
     assert "dataset.creatorCloneAction" in script
     assert "ready_for_profile_scan" in script
     assert "setActiveImportMode(\"manual\")" in script
@@ -852,8 +858,8 @@ def test_home_uses_versioned_static_assets() -> None:
     assert ".profile-material-details" in stylesheet
     assert response.text.count("primary-cta") == 1
     assert "// Settings" in script
-    assert "/api/settings/data-sources/douyin/test" in script
-    assert "function renderDouyinCookieTestResult" in script
+    assert "/api/settings/data-sources/douyin/test" in settings_script
+    assert "function renderCookieTestResult" in settings_script
     assert "// Single Work" in script
     assert "// Creator Clone: import" in script
     assert "// Creator Clone: sample pool" in script
@@ -1013,7 +1019,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "preflight-contract-summary" in script
     assert "preflightCopySnippets" in script
     assert "data-preflight-copy-index" in script
-    assert 'preflightList?.addEventListener("click"' in script
+    assert 'elements.preflightList?.addEventListener("click"' in settings_script
     assert "复制命令" in script
     assert "contract_summary" in script
     assert "preflight-env-snippet" in script
@@ -1093,9 +1099,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "strategy-plan-review" in script
     assert "需人工复核" in script
     assert "strategy-plan-timeline" in script
-    assert "报告来源" in script
-    assert "质量判断" in script
-    assert "优先补齐" in script
+    assert "报告来源" in creator_report_script
+    assert "质量判断" in creator_report_script
+    assert "优先补齐" in creator_report_script
     assert "分批大模型汇总" in script
     assert "evidence-chip" in script
     assert "asr_status" in script
@@ -1155,22 +1161,22 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderCompactPerformanceSegments" in script
     assert "creator-clone-segment-disclosure" in script
     assert '${renderPublicCard("样本分层"' not in script
-    assert "function renderCreatorDistillationReport" in script
+    assert "function renderReportMarkup" in creator_report_script
     assert "function creatorCloneMarkdownReport" in script
     assert "Markdown 报告正文" not in script
     assert "function creatorReportViewModelFromResult" in script
     assert "creator_report_view_model" in script
     assert "isTechnicalReportNote" in script
-    assert "创作者蒸馏核心报告" in script
-    assert "观察：这个账号做了什么" in script
-    assert "解释：为什么这些内容有效" in script
-    assert "执行：下一条怎么拍 / 怎么写 / 怎么验证" in script
-    assert "样本证据" in script
-    assert "低置信提示" in script
-    assert "证据缺口" in script
-    assert "思维模式" in script
-    assert "表达 / 视觉依据" in script
-    assert "报告依据：样本、证据完整度和后台细节" in script
+    assert "创作者蒸馏核心报告" in creator_report_script
+    assert "观察：这个账号做了什么" in creator_report_script
+    assert "解释：为什么这些内容有效" in creator_report_script
+    assert "执行：下一条怎么拍 / 怎么写 / 怎么验证" in creator_report_script
+    assert "样本证据" in creator_report_script
+    assert "低置信提示" in creator_report_script
+    assert "证据缺口" in creator_report_script
+    assert "思维模式" in creator_report_script
+    assert "表达 / 视觉依据" in creator_report_script
+    assert "报告依据：样本、证据完整度和后台细节" in creator_report_script
     assert "可复刻创作公式" in script
     assert "不要照搬 / 风险边界" in script
     assert "lockedProfileNavigationStage" in script
@@ -1184,11 +1190,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "大模型蒸馏正在运行，完成后会自动进入报告页" in script
     assert "creatorCloneOverviewFromSet" in script
     assert "创作者蒸馏证据完整度" in script
-    assert "creator-report-evidence-details" in script
+    assert "creator-report-evidence-details" in creator_report_script
     assert "完整证据" in script
     assert "仅元数据" in script
     assert "LLM 未配置" in script
-    assert "renderCreatorCloneEvidenceOverview(overview)" in script
+    assert "renderCreatorCloneEvidenceOverview(overview)" in creator_report_script
     assert ".creator-clone-evidence-strip" in stylesheet
     assert ".creator-clone-segment-disclosure" in stylesheet
     assert ".creator-distillation-report" in stylesheet
@@ -1855,6 +1861,7 @@ def test_creator_clone_distill_success_report_recovery_runs_in_javascript() -> N
         "  if (selector === '.prompt-preview') return promptPresent ? {} : null;\n"
         "  return null;\n"
         "}};\n"
+        "var creatorReportView = {hasReport() { return reportPresent; }};\n"
         "var window = {setTimeout(resolve) { resolve(); }};\n"
         "function setProfileStageView(stage) { profileStageView = stage; }\n"
         "function renderCreatorCloneNextAction() {}\n"
@@ -1989,7 +1996,7 @@ def test_creator_clone_distill_finalizes_report_after_unlock_in_javascript() -> 
         source.index("async function distillSelectedCreatorClone") : source.index("async function batchDistillSelectedCreatorClone")
     ]
     batch_flow = source[
-        source.index("async function batchDistillSelectedCreatorClone") : source.index("async function loadLlmStatus")
+        source.index("async function batchDistillSelectedCreatorClone") : source.index("function setWorkbenchStatus")
     ]
     assert single_flow.index("setCreatorCloneDistillButtonsLocked(false)") < single_flow.index("await finalizeCreatorCloneDistillView")
     assert single_flow.index("updateCreatorCloneSelectionStatus()") < single_flow.index("await finalizeCreatorCloneDistillView")
