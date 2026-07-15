@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -18,7 +19,18 @@ from app.services.library_assets import build_library_assets
 
 
 client = TestClient(app)
-NODE_BINARY = Path("/Users/xingkong/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node")
+NODE_CANDIDATES = [
+    shutil.which("node"),
+    Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+]
+NODE_BINARY = next(
+    (
+        Path(value)
+        for value in NODE_CANDIDATES
+        if value and Path(value).is_file()
+    ),
+    None,
+)
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -164,6 +176,79 @@ def test_library_api_unifies_case_report_and_strategy_without_paths_or_bodies():
     assert "# report" not in serialized
 
 
+def test_creator_assets_only_offer_resume_for_readable_sample_sets():
+    runtime_only_id = "clone_runtime_only_done"
+    _write_json(
+        settings.creator_state_dir / "sessions.json",
+        {
+            "sessions": {
+                runtime_only_id: {
+                    "project_id": runtime_only_id,
+                    "state": "DONE",
+                    "updated_at": "2026-07-03T08:00:00+00:00",
+                }
+            }
+        },
+    )
+
+    missing_samples_id = "clone_missing_samples"
+    missing_samples_dir = settings.creator_clones_dir / missing_samples_id
+    missing_samples_dir.mkdir(parents=True)
+    _write_json(missing_samples_dir / "creator_clone_result.json", {"report_quality": {"quality_score": 70}})
+    (missing_samples_dir / "creator_clone.html").write_text("<h1>report</h1>", encoding="utf-8")
+    _write_json(missing_samples_dir / "creator_strategy_plan.json", {"source": {"report_quality_score": 70}})
+
+    invalid_samples_id = "clone_invalid_samples"
+    invalid_samples_dir = settings.creator_clones_dir / invalid_samples_id
+    invalid_samples_dir.mkdir(parents=True)
+    (invalid_samples_dir / "samples.json").write_text("{broken", encoding="utf-8")
+    _write_json(invalid_samples_dir / "creator_clone_result.json", {"report_quality": {"quality_score": 71}})
+    (invalid_samples_dir / "creator_clone.html").write_text("<h1>report</h1>", encoding="utf-8")
+
+    valid_id = _add_creator(202, title="可恢复 Creator")
+
+    payload = build_library_assets(page_size=100, refresh=True)
+    by_id = {item["asset_id"]: item for item in payload["items"]}
+
+    runtime_only = by_id[f"{runtime_only_id}_report"]
+    assert runtime_only["status"] == "missing"
+    assert runtime_only["open_url"] == ""
+    assert runtime_only["resume_target"]["route"] == ""
+    assert runtime_only["resume_target"]["resource_id"] == ""
+
+    missing_report = by_id[f"{missing_samples_id}_report"]
+    assert missing_report["status"] == "incomplete"
+    assert missing_report["open_url"].endswith("/creator_clone.html")
+    assert missing_report["resume_target"]["route"] == ""
+    assert missing_report["resume_target"]["resource_id"] == ""
+
+    missing_strategy = by_id[f"{missing_samples_id}_strategy"]
+    assert missing_strategy["resume_target"]["route"] == ""
+    assert missing_strategy["resume_target"]["resource_id"] == ""
+
+    invalid_report = by_id[f"{invalid_samples_id}_report"]
+    assert invalid_report["open_url"].endswith("/creator_clone.html")
+    assert invalid_report["resume_target"]["route"] == ""
+    assert invalid_report["resume_target"]["resource_id"] == ""
+
+    valid_report = by_id[f"{valid_id}_report"]
+    assert valid_report["open_url"].endswith("/creator_clone.html")
+    assert valid_report["resume_target"] == {
+        "route": "profile",
+        "stage": "export",
+        "resource_id": valid_id,
+        "job_id": "",
+        "task_type": "creator_report",
+        "mode": "result",
+        "open_url": valid_report["open_url"],
+    }
+
+    valid_strategy = by_id[f"{valid_id}_strategy"]
+    assert valid_strategy["resume_target"]["route"] == "profile"
+    assert valid_strategy["resume_target"]["stage"] == "export"
+    assert valid_strategy["resume_target"]["resource_id"] == valid_id
+
+
 def test_library_filters_paginates_and_marks_stale_assets():
     for index in range(1, 26):
         _add_case(index, title=f"检索案例 {index}")
@@ -193,7 +278,7 @@ def test_library_redacts_secrets_paths_and_external_urls():
     secret_key = "sk-thismustneverappear123456"
     title = (
         f"Cookie: sessionid=private Authorization=Bearer abc.def API_KEY={secret_key} "
-        f"/Users/private/archive https://signed.example/video?token=secret"
+        f"/var/private/archive https://signed.example/video?token=secret"
     )
     _add_case(7, title=title, author="Bearer topsecret")
 
@@ -205,7 +290,7 @@ def test_library_redacts_secrets_paths_and_external_urls():
         "sessionid=private",
         "abc.def",
         secret_key,
-        "/Users/private/archive",
+        "/var/private/archive",
         "signed.example",
         "token=secret",
     ):
@@ -309,7 +394,7 @@ def test_library_scales_to_500_assets_per_type_without_reading_media(monkeypatch
     assert duration < 5.0
 
 
-@pytest.mark.skipif(not NODE_BINARY.is_file(), reason="bundled Node runtime unavailable")
+@pytest.mark.skipif(NODE_BINARY is None, reason="Node.js is unavailable")
 def test_library_frontend_handles_partial_results_and_safe_resume_targets():
     script = """
 const fs = require('fs');
@@ -318,6 +403,43 @@ const source = fs.readFileSync('app/static/library.js', 'utf8');
 const document = {readyState: 'complete', querySelector() { return null; }};
 const window = {document, location: {search: '', href: 'http://127.0.0.1:8765/library'}};
 vm.runInNewContext(source, {window, URL, URLSearchParams, Set, Object, String, Number, Array, JSON, Date});
+
+class FakeNode {
+  constructor(tagName, ownerDocument) {
+    this.tagName = String(tagName).toUpperCase();
+    this.ownerDocument = ownerDocument;
+    this.children = [];
+    this.dataset = {};
+    this.className = '';
+    this.textContent = '';
+    this.listeners = {};
+  }
+  appendChild(child) { this.children.push(child); return child; }
+  addEventListener(type, callback) { this.listeners[type] = callback; }
+}
+const fakeDocument = {
+  createElement(tagName) { return new FakeNode(tagName, fakeDocument); },
+};
+function descendants(node) {
+  return [node, ...node.children.flatMap(descendants)];
+}
+function rowText(node) {
+  return descendants(node).map((item) => item.textContent || '').join(' ');
+}
+const writes = [];
+const onReturnToCreator = (target) => writes.push(target);
+const missingRow = window.LibraryPage.renderAssetRow(fakeDocument, {
+  asset_type: 'creator_report', status: 'missing', title: 'Missing Creator', asset_id: 'clone_missing_report',
+  open_url: '', resume_target: {}, available_files: [],
+}, onReturnToCreator);
+const reportOnlyRow = window.LibraryPage.renderAssetRow(fakeDocument, {
+  asset_type: 'creator_report', status: 'incomplete', title: 'Report only', asset_id: 'clone_report_only_report',
+  open_url: '/api/creator-clone/sets/clone_report_only/files/creator_clone.html',
+  resume_target: {}, available_files: ['creator_clone.html'],
+}, onReturnToCreator);
+[...descendants(missingRow), ...descendants(reportOnlyRow)]
+  .filter((node) => node.tagName === 'BUTTON')
+  .forEach((button) => button.listeners.click?.());
 const result = {
   warnings: window.LibraryPage.partialMessages({
     source_errors: [],
@@ -333,9 +455,13 @@ const result = {
   boundedUrl: window.LibraryPage.buildApiUrl({
     type: 'case', status: 'ready', query: '标题', page: 2, pageSize: 500,
   }),
+  missingRowText: rowText(missingRow),
+  reportOnlyRowText: rowText(reportOnlyRow),
+  resumeWrites: writes.length,
 };
 process.stdout.write(JSON.stringify(result));
 """
+    assert NODE_BINARY is not None
     completed = subprocess.run(
         [str(NODE_BINARY), "-e", script],
         cwd=Path.cwd(),
@@ -350,3 +476,8 @@ process.stdout.write(JSON.stringify(result));
     assert result["safeTarget"]["resource_id"] == "clone_abc123"
     assert result["badTarget"] is None
     assert "page_size=100" in result["boundedUrl"]
+    assert "暂无可用入口" in result["missingRowText"]
+    assert "返回 Creator" not in result["missingRowText"]
+    assert "打开报告" in result["reportOnlyRowText"]
+    assert "返回 Creator" not in result["reportOnlyRowText"]
+    assert result["resumeWrites"] == 0

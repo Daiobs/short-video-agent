@@ -11,7 +11,7 @@ Stage C 为 short-video-agent 增加一个只读的本地资产库，用来浏�
 - Creator 报告打开入口：既有 `creator_clone.html` 或 `creator_clone.md` 安全文件路由
 - Creator 上下文入口：返回 `/#profile`，再交给 Stage B 的精确恢复逻辑打开既有 `export` 阶段
 
-资产库的“返回 Creator”只在当前浏览器会话中暂存经过白名单校验的恢复目标。它不会创建 Job、重新扫描、富化、蒸馏或修改 Runtime 状态。
+资产库的“返回 Creator”只在资产库确认对应目录存在、且 `samples.json` 可安全读取时提供，并在当前浏览器会话中暂存经过白名单校验的恢复目标。报告文件存在但 Creator 上下文不可恢复时，只提供直接报告入口。该入口不会创建 Job、重新扫描、富化、蒸馏或修改 Runtime 状态。
 
 ## 统一资产 DTO
 
@@ -104,6 +104,7 @@ Stage C 为 short-video-agent 增加一个只读的本地资产库，用来浏�
 - 早于单源上限的历史记录可能不展示；页面会显示非阻断式部分结果提示。
 - v1 不为 Strategy Plan 新建独立详情页，只恢复到 Creator 的 `export` 阶段。
 - Creator 报告只在已有 HTML 或 Markdown 文件时提供直接打开入口。
+- Runtime 记录或报告文件本身不能证明 Creator 上下文可恢复；缺失、损坏、超大或不可读取的 `samples.json` 会关闭“返回 Creator”，但不会隐藏仍可安全打开的报告。
 
 ## Stage D 入口条件
 

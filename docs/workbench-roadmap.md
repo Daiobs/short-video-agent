@@ -150,8 +150,10 @@ Stage C 基线为 `main` 的 `98293b802919c32dc2037c6c438a13f3aee9093f`，分支
 2. 新增有界、只读 `GET /api/library/assets`，统一 Case、Creator Report 和 Strategy Plan DTO。
 3. 只读取安全元数据和已知文件存在性，不读取媒体正文，不调用外部服务、ffmpeg 或 LLM。
 4. 支持关键词、类型、状态、日期、分页和来源级部分失败。
-5. Creator 返回入口复用 Stage B 精确恢复能力，但不自动执行任何业务步骤。
+5. Creator 返回入口复用 Stage B 精确恢复能力，但只有安全可读的 `samples.json` 才能恢复到 `profile/export`，且不自动执行任何业务步骤。
 6. 单源上限、JSON 大小和请求预算均明确；截断必须作为部分结果展示。
+
+Stage C 已知边界：Runtime `DONE`、Creator 报告文件或 Strategy Plan 单独存在，都不能证明 Creator 上下文可恢复。资产仍按真实文件状态列出；HTML/Markdown 报告可以独立打开，但缺失、损坏、超大或不可读取的 `samples.json` 不生成“返回 Creator”入口。
 
 ## 测试记录
 
@@ -188,12 +190,13 @@ Stage C 基线为 `main` 的 `98293b802919c32dc2037c6c438a13f3aee9093f`，分支
 
 | 检查 | 结果 | 证据 |
 | --- | --- | --- |
-| 完整 Python 测试 | 通过 | `378 passed, 1 warning in 48.07s`；warning 仍为 Starlette TestClient 的 httpx2 迁移提示 |
+| 完整 Python 测试 | 通过 | `379 passed, 1 warning in 47.99s`；warning 仍为 Starlette TestClient 的 httpx2 迁移提示 |
 | JavaScript 语法 | 通过 | `app.js`、`workbench.js`、`workbench-tasks.js` 与新增 `library.js` 均通过 bundled Node `--check` |
 | Python 编译与差异格式 | 通过 | `python -m compileall -q app tests` 与 `git diff --check` 无错误 |
 | 三类资产合同 | 通过 | Case、Creator Report、Strategy Plan 使用统一 DTO；类型/状态/关键词/日期/分页均有 API 测试 |
 | 安全边界 | 通过 | 覆盖 Cookie、Authorization、Bearer、API Key、`sk-` Key、本机路径、外部/签名 URL、路径穿越、非法 ID、符号链接、损坏和超大 JSON |
 | 来源降级 | 通过 | Case 数据库不可用时 Creator 资产仍返回；损坏或截断来源使用 `source_errors` / `meta.partial` 非阻断展示 |
+| Creator 恢复入口真实性 | 通过 | Runtime-only `DONE`、缺失/损坏 `samples.json` 不生成恢复目标；报告直链与 Creator 恢复相互独立；有效 sample set 仍恢复到 `profile/export` 且不创建 Job |
 | 500×3 规模 | 通过 | 500 Case + 500 Creator Report + 500 Strategy Plan，测试用例约 0.74 秒；结果分页为 100，响应小于 250 KiB，缓存命中不重复读取 JSON |
 | 实际 HTTP | 通过 | `/`、`/library`、Overview 与资产 API 均返回 200；当前 2,000+ 本机资产冷索引约 2.05 秒，30 秒快照内筛选/翻页约 0.03 秒，20 条响应约 18 KiB |
 | 响应式与恢复 | 通过 | 1280 / 1024 / 390 视口无页面横向溢出；桌面为紧凑表格、手机为卡片；Creator 返回后进入既有 `export` 阶段且未创建任务 |
@@ -220,4 +223,4 @@ Stage C 基线为 `main` 的 `98293b802919c32dc2037c6c438a13f3aee9093f`，分支
 | Stage B 合并 commit | `98293b802919c32dc2037c6c438a13f3aee9093f` |
 | Stage C 分支 | `codex/workbench-library-v1` |
 | Stage C 基线 | `main` / `98293b802919c32dc2037c6c438a13f3aee9093f` |
-| Stage C PR | 待完成验证后创建 Draft；不得自动合并 |
+| Stage C PR | #14，Draft；完成合并前收尾后继续等待人工审查，不得自动合并 |

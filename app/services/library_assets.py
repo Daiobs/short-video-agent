@@ -674,6 +674,7 @@ def _collect_creator_assets(
                 max_bytes=MAX_SAMPLE_SET_BYTES,
                 source="creator_assets",
             )
+        creator_context_restorable = directory_ready and samples_state == "ok"
         summary = _creator_summary(samples_payload, resource_id)
         runtime_entry = runtime.get(resource_id, {})
         runtime_state = str(runtime_entry.get("state") or "").upper()
@@ -740,13 +741,17 @@ def _collect_creator_assets(
                     sample_count=summary["sample_count"],
                     selected_count=summary["selected_count"],
                     open_url=open_url,
-                    resume_target=WorkbenchResumeTarget(
-                        route="profile",
-                        stage="export",
-                        resource_id=resource_id,
-                        task_type="creator_report",
-                        mode="result",
-                        open_url=open_url,
+                    resume_target=(
+                        WorkbenchResumeTarget(
+                            route="profile",
+                            stage="export",
+                            resource_id=resource_id,
+                            task_type="creator_report",
+                            mode="result",
+                            open_url=open_url,
+                        )
+                        if creator_context_restorable
+                        else WorkbenchResumeTarget()
                     ),
                     available_files=tuple(report_available),
                 )
@@ -791,12 +796,16 @@ def _collect_creator_assets(
                 confidence=strategy_confidence,
                 sample_count=summary["sample_count"],
                 selected_count=summary["selected_count"],
-                resume_target=WorkbenchResumeTarget(
-                    route="profile",
-                    stage="export",
-                    resource_id=resource_id,
-                    task_type="creator_strategy",
-                    mode="result",
+                resume_target=(
+                    WorkbenchResumeTarget(
+                        route="profile",
+                        stage="export",
+                        resource_id=resource_id,
+                        task_type="creator_strategy",
+                        mode="result",
+                    )
+                    if creator_context_restorable
+                    else WorkbenchResumeTarget()
                 ),
                 available_files=tuple(strategy_files),
             )

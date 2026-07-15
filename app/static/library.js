@@ -353,6 +353,7 @@
     buildApiUrl,
     normalizeResumeTarget,
     partialMessages,
+    renderAssetRow,
     safeOpenUrl,
     initLibraryPage,
   });
