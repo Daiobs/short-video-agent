@@ -414,7 +414,7 @@ def _run_analyze_case_job(job_id: str, case_id: str) -> None:
         result = analyze_case_artifact(artifact, progress=progress, mode="fast")
         job = db.get(Job, job_id)
         if job:
-            _set_job(job, "success", 100, "自动拆解完成", result=_analysis_result(result))
+            _set_job(job, "success", 100, "自动拆解完成", result={"case_id": case_id, **_analysis_result(result)})
             db.commit()
     except AppError as error:
         job = db.get(Job, job_id)
@@ -451,7 +451,7 @@ def _run_enrich_case_job(job_id: str, case_id: str) -> None:
         result = build_enrichment_archive(artifact, progress=progress)
         job = db.get(Job, job_id)
         if job:
-            _set_job(job, "success", 100, "富化归档完成", result=result)
+            _set_job(job, "success", 100, "富化归档完成", result={"case_id": case_id, **result})
             db.commit()
     except AppError as error:
         job = db.get(Job, job_id)
@@ -489,7 +489,7 @@ def _run_asr_case_job(job_id: str, case_id: str) -> None:
         job = db.get(Job, job_id)
         if job:
             message = "ASR 完成" if result.get("status") == "success" else "ASR 完成：未检测到语音"
-            _set_job(job, "success", 100, message, result=result)
+            _set_job(job, "success", 100, message, result={"case_id": case_id, **result})
             db.commit()
     except AppError as error:
         job = db.get(Job, job_id)
@@ -527,7 +527,7 @@ def _run_ocr_case_job(job_id: str, case_id: str) -> None:
         job = db.get(Job, job_id)
         if job:
             message = "OCR 完成" if result.get("status") == "success" else "OCR 完成：未检测到画面文字"
-            _set_job(job, "success", 100, message, result=result)
+            _set_job(job, "success", 100, message, result={"case_id": case_id, **result})
             db.commit()
     except AppError as error:
         job = db.get(Job, job_id)
@@ -1758,6 +1758,12 @@ def _seed_job_result(job_id: str, result: dict) -> None:
         db.close()
 
 
+def _seed_job_recovery_context(job_id: str, **context: str) -> None:
+    values = {key: str(value) for key, value in context.items() if str(value or "").strip()}
+    if values:
+        _seed_job_result(job_id, {"recovery_context": values})
+
+
 def _job_response_payload(job: Job) -> dict:
     return {
         "id": job.id,
@@ -1775,6 +1781,7 @@ def _job_response_payload(job: Job) -> dict:
 @router.post("/build-case")
 def create_build_case_job(payload: BuildCaseJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("build-case", "等待生成素材包")
+    _seed_job_recovery_context(job.id, local_video_id=payload.local_video_id)
     background_tasks.add_task(_run_build_case_job, job.id, payload.local_video_id)
     return {"ok": True, "job_id": job.id}
 
@@ -1927,6 +1934,7 @@ def creator_clone_distill_job(payload: CreatorCloneDistillJobRequest, background
             )
         )
     job = _create_job("creator-clone-distill", "等待创作者克隆蒸馏")
+    _seed_job_recovery_context(job.id, sample_set_id=payload.sample_set_id)
     background_tasks.add_task(_run_creator_clone_distill_job, job.id, payload.model_dump())
     return {"ok": True, "job_id": job.id, "selected_count": selected_count}
 
@@ -1945,6 +1953,7 @@ def creator_clone_batch_distill_job(payload: CreatorCloneBatchDistillJobRequest,
         )
     batch_size = max(1, min(int(payload.batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES))
     job = _create_job("creator-clone-batch-distill", "等待分批蒸馏")
+    _seed_job_recovery_context(job.id, sample_set_id=payload.sample_set_id)
     background_tasks.add_task(_run_creator_clone_batch_distill_job, job.id, payload.model_dump())
     return {
         "ok": True,
@@ -1958,6 +1967,8 @@ def creator_clone_batch_distill_job(payload: CreatorCloneBatchDistillJobRequest,
 @router.post("/resolve-qualities")
 def resolve_qualities_job(payload: ResolveQualitiesJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("resolve-qualities", "等待解析清晰度")
+    if len(payload.aweme_ids) == 1:
+        _seed_job_recovery_context(job.id, aweme_id=payload.aweme_ids[0])
     background_tasks.add_task(_run_resolve_qualities_job, job.id, payload.aweme_ids)
     return {"ok": True, "job_id": job.id}
 
@@ -1965,6 +1976,7 @@ def resolve_qualities_job(payload: ResolveQualitiesJobRequest, background_tasks:
 @router.post("/download")
 def download_job(payload: DownloadJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("download", "等待下载")
+    _seed_job_recovery_context(job.id, aweme_id=payload.aweme_id)
     background_tasks.add_task(_run_download_job, job.id, payload.aweme_id, payload.candidate_id)
     return {"ok": True, "job_id": job.id}
 
@@ -1972,6 +1984,7 @@ def download_job(payload: DownloadJobRequest, background_tasks: BackgroundTasks)
 @router.post("/download-and-build-case")
 def download_and_build_case_job(payload: DownloadJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("download-and-build-case", "等待下载并生成素材包")
+    _seed_job_recovery_context(job.id, aweme_id=payload.aweme_id)
     background_tasks.add_task(_run_download_and_build_case_job, job.id, payload.aweme_id, payload.candidate_id)
     return {"ok": True, "job_id": job.id}
 
@@ -1979,6 +1992,7 @@ def download_and_build_case_job(payload: DownloadJobRequest, background_tasks: B
 @router.post("/analyze-case")
 def analyze_case_job(payload: AnalyzeCaseJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("analyze-case", "等待自动拆解")
+    _seed_job_recovery_context(job.id, case_id=payload.case_id)
     background_tasks.add_task(_run_analyze_case_job, job.id, payload.case_id)
     return {"ok": True, "job_id": job.id}
 
@@ -1986,6 +2000,7 @@ def analyze_case_job(payload: AnalyzeCaseJobRequest, background_tasks: Backgroun
 @router.post("/enrich-case")
 def enrich_case_job(payload: EnrichCaseJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("enrich-case", "等待富化归档")
+    _seed_job_recovery_context(job.id, case_id=payload.case_id)
     background_tasks.add_task(_run_enrich_case_job, job.id, payload.case_id)
     return {"ok": True, "job_id": job.id}
 
@@ -1993,6 +2008,7 @@ def enrich_case_job(payload: EnrichCaseJobRequest, background_tasks: BackgroundT
 @router.post("/asr-case")
 def asr_case_job(payload: AsrCaseJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("asr-case", "等待语音识别")
+    _seed_job_recovery_context(job.id, case_id=payload.case_id)
     background_tasks.add_task(_run_asr_case_job, job.id, payload.case_id)
     return {"ok": True, "job_id": job.id}
 
@@ -2000,6 +2016,7 @@ def asr_case_job(payload: AsrCaseJobRequest, background_tasks: BackgroundTasks):
 @router.post("/ocr-case")
 def ocr_case_job(payload: OcrCaseJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("ocr-case", "等待画面文字识别")
+    _seed_job_recovery_context(job.id, case_id=payload.case_id)
     background_tasks.add_task(_run_ocr_case_job, job.id, payload.case_id)
     return {"ok": True, "job_id": job.id}
 
@@ -2007,5 +2024,6 @@ def ocr_case_job(payload: OcrCaseJobRequest, background_tasks: BackgroundTasks):
 @router.post("/download-build-analyze-case")
 def download_build_analyze_case_job(payload: DownloadJobRequest, background_tasks: BackgroundTasks):
     job = _create_job("download-build-analyze-case", "等待下载、生成素材包并自动拆解")
+    _seed_job_recovery_context(job.id, aweme_id=payload.aweme_id)
     background_tasks.add_task(_run_download_build_analyze_case_job, job.id, payload.aweme_id, payload.candidate_id)
     return {"ok": True, "job_id": job.id}

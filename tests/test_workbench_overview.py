@@ -6,7 +6,7 @@ import os
 import socket
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -109,6 +109,7 @@ def test_workbench_overview_empty_state_has_stable_shape(tmp_path: Path, monkeyp
     payload = _build(tmp_path, monkeypatch)
 
     assert payload["running_tasks"] == []
+    assert payload["stale_tasks"] == []
     assert payload["resumable_tasks"] == []
     assert payload["recent_cases"] == []
     assert payload["recent_creator_reports"] == []
@@ -117,6 +118,169 @@ def test_workbench_overview_empty_state_has_stable_shape(tmp_path: Path, monkeyp
     assert payload["source_errors"] == []
     assert payload["meta"]["partial"] is False
     assert payload["capabilities"]["running_task_count"] == 0
+    assert payload["capabilities"]["stale_task_count"] == 0
+
+
+def test_workbench_overview_normalizes_running_stale_and_failed_tasks_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "overview.db"
+    _create_database(database_path)
+    cases_dir, creator_state_dir, creator_clones_dir = _runtime_paths(tmp_path)
+    _patch_capabilities(monkeypatch)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    clone_id = f"clone_{'a' * 32}"
+    case_id = f"case_{'b' * 32}"
+    rows = [
+        (
+            "job_running",
+            "profile-build-cases",
+            "running",
+            44,
+            "正在富化证据",
+            json.dumps({"set": {"set_id": clone_id}, "pipeline_summary": {"case_count": 2}}),
+            "",
+            now.isoformat(sep=" "),
+            now.isoformat(sep=" "),
+        ),
+        (
+            "job_stale",
+            "creator-clone-distill",
+            "running",
+            63,
+            "等待模型响应",
+            json.dumps({"recovery_context": {"sample_set_id": clone_id}}),
+            "",
+            (now - timedelta(hours=2)).isoformat(sep=" "),
+            (now - timedelta(hours=1)).isoformat(sep=" "),
+        ),
+        (
+            "job_failed",
+            "analyze-case",
+            "failed",
+            75,
+            "模型请求失败",
+            json.dumps({"recovery_context": {"case_id": case_id}}),
+            "LLM_REQUEST_FAILED",
+            now.isoformat(sep=" "),
+            now.isoformat(sep=" "),
+        ),
+    ]
+    connection = sqlite3.connect(database_path)
+    connection.executemany("INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    connection.commit()
+    connection.close()
+
+    first = workbench_overview.build_workbench_overview(
+        database_url=_database_url(database_path),
+        cases_dir=cases_dir,
+        creator_state_dir=creator_state_dir,
+        creator_clones_dir=creator_clones_dir,
+    )
+    second = workbench_overview.build_workbench_overview(
+        database_url=_database_url(database_path),
+        cases_dir=cases_dir,
+        creator_state_dir=creator_state_dir,
+        creator_clones_dir=creator_clones_dir,
+    )
+
+    running = first["running_tasks"][0]
+    stale = first["stale_tasks"][0]
+    failed = first["recent_failures"][0]
+    required_fields = {
+        "task_id",
+        "task_type",
+        "title",
+        "status",
+        "stage",
+        "progress",
+        "message",
+        "created_at",
+        "updated_at",
+        "resume_target",
+        "recoverable",
+        "recovery_hint",
+    }
+    assert required_fields <= running.keys()
+    assert running["status"] == "running"
+    assert running["resume_target"] == {
+        "route": "profile",
+        "stage": "enrich",
+        "resource_id": clone_id,
+        "job_id": "job_running",
+        "task_type": "profile-build-cases",
+        "mode": "observe",
+        "open_url": "",
+    }
+    assert stale["status"] == "stale"
+    assert stale["resume_target"]["stage"] == "distill"
+    assert stale["resume_target"]["mode"] == "manual"
+    assert "不会自动重试" in stale["recovery_hint"]
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "LLM_REQUEST_FAILED"
+    assert failed["resume_target"]["open_url"] == f"/cases/{case_id}"
+    assert "Case 素材包" in failed["available_results"]
+    assert "模型配置" in failed["recovery_hint"]
+    assert first["capabilities"]["running_task_count"] == 1
+    assert first["capabilities"]["stale_task_count"] == 1
+    assert second["running_tasks"] == first["running_tasks"]
+    assert second["stale_tasks"] == first["stale_tasks"]
+
+    connection = sqlite3.connect(database_path)
+    persisted_status = connection.execute("SELECT status FROM jobs WHERE id = 'job_stale'").fetchone()[0]
+    connection.close()
+    assert persisted_status == "running"
+
+
+def test_workbench_overview_recovers_large_profile_job_without_loading_full_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "overview.db"
+    _create_database(database_path)
+    cases_dir, creator_state_dir, creator_clones_dir = _runtime_paths(tmp_path)
+    _patch_capabilities(monkeypatch)
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
+    clone_id = f"clone_{'d' * 32}"
+    large_result = json.dumps(
+        {
+            "set": {"set_id": clone_id, "selected_count": 150},
+            "pipeline_summary": {"selected_count": 150, "case_count": 148},
+            "padding": "x" * (workbench_overview.JOB_RESULT_MAX_BYTES + 1024),
+        }
+    )
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "job_large_profile",
+            "profile-build-cases",
+            "running",
+            81,
+            "正在处理大样本队列",
+            large_result,
+            "",
+            now,
+            now,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    payload = workbench_overview.build_workbench_overview(
+        database_url=_database_url(database_path),
+        cases_dir=cases_dir,
+        creator_state_dir=creator_state_dir,
+        creator_clones_dir=creator_clones_dir,
+    )
+
+    task = payload["running_tasks"][0]
+    assert task["resume_target"]["resource_id"] == clone_id
+    assert task["resume_target"]["stage"] == "enrich"
+    assert "已选样本" in task["available_results"]
+    assert "已完成素材包 148 条" in task["available_results"]
+    assert "padding" not in json.dumps(payload)
 
 
 def test_workbench_overview_api_returns_read_only_contract(monkeypatch) -> None:
@@ -140,6 +304,123 @@ def test_workbench_overview_api_returns_read_only_contract(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.json() == {"ok": True, **expected}
+
+
+def test_workbench_job_api_returns_sanitized_recovery_context(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "overview.db"
+    _create_database(database_path)
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
+    clone_id = f"clone_{'a' * 32}"
+    case_id = f"case_{'b' * 32}"
+    local_id = f"local_{'c' * 32}"
+    raw_result = {
+        "set": {"set_id": clone_id, "selected_count": 3},
+        "recovery_context": {"sample_set_id": clone_id, "case_id": case_id},
+        "items": [
+            {
+                "sample_id": "sample_safe",
+                "aweme_id": "7654321098765432101",
+                "case_id": case_id,
+                "local_video_id": local_id,
+                "title": "安全标题",
+                "status": "completed",
+                "source_url": "https://www.douyin.com/video/7654321098765432101",
+                "signed_url": "https://v26-default.365yg.com/video.mp4?token=SECRET_SIGNED",
+                "file_path": "/Users/private/video.mp4",
+                "request_headers": {"Authorization": "Bearer SECRET_HEADER"},
+            }
+        ],
+        "pipeline_summary": {
+            "selected_count": 3,
+            "case_count": 1,
+            "notes": [
+                '"api_key": "SECRET_JSON" /Users/private/cache https://secret.invalid',
+                "队列已完成。",
+            ],
+        },
+        "download": {
+            "aweme_id": "7654321098765432101",
+            "local_video_id": local_id,
+            "file_path": "/Users/private/video.mp4",
+            "url": "https://v26-default.365yg.com/video.mp4?token=SECRET_SIGNED",
+            "size_bytes": 1024,
+        },
+        "prompt": "SECRET_PROMPT",
+        "api_key": "SECRET_API_KEY",
+        "Authorization": "Basic SECRET_AUTH",
+    }
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "job_safe_detail",
+            "profile-build-cases",
+            "running",
+            76,
+            '恢复队列，"cookie": "SECRET_COOKIE"',
+            json.dumps(raw_result, ensure_ascii=False),
+            "",
+            now,
+            now,
+        ),
+    )
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(workbench_overview.settings, "database_url", _database_url(database_path))
+    app = FastAPI()
+    app.include_router(workbench_routes.router)
+
+    response = TestClient(app).get("/api/workbench/jobs/job_safe_detail")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    job = response.json()["job"]
+    assert job["id"] == "job_safe_detail"
+    assert job["resume_target"]["resource_id"] == clone_id
+    assert job["result_json"]["set"]["set_id"] == clone_id
+    assert job["result_json"]["items"] == [
+        {
+            "sample_id": "sample_safe",
+            "aweme_id": "7654321098765432101",
+            "case_id": case_id,
+            "local_video_id": local_id,
+            "title": "安全标题",
+            "status": "completed",
+        }
+    ]
+    serialized = json.dumps(response.json(), ensure_ascii=False)
+    for secret in (
+        "SECRET_SIGNED",
+        "SECRET_HEADER",
+        "SECRET_JSON",
+        "SECRET_PROMPT",
+        "SECRET_API_KEY",
+        "SECRET_AUTH",
+        "SECRET_COOKIE",
+        "/Users/private",
+        "365yg.com",
+        "douyin.com",
+        "secret.invalid",
+    ):
+        assert secret not in serialized
+    for forbidden_key in ("source_url", "signed_url", "file_path", "request_headers", "prompt", "api_key", "Authorization"):
+        assert f'"{forbidden_key}"' not in serialized
+
+
+def test_workbench_job_api_returns_safe_not_found(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "overview.db"
+    _create_database(database_path)
+    monkeypatch.setattr(workbench_overview.settings, "database_url", _database_url(database_path))
+    app = FastAPI()
+    app.include_router(workbench_routes.router)
+
+    missing = TestClient(app).get("/api/workbench/jobs/job_missing")
+    invalid = TestClient(app).get("/api/workbench/jobs/not-a-job")
+
+    assert missing.status_code == 404
+    assert missing.json() == {"ok": False, "error_code": "JOB_NOT_FOUND", "message": "任务不存在。"}
+    assert invalid.status_code == 404
+    assert "detail" not in invalid.json()
 
 
 def test_workbench_overview_degrades_one_failed_source_without_exception_details(tmp_path: Path, monkeypatch) -> None:
@@ -330,6 +611,46 @@ def test_workbench_overview_handles_missing_files_without_creating_outputs(tmp_p
     assert before_files == after_files
 
 
+def test_workbench_overview_resumes_single_case_at_case_page(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "overview.db"
+    _create_database(database_path)
+    cases_dir, creator_state_dir, creator_clones_dir = _runtime_paths(tmp_path)
+    _patch_capabilities(monkeypatch)
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
+    case_id = f"case_{'c' * 32}"
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "INSERT INTO case_artifacts VALUES (?, ?, ?, ?, ?)",
+        (case_id, "", "local_resume", "success", now),
+    )
+    connection.execute("INSERT INTO local_video_items VALUES (?, ?, ?)", ("local_resume", "待拆解作品", "作者"))
+    connection.commit()
+    connection.close()
+    case_dir = cases_dir / case_id
+    case_dir.mkdir()
+    (case_dir / "video.mp4").write_bytes(b"video")
+
+    payload = workbench_overview.build_workbench_overview(
+        database_url=_database_url(database_path),
+        cases_dir=cases_dir,
+        creator_state_dir=creator_state_dir,
+        creator_clones_dir=creator_clones_dir,
+    )
+
+    task = payload["resumable_tasks"][0]
+    assert task["status"] == "recoverable"
+    assert task["resume_target"] == {
+        "route": "single",
+        "stage": "case",
+        "resource_id": case_id,
+        "job_id": "",
+        "task_type": "single_work",
+        "mode": "manual",
+        "open_url": f"/cases/{case_id}",
+    }
+    assert task["available_results"] == ["Case 素材包", "关键帧与分析输入"]
+
+
 def test_workbench_overview_maps_resumable_creator_and_marks_stale_strategy(tmp_path: Path, monkeypatch) -> None:
     database_path = tmp_path / "overview.db"
     _create_database(database_path)
@@ -391,9 +712,113 @@ def test_workbench_overview_maps_resumable_creator_and_marks_stale_strategy(tmp_
     assert resumable["current_step"] == "证据富化"
     assert resumable["sample_count"] == 12
     assert resumable["selected_count"] == 4
-    assert resumable["target"] == {"route": "profile", "resource_id": "clone_resume", "stage": "enrich"}
+    assert resumable["status"] == "recoverable"
+    assert resumable["resume_target"] == {
+        "route": "profile",
+        "stage": "enrich",
+        "resource_id": "clone_resume",
+        "job_id": "",
+        "task_type": "creator_work",
+        "mode": "manual",
+        "open_url": "",
+    }
     assert payload["recent_creator_reports"][0]["resource_id"] == "clone_done"
+    assert payload["recent_creator_reports"][0]["resume_target"]["stage"] == "export"
+    assert payload["recent_creator_reports"][0]["resume_target"]["mode"] == "result"
     assert payload["recent_strategy_plans"][0]["status"] == "stale"
+    assert payload["recent_strategy_plans"][0]["resume_target"]["stage"] == "export"
+
+
+def test_workbench_overview_recovers_sample_sets_missing_from_runtime_index(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "overview.db"
+    _create_database(database_path)
+    cases_dir, creator_state_dir, creator_clones_dir = _runtime_paths(tmp_path)
+    _patch_capabilities(monkeypatch)
+    pool_id = f"clone_{'1' * 32}"
+    selected_id = f"clone_{'2' * 32}"
+    report_id = f"clone_{'3' * 32}"
+    for clone_id, payload in (
+        (
+            pool_id,
+            {
+                "set_id": pool_id,
+                "creator_name": "仅素材池",
+                "samples": [{"sample_id": "sample_pool"}],
+                "selected_sample_ids": [],
+            },
+        ),
+        (
+            selected_id,
+            {
+                "set_id": selected_id,
+                "creator_name": "已有选样",
+                "samples": [{"sample_id": "sample_selected"}],
+                "selected_sample_ids": ["sample_selected"],
+            },
+        ),
+        (
+            report_id,
+            {
+                "set_id": report_id,
+                "creator_name": "已有报告",
+                "samples": [{"sample_id": "sample_report"}],
+                "selected_sample_ids": ["sample_report"],
+            },
+        ),
+    ):
+        clone_dir = creator_clones_dir / clone_id
+        clone_dir.mkdir()
+        (clone_dir / "samples.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    report_dir = creator_clones_dir / report_id
+    (report_dir / "creator_clone_result.json").write_text("{}", encoding="utf-8")
+    (report_dir / "creator_clone.html").write_text("<p>report</p>", encoding="utf-8")
+
+    payload = workbench_overview.build_workbench_overview(
+        database_url=_database_url(database_path),
+        cases_dir=cases_dir,
+        creator_state_dir=creator_state_dir,
+        creator_clones_dir=creator_clones_dir,
+    )
+
+    tasks = {item["task_id"]: item for item in payload["resumable_tasks"]}
+    assert tasks[pool_id]["resume_target"]["stage"] == "pool"
+    assert tasks[pool_id]["workflow_state"] == "INGESTED"
+    assert tasks[selected_id]["resume_target"]["stage"] == "select"
+    assert tasks[selected_id]["workflow_state"] == "SAMPLE_READY"
+    assert report_id not in tasks
+    assert payload["recent_creator_reports"][0]["resource_id"] == report_id
+    assert payload["source_errors"] == []
+
+
+def test_orphan_sample_set_scan_reuses_short_lived_directory_index(tmp_path: Path, monkeypatch) -> None:
+    creator_clones_dir = tmp_path / "creator_clones"
+    creator_clones_dir.mkdir()
+    clone_id = f"clone_{'4' * 32}"
+    clone_dir = creator_clones_dir / clone_id
+    clone_dir.mkdir()
+    (clone_dir / "samples.json").write_text(
+        json.dumps({"set_id": clone_id, "samples": [{"sample_id": "sample_1"}]}),
+        encoding="utf-8",
+    )
+    workbench_overview._scan_sample_set_candidates.cache_clear()
+    real_scandir = workbench_overview.os.scandir
+    scan_count = 0
+
+    def counted_scandir(path):
+        nonlocal scan_count
+        scan_count += 1
+        return real_scandir(path)
+
+    monkeypatch.setattr(workbench_overview.os, "scandir", counted_scandir)
+    monkeypatch.setattr(workbench_overview.time, "monotonic", lambda: 100.0)
+
+    first = workbench_overview._read_orphan_sample_sets(creator_clones_dir, set())
+    second = workbench_overview._read_orphan_sample_sets(creator_clones_dir, set())
+
+    assert first == second
+    assert first[0][0]["project_id"] == clone_id
+    assert scan_count == 1
+    workbench_overview._scan_sample_set_candidates.cache_clear()
 
 
 def test_workbench_overview_keeps_valid_creator_when_one_samples_file_is_malformed(
@@ -458,6 +883,107 @@ def test_workbench_overview_keeps_valid_creator_when_one_samples_file_is_malform
     assert tasks["clone_good"]["selected_count"] == 3
     assert tasks["clone_bad"]["sample_count"] == 0
     assert tasks["clone_bad"]["selected_count"] == 0
+
+
+def test_workbench_overview_maps_creator_runtime_states_to_exact_wizard_stages(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "overview.db"
+    _create_database(database_path)
+    cases_dir, creator_state_dir, creator_clones_dir = _runtime_paths(tmp_path)
+    _patch_capabilities(monkeypatch)
+    now = datetime.now(timezone.utc)
+    expected = {
+        "INGESTED": "pool",
+        "SAMPLE_READY": "select",
+        "SAMPLE_SELECTED": "enrich",
+        "EVIDENCE_READY": "distill",
+        "DISTILLING": "distill",
+    }
+    sessions = {}
+    for index, (state, stage) in enumerate(expected.items()):
+        clone_id = f"clone_{index:032x}"
+        sessions[clone_id] = {
+            "session_id": clone_id,
+            "project_id": clone_id,
+            "state": state,
+            "updated_at": now.replace(microsecond=index).isoformat(),
+        }
+        clone_dir = creator_clones_dir / clone_id
+        clone_dir.mkdir()
+        (clone_dir / "samples.json").write_text(
+            json.dumps(
+                {
+                    "creator_name": state,
+                    "sample_count": 12,
+                    "selected_count": 4 if stage in {"enrich", "distill"} else 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+    (creator_state_dir / "sessions.json").write_text(json.dumps({"sessions": sessions}), encoding="utf-8")
+
+    payload = workbench_overview.build_workbench_overview(
+        database_url=_database_url(database_path),
+        cases_dir=cases_dir,
+        creator_state_dir=creator_state_dir,
+        creator_clones_dir=creator_clones_dir,
+    )
+
+    tasks = {item["title"]: item for item in payload["resumable_tasks"]}
+    assert set(tasks) == set(expected)
+    for state, stage in expected.items():
+        task = tasks[state]
+        assert task["status"] == "recoverable"
+        assert task["resume_target"]["route"] == "profile"
+        assert task["resume_target"]["stage"] == stage
+        assert task["resume_target"]["mode"] == "manual"
+        assert "不会自动执行" in task["recovery_hint"]
+
+
+def test_workbench_overview_maps_creator_import_and_missing_done_report_to_boundary_stages(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "overview.db"
+    _create_database(database_path)
+    cases_dir, creator_state_dir, creator_clones_dir = _runtime_paths(tmp_path)
+    _patch_capabilities(monkeypatch)
+    now = datetime.now(timezone.utc)
+    import_id = f"clone_{'e' * 32}"
+    done_id = f"clone_{'f' * 32}"
+    sessions = {
+        import_id: {
+            "session_id": import_id,
+            "project_id": import_id,
+            "state": "IMPORT",
+            "updated_at": now.isoformat(),
+        },
+        done_id: {
+            "session_id": done_id,
+            "project_id": done_id,
+            "state": "DONE",
+            "updated_at": now.replace(microsecond=1).isoformat(),
+        },
+    }
+    (creator_state_dir / "sessions.json").write_text(json.dumps({"sessions": sessions}), encoding="utf-8")
+    for clone_id, name in ((import_id, "IMPORT"), (done_id, "DONE")):
+        clone_dir = creator_clones_dir / clone_id
+        clone_dir.mkdir()
+        (clone_dir / "samples.json").write_text(
+            json.dumps({"creator_name": name, "sample_count": 2, "selected_count": 1}),
+            encoding="utf-8",
+        )
+
+    payload = workbench_overview.build_workbench_overview(
+        database_url=_database_url(database_path),
+        cases_dir=cases_dir,
+        creator_state_dir=creator_state_dir,
+        creator_clones_dir=creator_clones_dir,
+    )
+
+    tasks = {item["title"]: item for item in payload["resumable_tasks"]}
+    assert tasks["IMPORT"]["resume_target"]["stage"] == "import"
+    assert tasks["DONE"]["resume_target"]["stage"] == "export"
+    assert tasks["DONE"]["report_status"] == "未生成"
 
 
 def test_workbench_overview_is_read_only_and_does_not_call_network_or_llm(tmp_path: Path, monkeypatch) -> None:

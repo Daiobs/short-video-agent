@@ -139,6 +139,7 @@ const creatorStrategyPlanResult = document.getElementById("creator-strategy-plan
 const PROFILE_BUILD_MAX_ITEMS = Math.max(1, Number(document.body.dataset.profileBuildMaxItems || 10));
 const CREATOR_CLONE_MAX_DISTILL_SAMPLES = Math.max(1, Number(document.body.dataset.creatorCloneMaxDistillSamples || 20));
 const HANDOFF_MANIFEST_MAX_BYTES = 2 * 1024 * 1024;
+const WORKBENCH_TASK_STALE_SECONDS = 30 * 60;
 
 document.querySelectorAll(".summary-actions").forEach((container) => {
   container.addEventListener("click", (event) => {
@@ -343,7 +344,7 @@ function forgetRecentCreatorCloneSetId() {
   forgetRecentProfileStage();
 }
 
-async function restoreRecentCreatorCloneSet() {
+async function restoreRecentCreatorCloneSet(options = {}) {
   if (recentCreatorCloneRestoreAttempted || currentCloneSetId || activeCreatorSampleViewItems().length) {
     return false;
   }
@@ -370,7 +371,11 @@ async function restoreRecentCreatorCloneSet() {
       }
       return true;
     }
-    const restoredQueue = await restoreRecentProfileBuildJob(setId);
+    const restoredQueue = options.restoreQueue === false
+      ? false
+      : await restoreRecentProfileBuildJob(setId, {
+          pollActive: options.pollActive !== false,
+        });
     if (!restoredQueue) {
       const selected = selectedCreatorSampleViewItems();
       const restoredStage = readRecentProfileStage();
@@ -395,7 +400,7 @@ async function restoreRecentCreatorCloneSet() {
   }
 }
 
-async function restoreRecentProfileBuildJob(setId) {
+async function restoreRecentProfileBuildJob(setId, options = {}) {
   const state = readRecentProfileBuildState();
   const shouldUseStoredJob = state && state.set_id === setId && state.job_id;
   const selectedKeys = new Set(shouldUseStoredJob ? state.selected_sample_ids : []);
@@ -408,12 +413,21 @@ async function restoreRecentProfileBuildJob(setId) {
     setProfileSelection(activeCreatorSampleViewItems().filter((item) => sampleViewItemMatchesKeySet(item, selectedKeys)));
   }
   try {
-    const jobUrl = shouldUseStoredJob
-      ? `/api/jobs/${encodeURIComponent(state.job_id)}`
-      : `/api/jobs/profile-build-cases/recent?sample_set_id=${encodeURIComponent(setId)}`;
-    const response = await fetch(jobUrl, {cache: "no-store"});
-    const payload = await readJsonResponse(response);
-    const job = payload.job || {};
+    if (options.safeStatus && !shouldUseStoredJob) {
+      return false;
+    }
+    let job = null;
+    if (options.safeStatus) {
+      job = await fetchWorkbenchJob(state.job_id);
+    } else {
+      const jobUrl = shouldUseStoredJob
+        ? `/api/jobs/${encodeURIComponent(state.job_id)}`
+        : `/api/jobs/profile-build-cases/recent?sample_set_id=${encodeURIComponent(setId)}`;
+      const response = await fetch(jobUrl, {cache: "no-store"});
+      const payload = await readJsonResponse(response);
+      job = payload.job || null;
+    }
+    job = job || {};
     if (job.type !== "profile-build-cases") {
       forgetRecentProfileBuildState();
       return false;
@@ -430,9 +444,6 @@ async function restoreRecentProfileBuildJob(setId) {
     });
     placeJobCard("profile");
     renderJobStatus(job, "恢复素材包队列");
-    if (job.status === "running" || job.status === "pending") {
-      setActiveProfileBuildJob(job);
-    }
     if (job.result_json && Object.keys(job.result_json).length) {
       renderProfileQueue(job.result_json);
     } else {
@@ -442,14 +453,30 @@ async function restoreRecentProfileBuildJob(setId) {
         message: "等待后端写入队列状态",
       }))});
     }
+    if (options.safeStatus && job.status === "stale") {
+      clearActiveProfileBuildJob(job.id);
+      setProfileStageView("enrich", {scroll: false});
+      profileScanStatus.textContent = "证据富化任务可能已停止更新。当前只展示保存状态，不会自动轮询、重试或进入大模型蒸馏。";
+      return true;
+    }
     if (job.status === "running" || job.status === "pending") {
+      if (options.pollActive === false) {
+        clearActiveProfileBuildJob(job.id);
+        setProfileStageView("enrich", {scroll: false});
+        profileScanStatus.textContent = "已恢复任务最后一次保存的证据富化队列。当前只展示状态，不会自动轮询、重试或修改任务。";
+        return true;
+      }
       setActiveProfileBuildJob(job);
       setProfileStageView("enrich", {scroll: false});
       setCreatorCloneEnrichmentLocked(true);
       profileScanStatus.textContent = isProfileBuildJobStale(job)
         ? "已恢复上次证据富化队列，但任务较长时间没有更新；如果进度不再变化，可重新点击富化，已有素材包会复用。"
         : "已恢复正在运行的证据富化队列；刷新页面不会取消后台任务，请等待进度更新，不需要重新点击。";
-      pollProfileQueue(job.id).finally(() => {
+      pollProfileQueue(job.id, {
+        allowAutoDistill: options.allowAutoDistill !== false,
+        safeStatus: options.safeStatus === true,
+        setId,
+      }).finally(() => {
         setCreatorCloneEnrichmentLocked(false);
         updateCreatorCloneSelectionStatus();
         renderCreatorCloneNextAction();
@@ -458,7 +485,9 @@ async function restoreRecentProfileBuildJob(setId) {
     }
     clearActiveProfileBuildJob(job.id);
     if (job.status === "success") {
-      if (job.result_json?.set) {
+      if (options.safeStatus) {
+        await refreshProfilePoolFromPersistedSet(setId);
+      } else if (job.result_json?.set) {
         refreshProfilePoolFromSet(job.result_json.set);
       }
       setProfileStageView("distill", {scroll: false});
@@ -847,7 +876,7 @@ function profileBuildJobAgeSeconds(job = {}) {
 
 function isProfileBuildJobStale(job = {}) {
   return ["pending", "running"].includes(job.status || activeProfileBuildJobStatus)
-    && profileBuildJobAgeSeconds(job) >= 600;
+    && profileBuildJobAgeSeconds(job) >= WORKBENCH_TASK_STALE_SECONDS;
 }
 
 function setActiveProfileBuildJob(job = {}) {
@@ -3839,23 +3868,71 @@ function refreshProfilePoolFromSet(set) {
   profileWarnings.textContent = warnings.join(" ");
 }
 
-async function pollProfileQueue(jobId) {
-  const response = await fetch(`/api/jobs/${jobId}`, {cache: "no-store"});
+async function refreshProfilePoolFromPersistedSet(setId) {
+  if (!isSafeCreatorCloneSetId(setId)) {
+    return false;
+  }
+  const response = await fetch(`/api/creator-clone/sets/${encodeURIComponent(setId)}`, {cache: "no-store"});
   const payload = await readJsonResponse(response);
-  const job = payload.job;
+  const profilePayload = payload.set ? payload : profilePayloadFromCreatorIntelligenceProject(payload);
+  if (!profilePayload?.set) {
+    return false;
+  }
+  refreshProfilePoolFromSet(profilePayload.set);
+  return true;
+}
+
+async function pollProfileQueue(jobId, options = {}) {
+  let job = null;
+  if (options.safeStatus) {
+    job = await fetchWorkbenchJob(jobId);
+  } else {
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {cache: "no-store"});
+    const payload = await readJsonResponse(response);
+    job = payload.job;
+  }
+  if (!job) {
+    return;
+  }
   if (job.status === "pending" || job.status === "running") {
     setActiveProfileBuildJob(job);
   }
   renderJobStatus(job);
   renderProfileQueue(job.result_json || {});
+  if (options.safeStatus && job.status === "stale") {
+    clearActiveProfileBuildJob(job.id);
+    profileScanStatus.textContent = "证据富化任务可能已停止更新。当前状态保持只读，不会自动轮询、重试或进入大模型蒸馏。";
+    jobMessage.className = "job-message";
+    jobMessage.textContent = `stale · ${job.progress || 0}% · ${job.message || "任务较长时间没有更新"}`;
+    updateCreatorCloneSelectionStatus();
+    return;
+  }
+  if (["pending", "running"].includes(job.status) && isProfileBuildJobStale(job)) {
+    clearActiveProfileBuildJob(job.id);
+    profileScanStatus.textContent = "任务可能已停止更新。当前状态仍保持原样；请检查队列后，由你决定是否手动重新执行证据富化。";
+    jobMessage.className = "job-message";
+    jobMessage.textContent = `stale · ${job.progress || 0}% · ${job.message || "任务较长时间没有更新"}`;
+    updateCreatorCloneSelectionStatus();
+    return;
+  }
   if (job.status === "success") {
     clearActiveProfileBuildJob(job.id);
     renderJobStatus(job);
-    if (job.result_json?.set) {
+    const persistedSetId = String(
+      options.setId
+      || job.result_json?.set?.set_id
+      || job.result_json?.set_id
+      || job.result_json?.recovery_context?.sample_set_id
+      || job.resume_target?.resource_id
+      || "",
+    );
+    if (options.safeStatus && persistedSetId) {
+      await refreshProfilePoolFromPersistedSet(persistedSetId);
+    } else if (job.result_json?.set) {
       refreshProfilePoolFromSet(job.result_json.set);
     }
     updateCreatorCloneSelectionStatus();
-    if (profileAutoDistill?.checked) {
+    if (options.allowAutoDistill !== false && profileAutoDistill?.checked) {
       const selected = selectedCreatorSampleViewItems();
       if (selected.length > CREATOR_CLONE_MAX_DISTILL_SAMPLES) {
         setProfileStageView("distill", {scroll: true});
@@ -3882,7 +3959,7 @@ async function pollProfileQueue(jobId) {
   await new Promise((resolve) => {
     window.setTimeout(resolve, 900);
   });
-  return pollProfileQueue(jobId);
+  return pollProfileQueue(jobId, options);
 }
 
 // Creator Clone: enrichment queue
@@ -5457,16 +5534,39 @@ function applyCreatorCloneDistillPayload(payload) {
   safeRenderCreatorCloneResult(payload.result || null, payload.set, payload.prompt || "", payload.exports || {});
 }
 
-async function pollCreatorCloneDistillJob(jobId) {
-  const response = await fetch(`/api/jobs/${jobId}`, {cache: "no-store"});
-  const payload = await readJsonResponse(response);
-  const job = payload.job;
+async function pollCreatorCloneDistillJob(jobId, options = {}) {
+  let job = null;
+  if (options.safeStatus) {
+    job = await fetchWorkbenchJob(jobId);
+  } else {
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {cache: "no-store"});
+    const payload = await readJsonResponse(response);
+    job = payload.job;
+  }
+  if (!job) {
+    return {completed: false, rendered: false};
+  }
   renderJobStatus(job);
+  if (options.safeStatus && job.status === "stale") {
+    jobMessage.className = "job-message";
+    jobMessage.textContent = `stale · ${job.progress || 0}% · ${job.message || "任务较长时间没有更新"}`;
+    profileScanStatus.textContent = "蒸馏任务可能已停止更新。当前状态保持只读，不会自动轮询、重试或修改任务状态。";
+    return {completed: false, rendered: false, stale: true};
+  }
   if (job.status === "success") {
     renderJobStatus(job);
     const resultPayload = job.result_json || {};
-    applyCreatorIntelligencePayload(resultPayload);
-    const setId = resultPayload.set?.set_id || "";
+    if (!options.safeStatus) {
+      applyCreatorIntelligencePayload(resultPayload);
+    }
+    const setId = String(
+      options.setId
+      || resultPayload.set?.set_id
+      || resultPayload.set_id
+      || resultPayload.recovery_context?.sample_set_id
+      || job.resume_target?.resource_id
+      || "",
+    );
     if (setId) {
       currentCloneSetId = setId;
       rememberRecentCreatorCloneSetId(setId);
@@ -5544,10 +5644,16 @@ async function pollCreatorCloneDistillJob(jobId) {
     updateCreatorCloneSelectionStatus();
     return {completed: false, rendered: false};
   }
+  if (["pending", "running"].includes(job.status) && profileBuildJobAgeSeconds(job) >= WORKBENCH_TASK_STALE_SECONDS) {
+    jobMessage.className = "job-message";
+    jobMessage.textContent = `stale · ${job.progress || 0}% · ${job.message || "任务较长时间没有更新"}`;
+    profileScanStatus.textContent = "蒸馏任务可能已停止更新。任务状态没有被修改；请检查模型服务后手动决定是否重新执行蒸馏。";
+    return {completed: false, rendered: false, stale: true};
+  }
   await new Promise((resolve) => {
     window.setTimeout(resolve, 900);
   });
-  return pollCreatorCloneDistillJob(jobId);
+  return pollCreatorCloneDistillJob(jobId, options);
 }
 
 function waitForCreatorCloneReportPaint() {
@@ -6114,6 +6220,252 @@ function notifyWorkbenchTargetResult(ok, message = "") {
   }));
 }
 
+function safeWorkbenchJobId(value) {
+  const jobId = String(value || "").trim();
+  return /^job_[A-Za-z0-9-]{1,80}$/.test(jobId) ? jobId : "";
+}
+
+function safeWorkbenchResumeMode(value) {
+  const mode = String(value || "manual").toLowerCase();
+  return ["observe", "manual", "result"].includes(mode) ? mode : "manual";
+}
+
+async function fetchWorkbenchJob(jobId) {
+  const safeJobId = safeWorkbenchJobId(jobId);
+  if (!safeJobId) {
+    return null;
+  }
+  const response = await fetch(`/api/workbench/jobs/${encodeURIComponent(safeJobId)}`, {cache: "no-store"});
+  const payload = await readJsonResponse(response);
+  const job = payload.job || payload.task || null;
+  if (!job) {
+    return null;
+  }
+  return {
+    ...job,
+    id: job.id || job.task_id || safeJobId,
+    type: job.type || job.task_type || "",
+    result_json: job.result_json || job.result || {},
+  };
+}
+
+function renderWorkbenchRestoredJobStatus(job, mode, fallbackMessage = "已恢复任务状态") {
+  renderJobStatus(job, fallbackMessage);
+  const staleView = job?.status === "stale"
+    || (mode === "manual" && ["pending", "running"].includes(job?.status));
+  if (staleView && jobMessage) {
+    jobMessage.className = "job-message";
+    jobMessage.textContent = `stale · ${job.progress || 0}% · ${job.message || "任务较长时间没有更新"}`;
+  }
+  return staleView;
+}
+
+async function renderRecoveredSingleJob(job, {scroll = false} = {}) {
+  const result = job?.result_json || {};
+  const caseId = getCaseId(result);
+  if (!caseId) {
+    if (jobResult && Object.keys(result).length) {
+      showJson(jobResult, result);
+    }
+    return false;
+  }
+  currentLocalVideoId = result.local_video_id || result.download?.local_video_id || currentLocalVideoId;
+  resultCard.classList.remove("hidden");
+  buildCaseButton.hidden = true;
+  renderWorkflowResult(result);
+  setStatus(downloadStatus, result.download || currentLocalVideoId ? "完成" : "已保留");
+  setStatus(packageStatus, "已生成");
+  setStatus(analysisStatus, job.status === "success" ? "完成" : "处理中");
+  try {
+    await showAnalysisInline(result, {scroll, updateMessage: false});
+  } catch (error) {
+    homeAiStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "Case 视图暂时无法加载"}`;
+  }
+  return true;
+}
+
+async function openWorkbenchSingleTarget(target, openUrl) {
+  const mode = safeWorkbenchResumeMode(target?.mode);
+  const jobId = safeWorkbenchJobId(target?.job_id);
+  if (openUrl && mode !== "observe") {
+    window.location.assign(openUrl);
+    return true;
+  }
+  setHomeRoute("single");
+  const resourceId = String(target?.resource_id || "");
+  if (/^\d{15,22}$/.test(resourceId) && singleForm?.elements?.value) {
+    singleForm.elements.value.value = resourceId;
+  }
+  window.scrollTo({top: 0, behavior: "smooth"});
+  if (!jobId) {
+    return true;
+  }
+  placeJobCard("single");
+  const job = await fetchWorkbenchJob(jobId);
+  if (!job) {
+    return false;
+  }
+  renderWorkbenchRestoredJobStatus(job, mode);
+  await renderRecoveredSingleJob(job, {scroll: false});
+  if (mode !== "observe" || !["pending", "running"].includes(job.status)) {
+    return true;
+  }
+  await monitorWorkbenchSingleJob(jobId);
+  return true;
+}
+
+async function monitorWorkbenchSingleJob(jobId) {
+  const job = await fetchWorkbenchJob(jobId);
+  if (!job) {
+    return false;
+  }
+  renderJobStatus(job);
+  await renderRecoveredSingleJob(job, {scroll: job.status === "success"});
+  if (job.status === "stale") {
+    renderWorkbenchRestoredJobStatus(job, "manual");
+    return true;
+  }
+  if (["success", "failed"].includes(job.status)) {
+    return true;
+  }
+  if (["pending", "running"].includes(job.status) && profileBuildJobAgeSeconds(job) >= WORKBENCH_TASK_STALE_SECONDS) {
+    renderWorkbenchRestoredJobStatus(job, "manual");
+    return true;
+  }
+  await new Promise((resolve) => window.setTimeout(resolve, 900));
+  return monitorWorkbenchSingleJob(jobId);
+}
+
+async function monitorWorkbenchProfileScanJob(jobId) {
+  const job = await fetchWorkbenchJob(jobId);
+  if (!job) {
+    return false;
+  }
+  placeJobCard("profile");
+  renderJobStatus(job, "已恢复主页扫描任务");
+  if (job.status === "stale") {
+    renderWorkbenchRestoredJobStatus(job, "manual");
+    profileScanStatus.textContent = "主页扫描任务可能已停止更新。当前状态保持只读，不会自动轮询、重试或修改任务状态。";
+    return true;
+  }
+  if (job.status === "success") {
+    const setId = String(
+      job.result_json?.set?.set_id
+      || job.result_json?.set_id
+      || job.result_json?.recovery_context?.sample_set_id
+      || job.resume_target?.resource_id
+      || "",
+    );
+    if (setId) {
+      await refreshProfilePoolFromPersistedSet(setId);
+    }
+    profileScanStatus.textContent = "主页扫描任务已完成；请确认素材池后继续。";
+    return true;
+  }
+  if (job.status === "failed") {
+    profileScanStatus.textContent = `${job.error_code || "ERROR"}：${job.message || "主页扫描失败"}`;
+    return true;
+  }
+  if (["pending", "running"].includes(job.status) && profileBuildJobAgeSeconds(job) >= WORKBENCH_TASK_STALE_SECONDS) {
+    profileScanStatus.textContent = "主页扫描任务可能已停止更新。任务状态保持不变，请由你决定是否重新执行导入。";
+    return true;
+  }
+  await new Promise((resolve) => window.setTimeout(resolve, 900));
+  return monitorWorkbenchProfileScanJob(jobId);
+}
+
+async function openWorkbenchProfileTarget(target) {
+  const setId = String(target?.resource_id || "");
+  const jobId = safeWorkbenchJobId(target?.job_id);
+  const taskType = String(target?.task_type || "");
+  const mode = safeWorkbenchResumeMode(target?.mode);
+  const stage = String(target?.stage || "");
+  setHomeRoute("profile");
+  window.scrollTo({top: 0, behavior: "smooth"});
+
+  if (!setId) {
+    setProfileStageView("import", {scroll: false});
+    if (jobId) {
+      if (taskType === "profile-scan" && mode === "observe") {
+        return monitorWorkbenchProfileScanJob(jobId);
+      }
+      const job = await fetchWorkbenchJob(jobId);
+      if (job) {
+        placeJobCard("profile");
+        const staleView = renderWorkbenchRestoredJobStatus(job, mode);
+        profileScanStatus.textContent = staleView
+          ? "主页扫描任务可能已停止更新。已恢复导入步骤，但不会自动轮询、重试或修改任务状态。"
+          : job.status === "failed"
+          ? `${job.error_code || "ERROR"}：${job.message || "任务失败"}`
+          : "已打开任务对应的导入步骤；系统不会自动重新执行。";
+      }
+    }
+    return true;
+  }
+  if (!isSafeCreatorCloneSetId(setId)) {
+    return false;
+  }
+
+  resetCreatorClonePoolForNewProfile();
+  rememberRecentCreatorCloneSetId(setId);
+  if (taskType === "profile-build-cases" && jobId) {
+    rememberRecentProfileBuildState({setId, jobId});
+  }
+  recentCreatorCloneRestoreAttempted = false;
+  const shouldObserve = mode === "observe";
+  const restored = await restoreRecentCreatorCloneSet({
+    pollActive: false,
+    restoreQueue: false,
+  });
+  if (!restored) {
+    return false;
+  }
+
+  if (taskType === "profile-build-cases" && jobId) {
+    await restoreRecentProfileBuildJob(setId, {
+      pollActive: shouldObserve,
+      allowAutoDistill: false,
+      safeStatus: true,
+    });
+  }
+  if (["import", "pool", "select", "enrich", "distill", "export"].includes(stage)) {
+    setProfileStageView(stage, {scroll: false});
+  }
+  if (["creator-clone-distill", "creator-clone-batch-distill"].includes(taskType) && jobId) {
+    placeJobCard("profile");
+    const job = await fetchWorkbenchJob(jobId);
+    let staleView = false;
+    if (job) {
+      staleView = renderWorkbenchRestoredJobStatus(job, mode, "已恢复创作者蒸馏任务");
+    }
+    if (shouldObserve && ["pending", "running"].includes(job?.status)) {
+      setCreatorCloneDistillButtonsLocked(true);
+      renderCreatorCloneNextAction();
+      try {
+        const completion = await pollCreatorCloneDistillJob(jobId, {
+          safeStatus: true,
+          setId,
+        });
+        if (completion?.completed) {
+          await finalizeCreatorCloneDistillView(completion, {
+            inputValueAtStart: creatorCloneUnifiedInputValue(),
+            scroll: true,
+          });
+        }
+      } finally {
+        setCreatorCloneDistillButtonsLocked(false);
+        updateCreatorCloneSelectionStatus();
+        renderCreatorCloneNextAction();
+      }
+    } else if (staleView) {
+      profileScanStatus.textContent = "蒸馏任务可能已停止更新。已恢复蒸馏步骤，但不会自动轮询、重试或修改任务状态。";
+    } else if (job?.status === "failed") {
+      profileScanStatus.textContent = `${job.error_code || "ERROR"}：${job.message || "蒸馏失败"}。已有素材池和证据仍保留，请手动决定是否重跑。`;
+    }
+  }
+  return true;
+}
+
 document.addEventListener("workbench:navigate", (event) => {
   const route = String(event.detail?.route || "");
   if (!["single", "profile"].includes(route)) {
@@ -6138,45 +6490,24 @@ document.addEventListener("workbench:open-target", async (event) => {
     return;
   }
   if (route === "single") {
-    const resourceId = String(target?.resource_id || "");
-    const openUrl = safeWorkbenchInternalUrl(event.detail?.open_url);
-    const caseMatch = openUrl.match(/^\/cases\/([A-Za-z0-9_-]{1,100})$/);
-    if (caseMatch && (!resourceId || resourceId === caseMatch[1])) {
-      window.location.assign(openUrl);
-      return;
+    const openUrl = safeWorkbenchInternalUrl(event.detail?.open_url || target?.open_url);
+    try {
+      const restored = await openWorkbenchSingleTarget(target, openUrl);
+      notifyWorkbenchTargetResult(restored, restored ? "" : "单作品任务状态无法恢复，请重新导入。" );
+    } catch (error) {
+      notifyWorkbenchTargetResult(false, `${error.error_code || "ERROR"}：${error.message || "单作品任务恢复失败"}`);
     }
-    setHomeRoute("single");
-    window.scrollTo({top: 0, behavior: "smooth"});
-    notifyWorkbenchTargetResult(true);
     return;
   }
-
-  const setId = String(target?.resource_id || "");
-  if (!setId) {
-    setHomeRoute("profile");
-    window.scrollTo({top: 0, behavior: "smooth"});
-    notifyWorkbenchTargetResult(true);
-    return;
+  try {
+    const restored = await openWorkbenchProfileTarget(target);
+    notifyWorkbenchTargetResult(
+      restored,
+      restored ? "" : "指定 Creator set 无法恢复，请在创作者页面重新导入。",
+    );
+  } catch (error) {
+    notifyWorkbenchTargetResult(false, `${error.error_code || "ERROR"}：${error.message || "创作者任务恢复失败"}`);
   }
-  if (!isSafeCreatorCloneSetId(setId)) {
-    notifyWorkbenchTargetResult(false, "Creator set 标识无效，未恢复任何本地素材池。");
-    return;
-  }
-
-  resetCreatorClonePoolForNewProfile();
-  rememberRecentCreatorCloneSetId(setId);
-  recentCreatorCloneRestoreAttempted = false;
-  const restored = await restoreRecentCreatorCloneSet();
-  setHomeRoute("profile");
-  const stage = String(target?.stage || "");
-  if (restored && ["import", "pool", "select", "enrich", "distill", "export"].includes(stage)) {
-    setProfileStageView(stage, {scroll: false});
-  }
-  window.scrollTo({top: 0, behavior: "smooth"});
-  notifyWorkbenchTargetResult(
-    restored,
-    restored ? "" : "指定 Creator set 无法恢复，请在创作者页面重新导入。",
-  );
 });
 
 function openSettingsModal() {
@@ -6805,6 +7136,14 @@ async function pollJob(jobId, onSuccess, onProgress) {
         showJson(jobResult, job);
       }
       setStatus(downloadStatus, "失败");
+      buildCaseButton.disabled = false;
+      singleButton.disabled = false;
+      singleButton.textContent = "解析";
+      return;
+    }
+    if (["pending", "running"].includes(job.status) && profileBuildJobAgeSeconds(job) >= WORKBENCH_TASK_STALE_SECONDS) {
+      jobMessage.className = "job-message";
+      jobMessage.textContent = `stale · ${job.progress || 0}% · ${job.message || "任务较长时间没有更新"}`;
       buildCaseButton.disabled = false;
       singleButton.disabled = false;
       singleButton.textContent = "解析";

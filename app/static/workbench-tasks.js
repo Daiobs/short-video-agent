@@ -9,12 +9,15 @@
   const overviewUrl = "/api/workbench/overview";
   const maxItems = 5;
   const validRoutes = new Set(["single", "profile"]);
-  const validStages = new Set(["import", "pool", "select", "enrich", "distill", "export"]);
+  const validStages = new Set(["import", "processing", "case", "pool", "select", "enrich", "distill", "export"]);
+  const validResumeModes = new Set(["observe", "manual", "result"]);
   const safeResourceId = /^[A-Za-z0-9_-]{1,100}$/;
+  const safeJobId = /^job_[A-Za-z0-9-]{1,80}$/;
   const sourceLabels = Object.freeze({
     jobs: "任务状态",
     cases: "Case 索引",
     creator_runtime: "Creator 索引",
+    creator_sample_sets: "Creator 素材池索引",
     douyin_source: "抖音数据源",
     llm: "LLM 状态",
     preflight: "本地工具",
@@ -25,9 +28,10 @@
     success: {label: "已完成", tone: "ready"},
     ready: {label: "已就绪", tone: "ready"},
     resumable: {label: "可继续", tone: "resumable"},
+    recoverable: {label: "可继续", tone: "resumable"},
     failed: {label: "失败", tone: "failed"},
     missing: {label: "缺失", tone: "failed"},
-    stale: {label: "需更新", tone: "pending"},
+    stale: {label: "可能已停止", tone: "stale"},
     disabled: {label: "未启用", tone: "neutral"},
   });
 
@@ -68,6 +72,12 @@
       : [];
   }
 
+  function textList(value, limit = 5) {
+    return Array.isArray(value)
+      ? value.map((item) => publicText(item, "", 80)).filter(Boolean).slice(0, limit)
+      : [];
+  }
+
   function safeCount(value) {
     const count = Number(value);
     return Number.isFinite(count) ? Math.max(0, Math.round(count)) : 0;
@@ -104,11 +114,18 @@
       return null;
     }
     const resourceId = String(value.resource_id || "").trim();
+    const jobId = String(value.job_id || "").trim();
+    const taskType = String(value.task_type || "").trim().slice(0, 64);
     const stage = String(value.stage || "").toLowerCase();
+    const mode = String(value.mode || "manual").toLowerCase();
     return {
       route,
       resource_id: safeResourceId.test(resourceId) ? resourceId : "",
+      job_id: safeJobId.test(jobId) ? jobId : "",
+      task_type: taskType,
       stage: validStages.has(stage) ? stage : "",
+      mode: validResumeModes.has(mode) ? mode : "manual",
+      open_url: normalizeOpenUrl(value.open_url),
     };
   }
 
@@ -168,6 +185,7 @@
       ? capabilities.preflight
       : {};
     const runningCount = safeCount(capabilities.running_task_count);
+    const staleCount = safeCount(capabilities.stale_task_count);
     const douyinStatus = String(douyin.status || "unknown").toLowerCase();
     const douyinTone = douyinStatus === "success"
       ? "ready"
@@ -183,7 +201,11 @@
       {label: "抖音数据源", value: publicText(douyin.label, "状态待确认", 48), tone: douyinTone},
       {label: "LLM", value: llmLabel, tone: llmTone},
       {label: "本地工具", value: `${preflightReady}/${preflightTotal}`, tone: preflightTone},
-      {label: "运行任务", value: String(runningCount), tone: runningCount ? "running" : "neutral"},
+      {
+        label: "运行任务",
+        value: staleCount ? `${runningCount} 运行 · ${staleCount} 待确认` : String(runningCount),
+        tone: runningCount ? "running" : (staleCount ? "pending" : "neutral"),
+      },
     ];
     capabilityContainer.innerHTML = items.map((item) => `
       <div class="workbench-capability-item ${item.tone}">
@@ -201,7 +223,7 @@
       ? meta.truncated_sources.map((item) => String(item || "")).slice(0, maxItems)
       : [];
     const notices = [];
-    if (truncatedSources.includes("creator_runtime")) {
+    if (truncatedSources.includes("creator_runtime") || truncatedSources.includes("creator_sample_sets")) {
       notices.push({
         message: "创作者任务索引仅展示最近一部分记录，较早的任务或报告可能未列出。",
         followup: "完整历史浏览将在后续资产库阶段提供。",
@@ -280,8 +302,8 @@
   }
 
   function targetAction(item, label, className = "primary") {
-    const target = normalizeTarget(item?.target);
-    const openUrl = normalizeOpenUrl(item?.open_url);
+    const target = normalizeTarget(item?.resume_target || item?.target);
+    const openUrl = target?.open_url || normalizeOpenUrl(item?.open_url);
     if (target) {
       return actionButton(label, {kind: "open-target", target, openUrl}, className);
     }
@@ -306,7 +328,7 @@
         <header>
           <div>
             <h4>${escapeHtml(title)}</h4>
-            <p>${escapeHtml(stage)} · 更新于 ${escapeHtml(formatTime(item.updated_at))}</p>
+            <p>${escapeHtml(stage)} · 开始 ${escapeHtml(formatTime(item.created_at))} · 更新 ${escapeHtml(formatTime(item.updated_at))}</p>
           </div>
           <span class="workbench-item-status ${meta.tone}">${escapeHtml(meta.label)}</span>
         </header>
@@ -320,19 +342,56 @@
     `;
   }
 
+  function renderStaleTask(item, focusedTaskId = "") {
+    const taskId = safeJobId.test(String(item.task_id || "")) ? String(item.task_id) : "";
+    const title = publicText(item.title, "后台任务", 120);
+    const stage = publicText(item.stage, "处理中", 80);
+    const message = publicText(item.message, "任务最后一次状态已保留。", 200);
+    const recoveryHint = publicText(
+      item.recovery_hint,
+      "请先查看状态，再进入对应步骤手动决定是否重新执行。",
+      260,
+    );
+    const completedStage = publicText(item.last_completed_stage, "尚未确认", 100);
+    const availableResults = textList(item.available_results);
+    const isFocused = Boolean(taskId && taskId === focusedTaskId);
+    const viewButton = actionButton("查看状态", {kind: "refresh-task", taskId, title});
+    const reopenButton = targetAction(item, "重新打开当前步骤");
+    return `
+      <article class="workbench-stale-task${isFocused ? " is-selected" : ""}" data-overview-task-id="${escapeHtml(taskId)}" tabindex="-1">
+        <header>
+          <div>
+            <h4>${escapeHtml(title)}</h4>
+            <p>${escapeHtml(stage)} · 最后更新 ${escapeHtml(formatTime(item.updated_at))}</p>
+          </div>
+          <span class="workbench-item-status stale">可能已停止</span>
+        </header>
+        <p class="workbench-task-message">${escapeHtml(message)}</p>
+        <dl class="workbench-recovery-facts">
+          <div><dt>已完成到</dt><dd>${escapeHtml(completedStage)}</dd></div>
+          <div><dt>仍可使用</dt><dd>${escapeHtml(availableResults.join("、") || "暂无已确认结果")}</dd></div>
+        </dl>
+        <p class="workbench-recovery-hint">${escapeHtml(recoveryHint)}</p>
+        <p class="workbench-manual-note">只会打开和读取状态，不会自动重试或修改任务状态。</p>
+        <footer>${viewButton}${reopenButton}</footer>
+      </article>
+    `;
+  }
+
   function renderResumableTask(item) {
     const title = publicText(item.title, "上次任务", 120);
-    const step = publicText(item.current_step, "继续处理", 100);
+    const step = publicText(item.stage || item.current_step, "继续处理", 100);
     const sampleCount = safeCount(item.sample_count);
     const selectedCount = safeCount(item.selected_count);
     const reportStatus = publicText(item.report_status, "待生成", 40);
-    const meta = statusMeta(item.status || "resumable");
+    const meta = statusMeta(item.status || "recoverable");
     const detailParts = [];
     if (sampleCount || selectedCount) {
       detailParts.push(`样本 ${selectedCount}/${sampleCount}`);
     }
     detailParts.push(`报告 ${reportStatus}`);
     detailParts.push(`更新于 ${formatTime(item.updated_at)}`);
+    const recoveryHint = publicText(item.recovery_hint, "恢复后不会自动执行下一步。", 220);
     const continueButton = targetAction(item, "继续任务");
     return `
       <article class="workbench-resumable-task">
@@ -344,6 +403,7 @@
           <span class="workbench-item-status ${meta.tone}">${escapeHtml(meta.label)}</span>
         </header>
         <p class="workbench-task-detail">${escapeHtml(detailParts.join(" · "))}</p>
+        <p class="workbench-recovery-hint">${escapeHtml(recoveryHint)}</p>
         ${continueButton ? `<footer>${continueButton}</footer>` : ""}
       </article>
     `;
@@ -354,6 +414,7 @@
       return;
     }
     const runningTasks = itemList(payload?.running_tasks);
+    const staleTasks = itemList(payload?.stale_tasks);
     const resumableTasks = itemList(payload?.resumable_tasks);
     if (runningTasks.length) {
       const reportedTotal = safeCount(payload?.capabilities?.running_task_count);
@@ -361,6 +422,11 @@
       const runningCountLabel = runningTotal > runningTasks.length
         ? `显示 ${runningTasks.length} / 共 ${runningTotal} 个运行任务`
         : `${runningTasks.length} 个任务`;
+      const reportedStaleTotal = safeCount(payload?.capabilities?.stale_task_count);
+      const staleTotal = Math.max(staleTasks.length, reportedStaleTotal);
+      const staleCountLabel = staleTotal > staleTasks.length
+        ? `显示 ${staleTasks.length} / 共 ${staleTotal} 条待人工确认`
+        : `${staleTasks.length} 条待人工确认`;
       priorityContainer.innerHTML = `
         <header class="workbench-section-heading">
           <div>
@@ -371,6 +437,29 @@
         </header>
         <div class="workbench-running-list">
           ${runningTasks.map((item) => renderRunningTask(item, focusedTaskId)).join("")}
+        </div>
+        ${staleTasks.length ? `
+          <section class="workbench-stale-subsection" aria-label="可能已停止更新的任务">
+            <header><strong>可能已停止更新</strong><span>${escapeHtml(staleCountLabel)}</span></header>
+            <div class="workbench-stale-list">${staleTasks.map((item) => renderStaleTask(item, focusedTaskId)).join("")}</div>
+          </section>
+        ` : ""}
+      `;
+      return;
+    }
+    if (staleTasks.length) {
+      const reportedTotal = safeCount(payload?.capabilities?.stale_task_count);
+      const staleTotal = Math.max(staleTasks.length, reportedTotal);
+      priorityContainer.innerHTML = `
+        <header class="workbench-section-heading">
+          <div>
+            <span>人工确认</span>
+            <h3 id="workbench-priority-title">任务可能已停止更新</h3>
+          </div>
+          <strong>${staleTotal} 个任务</strong>
+        </header>
+        <div class="workbench-stale-list">
+          ${staleTasks.map((item) => renderStaleTask(item, focusedTaskId)).join("")}
         </div>
       `;
       return;
@@ -403,12 +492,46 @@
     return "进入报告";
   }
 
+  function renderFailureTask(item) {
+    const title = publicText(item.title, "失败任务", 120);
+    const errorCode = publicText(item.error_code, "TASK_FAILED", 80);
+    const message = publicText(item.message, "任务未完成。", 180);
+    const completedStage = publicText(item.last_completed_stage, "尚未确认", 100);
+    const availableResults = textList(item.available_results);
+    const recoveryHint = publicText(
+      item.recovery_hint,
+      "重新打开对应页面，核对已有结果后手动决定是否继续。",
+      260,
+    );
+    const recoveryButton = item.recoverable ? targetAction(item, "按提示恢复") : "";
+    return `
+      <article class="workbench-recent-item workbench-failure-item">
+        <div class="workbench-recent-copy">
+          <div>
+            <h4>${escapeHtml(title)}</h4>
+            <span class="workbench-item-status failed">失败</span>
+          </div>
+          <p><strong>${escapeHtml(errorCode)}</strong> · ${escapeHtml(formatTime(item.updated_at))}</p>
+          <p class="workbench-recent-message">${escapeHtml(message)}</p>
+          <dl class="workbench-recovery-facts compact">
+            <div><dt>已完成到</dt><dd>${escapeHtml(completedStage)}</dd></div>
+            <div><dt>仍可使用</dt><dd>${escapeHtml(availableResults.join("、") || "暂无已确认结果")}</dd></div>
+          </dl>
+          <p class="workbench-recovery-hint">${escapeHtml(recoveryHint)}</p>
+        </div>
+        ${recoveryButton ? `<div class="workbench-recent-actions">${recoveryButton}</div>` : ""}
+      </article>
+    `;
+  }
+
   function renderRecentItem(item, sectionKey) {
     const title = publicText(item.title, "未命名记录", 120);
     const type = publicText(item.type || item.task_group, "本地记录", 60);
-    const meta = statusMeta(item.status);
-    const target = normalizeTarget(item.target);
-    const openUrl = normalizeOpenUrl(item.open_url);
+    const meta = sectionKey === "strategies" && String(item.status || "").toLowerCase() === "stale"
+      ? {label: "需更新", tone: "pending"}
+      : statusMeta(item.status);
+    const target = normalizeTarget(item.resume_target || item.target);
+    const openUrl = target?.open_url || normalizeOpenUrl(item.open_url);
     const primaryAction = target
       ? actionButton(recentActionLabel(sectionKey, Boolean(openUrl)), {kind: "open-target", target, openUrl}, "primary")
       : (openUrl ? actionButton(recentActionLabel(sectionKey, true), {kind: "open-url", openUrl}, "primary") : "");
@@ -437,7 +560,7 @@
     }
     const safeItems = itemList(items);
     container.innerHTML = safeItems.length
-      ? safeItems.map((item) => renderRecentItem(item, sectionKey)).join("")
+      ? safeItems.map((item) => sectionKey === "failures" ? renderFailureTask(item) : renderRecentItem(item, sectionKey)).join("")
       : `<p class="workbench-empty-state">${escapeHtml(emptyLabel)}</p>`;
   }
 
@@ -577,6 +700,7 @@
   global.WorkbenchTasks = Object.freeze({
     refresh: () => loadOverview(),
     getLatestOverview: () => latestPayload,
+    normalizeResumeTarget: (value) => normalizeTarget(value),
   });
 
   loadOverview();
