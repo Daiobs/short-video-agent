@@ -6519,6 +6519,48 @@ document.addEventListener("workbench:open-target", async (event) => {
   }
 });
 
+function restoreLibraryResumeTarget() {
+  const storageKey = "shortVideoAgent.library.resumeTarget.v1";
+  let raw = "";
+  try {
+    raw = window.sessionStorage.getItem(storageKey) || "";
+    window.sessionStorage.removeItem(storageKey);
+  } catch (_error) {
+    return;
+  }
+  if (!raw) {
+    return;
+  }
+  let target;
+  try {
+    target = JSON.parse(raw);
+  } catch (_error) {
+    return;
+  }
+  const route = String(target?.route || "");
+  const resourceId = String(target?.resource_id || "");
+  const validResource = route === "profile"
+    ? /^clone_[A-Za-z0-9_-]{1,94}$/.test(resourceId)
+    : /^case_[A-Za-z0-9_-]{1,94}$/.test(resourceId);
+  if (!["single", "profile"].includes(route) || !validResource) {
+    return;
+  }
+  document.dispatchEvent(new CustomEvent("workbench:open-target", {
+    detail: {
+      target: {
+        route,
+        stage: route === "profile" ? "export" : "case",
+        resource_id: resourceId,
+        job_id: "",
+        task_type: route === "profile" ? "creator_report" : "case_asset",
+        mode: "result",
+        open_url: safeWorkbenchInternalUrl(target?.open_url),
+      },
+      open_url: safeWorkbenchInternalUrl(target?.open_url),
+    },
+  }));
+}
+
 function openSettingsModal() {
   settingsModal.classList.remove("hidden");
   loadPreflightStatus().catch(() => {
@@ -7207,3 +7249,4 @@ loadPreflightStatus().catch(() => {
 });
 renderCreatorCloneNextAction();
 setHomeRoute(routeFromHash(), !window.location.hash);
+window.setTimeout(restoreLibraryResumeTarget, 0);

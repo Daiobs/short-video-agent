@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>资产库 · short-video-agent</title>
+    <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+</head>
+<body>
+<div class="workbench-shell library-shell">
+    <aside class="workbench-sidebar" aria-label="资产库导航">
+        <div class="workbench-brand">
+            <a class="site-title" href="/">短视频拆解工作台</a>
+            <p>浏览已经生成的 Case、创作者报告与策略方案</p>
+        </div>
+        <nav class="workbench-nav" aria-label="工作台功能导航">
+            <section class="workbench-nav-group">
+                <h2 class="workbench-nav-group-label">
+                    <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                    <span>主要工作流</span>
+                </h2>
+                <a class="workbench-nav-item" href="/">工作台</a>
+                <a class="workbench-nav-item" href="/#single">单作品拆解</a>
+                <a class="workbench-nav-item" href="/#profile">创作者拆解</a>
+            </section>
+            <section class="workbench-nav-group">
+                <h2 class="workbench-nav-group-label">
+                    <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                    <span>资产与报告</span>
+                </h2>
+                <a class="workbench-nav-item active" href="/library" aria-current="page">资产库</a>
+            </section>
+            <section class="workbench-nav-group">
+                <h2 class="workbench-nav-group-label">
+                    <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                    <span>质量工具</span>
+                </h2>
+                <a class="workbench-nav-item" href="/calibration">质量校准</a>
+            </section>
+        </nav>
+    </aside>
+
+    <section class="workbench-main workbench-main-shell">
+        <header class="site-header workbench-topbar">
+            <div class="header-shell">
+                <div>
+                    <div class="entry-label">Local Asset Index</div>
+                    <h1>资产库</h1>
+                </div>
+                <div class="library-header-actions">
+                    <span class="library-readonly-badge">只读索引</span>
+                    <a class="ghost-button library-back-link" href="/">返回工作台</a>
+                </div>
+            </div>
+        </header>
+
+        <main class="page library-page" data-library-root aria-busy="true">
+            <header class="library-page-heading">
+                <div>
+                    <div class="entry-label">Assets & Reports</div>
+                    <h2>已有分析产物</h2>
+                    <p>这里聚合现有真源的安全元数据，不复制报告正文，也不会触发扫描、下载、富化或大模型任务。</p>
+                </div>
+                <button type="button" id="library-refresh" class="workbench-refresh-button">刷新索引</button>
+            </header>
+
+            <section class="library-summary" id="library-summary" aria-label="资产统计">
+                <div><span>全部资产</span><strong id="library-total-count">—</strong></div>
+                <div><span>单作品 Case</span><strong id="library-case-count">—</strong></div>
+                <div><span>创作者报告</span><strong id="library-report-count">—</strong></div>
+                <div><span>策略方案</span><strong id="library-strategy-count">—</strong></div>
+            </section>
+
+            <form id="library-filters" class="library-filters" role="search">
+                <label class="library-query-field">
+                    <span>关键词</span>
+                    <input id="library-query" name="query" maxlength="120" placeholder="标题、创作者名或资产 ID">
+                </label>
+                <label>
+                    <span>资产类型</span>
+                    <select id="library-type" name="type">
+                        <option value="">全部类型</option>
+                        <option value="case">单作品 Case</option>
+                        <option value="creator_report">创作者报告</option>
+                        <option value="strategy_plan">策略方案</option>
+                    </select>
+                </label>
+                <label>
+                    <span>状态</span>
+                    <select id="library-status" name="status">
+                        <option value="">全部状态</option>
+                        <option value="ready">可用</option>
+                        <option value="incomplete">不完整</option>
+                        <option value="missing">文件缺失</option>
+                        <option value="stale">可能陈旧</option>
+                    </select>
+                </label>
+                <label>
+                    <span>开始日期</span>
+                    <input id="library-date-from" name="date_from" type="date">
+                </label>
+                <label>
+                    <span>结束日期</span>
+                    <input id="library-date-to" name="date_to" type="date">
+                </label>
+                <div class="library-filter-actions">
+                    <button type="submit">筛选</button>
+                    <button type="button" id="library-filter-reset" class="ghost-button">重置</button>
+                </div>
+            </form>
+
+            <div id="library-source-warning" class="library-source-warning hidden" role="status"></div>
+            <p id="library-announcement" class="workbench-overview-announcement" role="status" aria-live="polite">正在读取本地资产索引...</p>
+
+            <section class="library-results" aria-labelledby="library-results-title">
+                <header class="library-results-heading">
+                    <div>
+                        <h3 id="library-results-title">资产列表</h3>
+                        <span id="library-result-count">读取中</span>
+                    </div>
+                    <label class="library-page-size-label">每页
+                        <select id="library-page-size" aria-label="每页资产数量">
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </label>
+                </header>
+                <div class="library-table-wrap">
+                    <table class="library-table">
+                        <thead>
+                        <tr>
+                            <th>类型 / 状态</th>
+                            <th>资产</th>
+                            <th>创作者</th>
+                            <th>样本</th>
+                            <th>更新时间</th>
+                            <th>操作</th>
+                        </tr>
+                        </thead>
+                        <tbody id="library-items"></tbody>
+                    </table>
+                    <div id="library-empty" class="library-empty hidden">
+                        <strong>没有匹配的资产</strong>
+                        <p>调整关键词、类型、状态或日期范围后再试。</p>
+                    </div>
+                </div>
+            </section>
+
+            <nav class="library-pagination" aria-label="资产分页">
+                <button type="button" id="library-page-previous" class="ghost-button">上一页</button>
+                <span id="library-page-label">第 1 页</span>
+                <button type="button" id="library-page-next" class="ghost-button">下一页</button>
+            </nav>
+        </main>
+    </section>
+</div>
+
+<script src="/static/workbench.js?v={{ static_version }}"></script>
+<script src="/static/library.js?v={{ static_version }}"></script>
+</body>
+</html>

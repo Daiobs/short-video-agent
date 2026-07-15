@@ -13,6 +13,7 @@ from app.routes import (
     creator_intelligence,
     downloads,
     jobs,
+    library,
     local_helper,
     pages,
     profile,
@@ -136,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(downloads.router)
     app.include_router(settings_routes.router)
     app.include_router(workbench.router)
+    app.include_router(library.router)
     return app
 
 
