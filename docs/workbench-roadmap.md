@@ -1,14 +1,14 @@
 # Workbench Roadmap
 
-本文记录“任务驱动的短视频拆解工作台”的长期阶段、阶段边界和验收状态。Stage A 已完成审查并合并；Stage B 已获得用户授权，正在独立分支中实施。后续阶段仍必须逐阶段创建 Draft PR、等待人工审查，不得自动合并或自动进入下一阶段。
+本文记录“任务驱动的短视频拆解工作台”的长期阶段、阶段边界和验收状态。Stage A 与 Stage B 已完成审查并合并；Stage C 已从最新 `main` 的独立分支启动。后续阶段仍必须逐阶段创建 Draft PR、等待人工审查，不得自动合并或自动进入下一阶段。
 
 ## 长期阶段 A-E
 
 | 阶段 | 建议分支 | 纵向目标 | 入口条件 | 当前状态 |
 | --- | --- | --- | --- | --- |
 | Stage A | `codex/workbench-task-console-v1` | 将 `/` 升级为任务控制台，聚合运行中任务、可继续任务、最近结果和能力状态 | Workbench Shell v1 已进入 `main` | 已合并：PR #12，`48b7feeb8279d548ebe7f0d0343d6f3af378eab8` |
-| Stage B | `codex/workbench-recovery-v1` | 统一任务状态、精确恢复目标、失败诊断和 stale 任务处理 | Stage A 已合并，用户已明确授权 | 候选完成，等待 Draft PR 人工审查 |
-| Stage C | `codex/workbench-library-v1` | 建立 Case、Creator Report 和 Strategy Plan 的只读资产库 | Stage B 经审查后合并 | 未开始 |
+| Stage B | `codex/workbench-recovery-v1` | 统一任务状态、精确恢复目标、失败诊断和 stale 任务处理 | Stage A 已合并，用户已明确授权 | 已合并：PR #13，`98293b802919c32dc2037c6c438a13f3aee9093f` |
+| Stage C | `codex/workbench-library-v1` | 建立 Case、Creator Report 和 Strategy Plan 的只读资产库 | Stage B 经审查后合并 | 实施中；基线 `98293b802919c32dc2037c6c438a13f3aee9093f` |
 | Stage D | `codex/frontend-modules-v1` | 在不引入框架和构建链的前提下拆分前端模块 | Stage C 合并且行为稳定 | 未开始 |
 | Stage E | `research/douyin-local-connector` | 研究 Douyin 本地连接器的权限、配对协议和威胁模型 | Stage A-D 完成，或用户明确要求提前研究 | 未开始；默认不接入生产流程 |
 
@@ -94,9 +94,9 @@ Overview 只聚合已有本机状态，不建立第二真源：
 
 ## 当前未完成
 
-- Stage B 的统一任务 DTO、精确恢复、失败诊断和 stale 派生展示已在 `codex/workbench-recovery-v1` 完成候选实现与本机回归，仍需 Draft PR 人工审查。
-- Stage B Draft PR 编号、人工审查结论与合并状态待创建 PR 后记录；本阶段不得自动合并。
-- Stage C 及后续阶段未获启动授权；Stage B 完成后只创建 Draft PR，不合并、不进入 Stage C。
+- Stage C 正在 `codex/workbench-library-v1` 实施只读资产索引、独立 `/library` 页面、筛选分页、安全/性能回归和文档。
+- Stage C 完成后只允许推送分支并创建 Draft PR，不自动合并，也不创建 Stage D 分支。
+- Stage D 及后续阶段尚未获得启动授权。
 
 ## 已否决
 
@@ -124,13 +124,13 @@ Overview 只聚合已有本机状态，不建立第二真源：
 
 仅比较 Strategy Plan 与 Creator Report 的文件更新时间，无法证明样本选择、证据或其他上游输入没有变化；时间戳粒度和外部文件操作也可能产生误判。当前候选状态只能提示风险，不能消除语义陈旧性。Stage A 应覆盖明显过期方案被标记为 `stale` 的测试，Stage B/C 再设计可追踪的输入版本或派生索引策略。
 
-### 4. Runtime 索引截断
+### 4. Runtime 与资产索引截断
 
-为限制请求成本，Creator Runtime 只检查有界数量的最新候选。超过上限时，较旧但仍可继续的任务或报告可能不出现在首页；候选响应会把该来源标记为截断和部分结果，任务控制台会显示非阻断式“部分结果”提示。Stage A 已覆盖 API 截断与前端展示行为；完整历史浏览或分页属于后续资产库范围。
+为限制请求成本，Creator Runtime 和 Stage C 资产库都只检查有界数量的最新候选。超过上限时，较旧任务或产物可能不在当前索引中；响应会把来源标记为截断和部分结果，页面显示非阻断式提示。Stage C 提供分页与安全元数据搜索，但仍不承诺越过单源硬上限的无限历史扫描。
 
-## Stage B 实施状态
+## Stage B 合并状态
 
-Stage B 入口条件已经满足：Stage A 的 PR #12 已完成审查并以 squash commit `48b7feeb8279d548ebe7f0d0343d6f3af378eab8` 合并，合并后 `main` 回归为 `356 passed, 1 warning`，用户已明确授权从最新 `main` 新建 `codex/workbench-recovery-v1`。
+Stage B 已通过 PR #13 完成人工审查，并以 squash commit `98293b802919c32dc2037c6c438a13f3aee9093f` 合并到 `main`。Stage C 启动前同步后的 `main` 与该 merge commit 一致，工作区干净，基线回归为 `370 passed, 1 warning`。
 
 Stage B 当前范围固定为：
 
@@ -140,13 +140,26 @@ Stage B 当前范围固定为：
 4. 对超过 30 分钟未更新的 `pending` / `running` 任务派生 `stale` 视图；Overview 新增 `stale_tasks` 和 `capabilities.stale_task_count`。
 5. 恢复入口只负责读取状态和导航；不自动重试、不自动执行工作流、不修改任务数据库状态。
 
-稳定 DTO 见 `docs/workbench-task-model.md`，逐流程恢复行为见 `docs/workbench-recovery.md`。Stage B 完成后必须运行完整验证并只创建 Draft PR，等待人工审查；不得合并或进入 Stage C。
+稳定 DTO 见 `docs/workbench-task-model.md`，逐流程恢复行为见 `docs/workbench-recovery.md`。Stage B 已关闭无资源旧失败 Job 被伪标记为可恢复的问题；只有安全资源目标或可观察的活跃 Job 才能恢复业务上下文。
+
+## Stage C 实施状态
+
+Stage C 基线为 `main` 的 `98293b802919c32dc2037c6c438a13f3aee9093f`，分支为 `codex/workbench-library-v1`。本阶段合同见 `docs/workbench-library.md`：
+
+1. 新增独立 `/library` 页面，不把完整历史浏览继续塞入首页 DOM。
+2. 新增有界、只读 `GET /api/library/assets`，统一 Case、Creator Report 和 Strategy Plan DTO。
+3. 只读取安全元数据和已知文件存在性，不读取媒体正文，不调用外部服务、ffmpeg 或 LLM。
+4. 支持关键词、类型、状态、日期、分页和来源级部分失败。
+5. Creator 返回入口复用 Stage B 精确恢复能力，但只有安全可读的 `samples.json` 才能恢复到 `profile/export`，且不自动执行任何业务步骤。
+6. 单源上限、JSON 大小和请求预算均明确；截断必须作为部分结果展示。
+
+Stage C 已知边界：Runtime `DONE`、Creator 报告文件或 Strategy Plan 单独存在，都不能证明 Creator 上下文可恢复。资产仍按真实文件状态列出；HTML/Markdown 报告可以独立打开，但缺失、损坏、超大或不可读取的 `samples.json` 不生成“返回 Creator”入口。
 
 ## 测试记录
 
 | 检查项 | 状态 | 结果或证据 |
 | --- | --- | --- |
-| 最新 `main` 基线 `pytest -q` | 通过 | `344 passed, 1 warning`，阶段开始前执行 |
+| Stage C 最新 `main` 基线 `pytest -q` | 通过 | `370 passed, 1 warning in 49.11s`；基线 `98293b802919c32dc2037c6c438a13f3aee9093f` |
 | Stage A 完整 `pytest -q` | 通过 | `356 passed, 1 warning in 50.96s` |
 | `node --check app/static/app.js` | 通过 | 使用 Codex bundled Node.js |
 | `node --check app/static/workbench.js` | 通过 | 使用 Codex bundled Node.js |
@@ -163,7 +176,7 @@ Stage B 当前范围固定为：
 
 | 检查 | 结果 | 证据 |
 | --- | --- | --- |
-| 完整 Python 测试 | 通过 | `368 passed, 1 warning`；warning 为 Starlette TestClient 的 httpx2 迁移提示 |
+| 完整 Python 测试 | 通过 | 合并后 `main` 回归为 `370 passed, 1 warning`；warning 为 Starlette TestClient 的 httpx2 迁移提示 |
 | JavaScript 语法 | 通过 | `app.js`、`workbench.js`、`workbench-tasks.js` 均通过 bundled Node `--check` |
 | Python 编译 | 通过 | Stage B 新增/修改的任务 DTO、Overview、Job 路由和测试隔离模块通过 `compileall` |
 | 差异格式 | 通过 | `git diff --check` 无输出 |
@@ -172,6 +185,21 @@ Stage B 当前范围固定为：
 | 不自动修改状态 | 通过 | stale Creator Job 恢复前后仍为原始 `running`、进度与 `updated_at` 不变，未触发自动重试 |
 | 安全恢复接口 | 通过 | Workbench 只读取 `/api/workbench/jobs/{job_id}`；响应不含原始 Job JSON、签名 URL、Prompt、请求头或本机路径，恢复富化不会自动进入蒸馏 |
 | 素材池兜底索引 | 通过 | 只有 `samples.json`、尚未进入 Runtime 会话的素材池可恢复到素材池/选样；扫描与响应均有硬上限，超限明确标记部分结果 |
+
+### Stage C 测试记录
+
+| 检查 | 结果 | 证据 |
+| --- | --- | --- |
+| 完整 Python 测试 | 通过 | `379 passed, 1 warning in 47.99s`；warning 仍为 Starlette TestClient 的 httpx2 迁移提示 |
+| JavaScript 语法 | 通过 | `app.js`、`workbench.js`、`workbench-tasks.js` 与新增 `library.js` 均通过 bundled Node `--check` |
+| Python 编译与差异格式 | 通过 | `python -m compileall -q app tests` 与 `git diff --check` 无错误 |
+| 三类资产合同 | 通过 | Case、Creator Report、Strategy Plan 使用统一 DTO；类型/状态/关键词/日期/分页均有 API 测试 |
+| 安全边界 | 通过 | 覆盖 Cookie、Authorization、Bearer、API Key、`sk-` Key、本机路径、外部/签名 URL、路径穿越、非法 ID、符号链接、损坏和超大 JSON |
+| 来源降级 | 通过 | Case 数据库不可用时 Creator 资产仍返回；损坏或截断来源使用 `source_errors` / `meta.partial` 非阻断展示 |
+| Creator 恢复入口真实性 | 通过 | Runtime-only `DONE`、缺失/损坏 `samples.json` 不生成恢复目标；报告直链与 Creator 恢复相互独立；有效 sample set 仍恢复到 `profile/export` 且不创建 Job |
+| 500×3 规模 | 通过 | 500 Case + 500 Creator Report + 500 Strategy Plan，测试用例约 0.74 秒；结果分页为 100，响应小于 250 KiB，缓存命中不重复读取 JSON |
+| 实际 HTTP | 通过 | `/`、`/library`、Overview 与资产 API 均返回 200；当前 2,000+ 本机资产冷索引约 2.05 秒，30 秒快照内筛选/翻页约 0.03 秒，20 条响应约 18 KiB |
+| 响应式与恢复 | 通过 | 1280 / 1024 / 390 视口无页面横向溢出；桌面为紧凑表格、手机为卡片；Creator 返回后进入既有 `export` 阶段且未创建任务 |
 
 开发注意事项：手动开发冒烟仍应使用临时或明确可清理的数据目录，避免污染默认 job、Case、Creator Runtime 或最近报告。
 
@@ -190,5 +218,9 @@ Stage B 当前范围固定为：
 | 合并状态 | 已 squash merge |
 | 合并 commit | `48b7feeb8279d548ebe7f0d0343d6f3af378eab8`（`Add task-first workbench console`） |
 | 合并后回归 | `356 passed, 1 warning` |
-| Stage B 授权 | 已获得；正在 `codex/workbench-recovery-v1` 实施 |
-| Stage B PR | 候选实现与回归已完成，待创建 Draft PR；不得自动合并 |
+| Stage B 状态 | 已完成并合并 |
+| Stage B PR | #13，已由用户授权审查并 squash merge |
+| Stage B 合并 commit | `98293b802919c32dc2037c6c438a13f3aee9093f` |
+| Stage C 分支 | `codex/workbench-library-v1` |
+| Stage C 基线 | `main` / `98293b802919c32dc2037c6c438a13f3aee9093f` |
+| Stage C PR | #14，Draft；完成合并前收尾后继续等待人工审查，不得自动合并 |

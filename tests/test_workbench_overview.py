@@ -428,7 +428,7 @@ def test_workbench_job_api_returns_sanitized_recovery_context(tmp_path: Path, mo
                 "status": "completed",
                 "source_url": "https://www.douyin.com/video/7654321098765432101",
                 "signed_url": "https://v26-default.365yg.com/video.mp4?token=SECRET_SIGNED",
-                "file_path": "/Users/private/video.mp4",
+                "file_path": "/var/private/video.mp4",
                 "request_headers": {"Authorization": "Bearer SECRET_HEADER"},
             }
         ],
@@ -436,14 +436,14 @@ def test_workbench_job_api_returns_sanitized_recovery_context(tmp_path: Path, mo
             "selected_count": 3,
             "case_count": 1,
             "notes": [
-                '"api_key": "SECRET_JSON" /Users/private/cache https://secret.invalid',
+                '"api_key": "SECRET_JSON" /var/private/cache https://secret.invalid',
                 "队列已完成。",
             ],
         },
         "download": {
             "aweme_id": "7654321098765432101",
             "local_video_id": local_id,
-            "file_path": "/Users/private/video.mp4",
+            "file_path": "/var/private/video.mp4",
             "url": "https://v26-default.365yg.com/video.mp4?token=SECRET_SIGNED",
             "size_bytes": 1024,
         },
@@ -499,7 +499,7 @@ def test_workbench_job_api_returns_sanitized_recovery_context(tmp_path: Path, mo
         "SECRET_API_KEY",
         "SECRET_AUTH",
         "SECRET_COOKIE",
-        "/Users/private",
+        "/var/private",
         "365yg.com",
         "douyin.com",
         "secret.invalid",
@@ -532,7 +532,7 @@ def test_workbench_overview_degrades_one_failed_source_without_exception_details
     _patch_capabilities(monkeypatch)
 
     def fail_jobs(_database_url: str):
-        raise OSError("SECRET_SENTINEL /Users/private/project sk-secretvalue")
+        raise OSError("SECRET_SENTINEL /var/private/project sk-secretvalue")
 
     monkeypatch.setattr(workbench_overview, "_collect_job_sections", fail_jobs)
     payload = workbench_overview.build_workbench_overview(
@@ -547,7 +547,7 @@ def test_workbench_overview_degrades_one_failed_source_without_exception_details
     assert [item["source"] for item in payload["source_errors"]] == ["jobs"]
     assert payload["recent_cases"] == []
     assert "SECRET_SENTINEL" not in serialized
-    assert "/Users/private" not in serialized
+    assert "/var/private" not in serialized
     assert "sk-secretvalue" not in serialized
 
 
@@ -1138,7 +1138,7 @@ def test_workbench_overview_redacts_sensitive_values(tmp_path: Path, monkeypatch
             "failed",
             10,
             "Cookie=sessionid=SECRET_COOKIE; sk-SECRETKEY123456 "
-            "https://cdn.example/video.mp4?token=SECRET /Users/private/video.mp4 "
+            "https://cdn.example/video.mp4?token=SECRET /var/private/video.mp4 "
             f"Authorization=Bearer {bearer_token}",
             json.dumps({"signed_url": "https://secret.invalid", "api_key": "SECRET_RESULT"}),
             "PROVIDER_FAILED",
@@ -1200,7 +1200,7 @@ def test_workbench_overview_redacts_sensitive_values(tmp_path: Path, monkeypatch
         "SECRET_FINGERPRINT",
         "SECRET_API_KEY",
         "SECRET_MASKED_KEY",
-        "/Users/private",
+        "/var/private",
         "/secret/bin",
         "token=SECRET",
     ):

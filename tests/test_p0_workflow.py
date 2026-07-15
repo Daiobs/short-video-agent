@@ -304,8 +304,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'class="workbench-nav-chevron"' in response.text
     assert 'data-workbench-nav-toggle' in response.text
     assert "拆解工作台" in response.text
-    assert "案例报告库" in response.text
-    assert 'data-workbench-coming-soon="案例报告库"' in response.text
+    assert "资产与报告" in response.text
+    assert '<a class="workbench-nav-item" href="/library">资产库</a>' in response.text
+    assert '<a class="workbench-library-link" href="/library">打开资产库</a>' in response.text
+    assert 'data-workbench-coming-soon="案例报告库"' not in response.text
     assert 'data-workbench-open-settings' not in response.text
     assert response.text.count('id="settings-toggle"') == 1
     assert "Provider 管理" not in response.text

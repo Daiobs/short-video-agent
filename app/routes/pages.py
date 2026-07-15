@@ -17,6 +17,7 @@ def _static_version() -> str:
     paths = [
         Path("app/static/workbench.js"),
         Path("app/static/workbench-tasks.js"),
+        Path("app/static/library.js"),
         Path("app/static/app.js"),
         Path("app/static/case_detail.js"),
         Path("app/static/calibration.js"),
@@ -38,6 +39,17 @@ def home(request: Request):
             "profile_build_max_items": settings.profile_build_max_items,
             "creator_clone_max_distill_samples": MAX_DISTILL_SAMPLES,
         },
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.get("/library")
+def library(request: Request):
+    response = templates.TemplateResponse(
+        request,
+        "library.html",
+        {"static_version": _static_version()},
     )
     response.headers["Cache-Control"] = "no-store"
     return response

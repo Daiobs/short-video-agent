@@ -24,6 +24,13 @@
                 <button type="button" class="workbench-nav-item" data-home-route="profile">创作者拆解</button>
                 <a class="workbench-nav-item" href="/calibration">质量校准</a>
             </section>
+            <section class="workbench-nav-group">
+                <h2 class="workbench-nav-group-label">
+                    <span class="workbench-nav-group-icon" aria-hidden="true"></span>
+                    <span>资产与报告</span>
+                </h2>
+                <a class="workbench-nav-item" href="/library">资产库</a>
+            </section>
             <section class="workbench-nav-group" data-workbench-nav-group data-items-collapsed="true">
                 <h2>
                     <button type="button" class="workbench-nav-group-toggle" data-workbench-nav-toggle aria-expanded="false">
@@ -42,9 +49,7 @@
                         <span class="workbench-nav-chevron" aria-hidden="true"></span>
                     </button>
                 </h2>
-                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="案例报告库">案例报告库 <span>coming soon</span></button>
                 <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="独立素材池">素材池 <span>coming soon</span></button>
-                <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="Case 库">Case 库 <span>coming soon</span></button>
                 <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="创作者样本库">创作者样本库 <span>coming soon</span></button>
                 <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="platform_lab 测试中心">platform_lab 测试中心 <span>未启用</span></button>
                 <button type="button" class="workbench-nav-item disabled" data-workbench-coming-soon="拆解 Prompt 库">拆解 Prompt 库 <span>coming soon</span></button>
@@ -199,7 +204,10 @@ LLM_MODEL=支持图片输入的模型</pre>
                     <div class="entry-label">Task Console</div>
                     <h2 id="workbench-console-title">任务控制台</h2>
                 </div>
-                <button type="button" id="workbench-overview-refresh" class="workbench-refresh-button">刷新概览</button>
+                <div class="workbench-console-actions">
+                    <a class="workbench-library-link" href="/library">打开资产库</a>
+                    <button type="button" id="workbench-overview-refresh" class="workbench-refresh-button">刷新概览</button>
+                </div>
             </header>
 
             <p id="workbench-overview-announcement" class="workbench-overview-announcement" role="status" aria-live="polite">正在读取本地任务...</p>

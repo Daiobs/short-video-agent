@@ -162,7 +162,8 @@ brew install ffmpeg
 ## 安装
 
 ```bash
-cd /Users/xingkong/Documents/code/short-video-agent
+git clone git@github.com:Daiobs/short-video-agent.git
+cd short-video-agent
 python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
