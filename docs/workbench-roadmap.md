@@ -142,9 +142,9 @@ Stage B 当前范围固定为：
 
 稳定 DTO 见 `docs/workbench-task-model.md`，逐流程恢复行为见 `docs/workbench-recovery.md`。Stage B 已关闭无资源旧失败 Job 被伪标记为可恢复的问题；只有安全资源目标或可观察的活跃 Job 才能恢复业务上下文。
 
-## Stage C 实施状态
+## Stage C 完成状态
 
-Stage C 基线为 `main` 的 `98293b802919c32dc2037c6c438a13f3aee9093f`，分支为 `codex/workbench-library-v1`。本阶段合同见 `docs/workbench-library.md`：
+Stage C 基线为 `main` 的 `98293b802919c32dc2037c6c438a13f3aee9093f`，分支为 `codex/workbench-library-v1`。PR #14 已完成人工验收，并以 squash commit `e1628f8174938a9493a1c2e8c14dc16373f943bd` 合并到 `main`。本阶段合同见 `docs/workbench-library.md`：
 
 1. 新增独立 `/library` 页面，不把完整历史浏览继续塞入首页 DOM。
 2. 新增有界、只读 `GET /api/library/assets`，统一 Case、Creator Report 和 Strategy Plan DTO。
@@ -154,6 +154,8 @@ Stage C 基线为 `main` 的 `98293b802919c32dc2037c6c438a13f3aee9093f`，分支
 6. 单源上限、JSON 大小和请求预算均明确；截断必须作为部分结果展示。
 
 Stage C 已知边界：Runtime `DONE`、Creator 报告文件或 Strategy Plan 单独存在，都不能证明 Creator 上下文可恢复。资产仍按真实文件状态列出；HTML/Markdown 报告可以独立打开，但缺失、损坏、超大或不可读取的 `samples.json` 不生成“返回 Creator”入口。
+
+合并后 `main` 已完成完整回归和只读 HTTP 冒烟；本地 `main` 与 `origin/main` 均为 `e1628f8174938a9493a1c2e8c14dc16373f943bd`，工作区干净。Stage C 状态为已完成，Stage D 的分支启动门禁已满足，但 Stage D 实现尚未开始。
 
 ## 测试记录
 
@@ -190,7 +192,7 @@ Stage C 已知边界：Runtime `DONE`、Creator 报告文件或 Strategy Plan �
 
 | 检查 | 结果 | 证据 |
 | --- | --- | --- |
-| 完整 Python 测试 | 通过 | `379 passed, 1 warning in 47.99s`；warning 仍为 Starlette TestClient 的 httpx2 迁移提示 |
+| 完整 Python 测试 | 通过 | 合并后 `main` 为 `379 passed, 1 warning in 50.30s`；warning 仍为 Starlette TestClient 的 httpx2 迁移提示 |
 | JavaScript 语法 | 通过 | `app.js`、`workbench.js`、`workbench-tasks.js` 与新增 `library.js` 均通过 bundled Node `--check` |
 | Python 编译与差异格式 | 通过 | `python -m compileall -q app tests` 与 `git diff --check` 无错误 |
 | 三类资产合同 | 通过 | Case、Creator Report、Strategy Plan 使用统一 DTO；类型/状态/关键词/日期/分页均有 API 测试 |
@@ -223,4 +225,8 @@ Stage C 已知边界：Runtime `DONE`、Creator 报告文件或 Strategy Plan �
 | Stage B 合并 commit | `98293b802919c32dc2037c6c438a13f3aee9093f` |
 | Stage C 分支 | `codex/workbench-library-v1` |
 | Stage C 基线 | `main` / `98293b802919c32dc2037c6c438a13f3aee9093f` |
-| Stage C PR | #14，Draft；完成合并前收尾后继续等待人工审查，不得自动合并 |
+| Stage C 状态 | 已完成并合并 |
+| Stage C PR | #14，已由用户人工验收并授权 Ready for review 与 squash merge |
+| Stage C 合并 commit | `e1628f8174938a9493a1c2e8c14dc16373f943bd`（`Add read-only workbench asset library`） |
+| Stage C 合并后回归 | `379 passed, 1 warning`；四个 JavaScript 文件、`compileall`、`git diff --check` 与四个 HTTP 入口均通过 |
+| Stage D 入口 | 门禁已满足；Stage D 分支可以建立，但实现尚未开始 |
