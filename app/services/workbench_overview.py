@@ -332,10 +332,29 @@ def _last_completed_stage(progress: int, available_results: tuple[str, ...]) -> 
     return f"任务已执行至 {progress}%" if progress else "尚未产生可复用结果"
 
 
-def _job_recovery_hint(job_type: str, error_code: str, status: str, has_target: bool) -> str:
+def _job_recovery_hint(
+    job_type: str,
+    error_code: str,
+    status: str,
+    *,
+    has_resource_target: bool,
+    can_observe_by_job: bool,
+) -> str:
+    if not has_resource_target and not can_observe_by_job:
+        return (
+            "旧任务缺少可恢复的业务资源标识，只能查看错误码、进度和诊断信息；"
+            "系统不会自动重试或重建上下文。"
+        )
+    if can_observe_by_job and not has_resource_target and job_type == "profile-scan":
+        return "可只读观察主页扫描状态；任务成功后将从安全 Job 结果恢复素材池。"
+    if can_observe_by_job and not has_resource_target:
+        return (
+            "可只读观察任务状态；仅当任务结果包含安全业务资源标识时才恢复上下文。"
+            "系统不会自动重试或重建资源。"
+        )
     if status == "stale":
         return (
-            "任务较长时间没有更新。请先查看状态；如确认不再推进，可重新打开当前步骤后由你手动执行。"
+            "任务较长时间没有更新。可只读查看当前状态；如已有业务资源，可重新打开对应步骤核对。"
             "系统不会自动重试，也不会把该任务自动改成失败。"
         )
     code = error_code.upper()
@@ -351,7 +370,7 @@ def _job_recovery_hint(job_type: str, error_code: str, status: str, has_target: 
         return "返回创作者导入步骤，检查数据源状态，或改用作品链接、JSON / CSV、已有 Case 等已授权入口。"
     if code.startswith(("CASE_BUILD", "FFMPEG", "FFPROBE", "KEYFRAME")):
         return "检查本地媒体工具后回到单作品页面手动生成素材包；已有下载文件不会被自动删除。"
-    if status == "failed" and has_target:
+    if status == "failed" and has_resource_target:
         return "重新打开对应页面，核对已保留结果后由你决定是否手动执行当前步骤。"
     return "查看错误说明和已有结果；该任务没有可自动执行的恢复动作。"
 
@@ -365,22 +384,33 @@ def _job_payload(row: sqlite3.Row, *, status_override: str = "") -> dict[str, An
     result = _bounded_job_result(row["result_json"])
     hints = _job_result_hints(row)
     context = _job_result_context(result, hints)
-    task_id = _safe_resource_id(row["id"])
+    task_id = _first_safe_id(row["id"], prefix="job_")
     error_code = _safe_public_text(row["error_code"], 80)
     target_stage = JOB_TARGET_STAGE.get(job_type, "")
     resource_id = context["set_id"] if route == "profile" else (context["case_id"] or context["aweme_id"] or context["local_video_id"])
     open_url = f"/cases/{context['case_id']}" if context["case_id"] else ""
-    mode = "observe" if status in {"pending", "running"} else "manual"
-    target = WorkbenchResumeTarget(
-        route=route,
-        stage=target_stage,
-        resource_id=resource_id,
-        job_id=task_id,
-        task_type=_safe_public_text(job_type, 64),
-        mode=mode,
-        open_url=open_url,
+    has_resource_target = route in {"single", "profile"} and bool(resource_id or open_url)
+    can_observe_by_job = (
+        route in {"single", "profile"}
+        and status in {"pending", "running", "stale"}
+        and bool(task_id)
     )
-    has_target = route in {"single", "profile"}
+    diagnostic_only = not (has_resource_target or can_observe_by_job)
+    recoverable = not diagnostic_only
+    mode = "observe" if can_observe_by_job else "manual"
+    target = (
+        WorkbenchResumeTarget(
+            route=route,
+            stage=target_stage,
+            resource_id=resource_id,
+            job_id=task_id,
+            task_type=_safe_public_text(job_type, 64),
+            mode=mode,
+            open_url=open_url,
+        )
+        if recoverable
+        else WorkbenchResumeTarget()
+    )
     available_results = _job_available_results(job_type, result, context, hints)
     task = WorkbenchTask(
         task_id=task_id,
@@ -395,8 +425,17 @@ def _job_payload(row: sqlite3.Row, *, status_override: str = "") -> dict[str, An
         created_at=_iso_datetime(row["created_at"]),
         updated_at=_iso_datetime(row["updated_at"]),
         resume_target=target,
-        recoverable=has_target,
-        recovery_hint=_job_recovery_hint(job_type, error_code, status, has_target),
+        recoverable=recoverable,
+        has_resource_target=has_resource_target,
+        can_observe_by_job=can_observe_by_job,
+        diagnostic_only=diagnostic_only,
+        recovery_hint=_job_recovery_hint(
+            job_type,
+            error_code,
+            status,
+            has_resource_target=has_resource_target,
+            can_observe_by_job=can_observe_by_job,
+        ),
         last_completed_stage=_last_completed_stage(progress, available_results),
         available_results=available_results,
     )
@@ -754,6 +793,8 @@ def _collect_case_sections(database_url: str, cases_dir: Path) -> tuple[list[dic
                     open_url=f"/cases/{case_id}",
                 ),
                 recoverable=True,
+                has_resource_target=True,
+                diagnostic_only=False,
                 recovery_hint="打开 Case 后可查看已有素材包，并由你决定是否启动 AI 拆解。",
                 last_completed_stage="Case 素材包",
                 available_results=("Case 素材包", "关键帧与分析输入"),
@@ -992,6 +1033,8 @@ def _collect_creator_sections(
                 mode="manual",
             ),
             recoverable=True,
+            has_resource_target=True,
+            diagnostic_only=False,
             recovery_hint=f"恢复素材池后将直接打开“{step_label}”，不会自动执行该步骤。",
             last_completed_stage=available_results[-1],
             available_results=tuple(available_results),

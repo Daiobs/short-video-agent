@@ -200,6 +200,9 @@ def test_workbench_overview_normalizes_running_stale_and_failed_tasks_without_mu
         "updated_at",
         "resume_target",
         "recoverable",
+        "has_resource_target",
+        "can_observe_by_job",
+        "diagnostic_only",
         "recovery_hint",
     }
     assert required_fields <= running.keys()
@@ -213,13 +216,20 @@ def test_workbench_overview_normalizes_running_stale_and_failed_tasks_without_mu
         "mode": "observe",
         "open_url": "",
     }
+    assert running["has_resource_target"] is True
+    assert running["can_observe_by_job"] is True
+    assert running["diagnostic_only"] is False
     assert stale["status"] == "stale"
     assert stale["resume_target"]["stage"] == "distill"
-    assert stale["resume_target"]["mode"] == "manual"
+    assert stale["resume_target"]["mode"] == "observe"
+    assert stale["recoverable"] is True
     assert "不会自动重试" in stale["recovery_hint"]
     assert failed["status"] == "failed"
     assert failed["error_code"] == "LLM_REQUEST_FAILED"
     assert failed["resume_target"]["open_url"] == f"/cases/{case_id}"
+    assert failed["has_resource_target"] is True
+    assert failed["can_observe_by_job"] is False
+    assert failed["diagnostic_only"] is False
     assert "Case 素材包" in failed["available_results"]
     assert "模型配置" in failed["recovery_hint"]
     assert first["capabilities"]["running_task_count"] == 1
@@ -231,6 +241,98 @@ def test_workbench_overview_normalizes_running_stale_and_failed_tasks_without_mu
     persisted_status = connection.execute("SELECT status FROM jobs WHERE id = 'job_stale'").fetchone()[0]
     connection.close()
     assert persisted_status == "running"
+
+
+def test_workbench_overview_marks_resource_less_old_jobs_as_diagnostic_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "overview.db"
+    _create_database(database_path)
+    cases_dir, creator_state_dir, creator_clones_dir = _runtime_paths(tmp_path)
+    _patch_capabilities(monkeypatch)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    rows = [
+        (
+            "job_failed_case",
+            "analyze-case",
+            "failed",
+            75,
+            "模型请求失败",
+            "{}",
+            "LLM_REQUEST_FAILED",
+            now.isoformat(sep=" "),
+            now.isoformat(sep=" "),
+        ),
+        (
+            "job_failed_creator",
+            "creator-clone-distill",
+            "failed",
+            45,
+            "蒸馏失败",
+            "{}",
+            "LLM_REQUEST_FAILED",
+            now.isoformat(sep=" "),
+            now.isoformat(sep=" "),
+        ),
+        (
+            "job_profile_scan",
+            "profile-scan",
+            "running",
+            30,
+            "正在扫描主页",
+            "{}",
+            "",
+            now.isoformat(sep=" "),
+            now.isoformat(sep=" "),
+        ),
+    ]
+    connection = sqlite3.connect(database_path)
+    connection.executemany("INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    connection.commit()
+    connection.close()
+
+    payload = workbench_overview.build_workbench_overview(
+        database_url=_database_url(database_path),
+        cases_dir=cases_dir,
+        creator_state_dir=creator_state_dir,
+        creator_clones_dir=creator_clones_dir,
+    )
+
+    failures = {item["task_id"]: item for item in payload["recent_failures"]}
+    for task_id in ("job_failed_case", "job_failed_creator"):
+        task = failures[task_id]
+        assert task["recoverable"] is False
+        assert task["has_resource_target"] is False
+        assert task["can_observe_by_job"] is False
+        assert task["diagnostic_only"] is True
+        assert task["resume_target"] == {
+            "route": "",
+            "stage": "",
+            "resource_id": "",
+            "job_id": "",
+            "task_type": "",
+            "mode": "manual",
+            "open_url": "",
+        }
+        assert "只能查看错误码、进度和诊断信息" in task["recovery_hint"]
+
+    running = payload["running_tasks"][0]
+    assert running["task_id"] == "job_profile_scan"
+    assert running["recoverable"] is True
+    assert running["has_resource_target"] is False
+    assert running["can_observe_by_job"] is True
+    assert running["diagnostic_only"] is False
+    assert running["resume_target"] == {
+        "route": "profile",
+        "stage": "import",
+        "resource_id": "",
+        "job_id": "job_profile_scan",
+        "task_type": "profile-scan",
+        "mode": "observe",
+        "open_url": "",
+    }
+    assert "任务成功后将从安全 Job 结果恢复素材池" in running["recovery_hint"]
 
 
 def test_workbench_overview_recovers_large_profile_job_without_loading_full_result(

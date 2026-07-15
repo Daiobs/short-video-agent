@@ -46,6 +46,9 @@ class WorkbenchTask:
     updated_at: str
     resume_target: WorkbenchResumeTarget = field(default_factory=WorkbenchResumeTarget)
     recoverable: bool = False
+    has_resource_target: bool = False
+    can_observe_by_job: bool = False
+    diagnostic_only: bool = True
     recovery_hint: str = ""
     task_group: str = "系统"
     error_code: str = ""
@@ -70,6 +73,9 @@ class WorkbenchTask:
             "resume_target": target,
             "target": target,
             "recoverable": bool(self.recoverable),
+            "has_resource_target": bool(self.has_resource_target),
+            "can_observe_by_job": bool(self.can_observe_by_job),
+            "diagnostic_only": bool(self.diagnostic_only),
             "recovery_hint": self.recovery_hint,
             "last_completed_stage": self.last_completed_stage,
             "available_results": list(self.available_results),

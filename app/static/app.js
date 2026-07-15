@@ -6293,12 +6293,17 @@ async function openWorkbenchSingleTarget(target, openUrl) {
   }
   setHomeRoute("single");
   const resourceId = String(target?.resource_id || "");
+  let restoredResource = false;
   if (/^\d{15,22}$/.test(resourceId) && singleForm?.elements?.value) {
     singleForm.elements.value.value = resourceId;
+    restoredResource = true;
+  } else if (/^local_[A-Za-z0-9_-]{1,94}$/.test(resourceId)) {
+    currentLocalVideoId = resourceId;
+    restoredResource = true;
   }
   window.scrollTo({top: 0, behavior: "smooth"});
   if (!jobId) {
-    return true;
+    return restoredResource;
   }
   placeJobCard("single");
   const job = await fetchWorkbenchJob(jobId);
@@ -6306,12 +6311,15 @@ async function openWorkbenchSingleTarget(target, openUrl) {
     return false;
   }
   renderWorkbenchRestoredJobStatus(job, mode);
-  await renderRecoveredSingleJob(job, {scroll: false});
-  if (mode !== "observe" || !["pending", "running"].includes(job.status)) {
+  const restoredCase = await renderRecoveredSingleJob(job, {scroll: false});
+  if (mode === "observe" && ["pending", "running"].includes(job.status)) {
+    await monitorWorkbenchSingleJob(jobId);
     return true;
   }
-  await monitorWorkbenchSingleJob(jobId);
-  return true;
+  if (mode === "observe" && job.status === "stale") {
+    return true;
+  }
+  return restoredCase || restoredResource;
 }
 
 async function monitorWorkbenchSingleJob(jobId) {
@@ -6399,8 +6407,9 @@ async function openWorkbenchProfileTarget(target) {
           ? `${job.error_code || "ERROR"}：${job.message || "任务失败"}`
           : "已打开任务对应的导入步骤；系统不会自动重新执行。";
       }
+      return mode === "observe" && Boolean(job);
     }
-    return true;
+    return false;
   }
   if (!isSafeCreatorCloneSetId(setId)) {
     return false;

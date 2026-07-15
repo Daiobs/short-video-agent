@@ -1443,6 +1443,20 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
       recovery_hint: "检查模型配置后，进入蒸馏步骤手动重新执行。",
       recoverable: true,
       resume_target: {{route: "profile", stage: "distill", resource_id: "clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", job_id: "job_failed", task_type: "creator-clone-distill", mode: "manual"}},
+    }}, {{
+      task_id: "job_failed_legacy",
+      task_type: "creator-clone-distill",
+      title: "旧蒸馏任务仅诊断",
+      status: "failed",
+      error_code: "LLM_REQUEST_FAILED",
+      message: "旧任务缺少素材池标识",
+      updated_at: "2026-07-01T00:00:00Z",
+      last_completed_stage: "任务已执行至 45%",
+      available_results: [],
+      recovery_hint: "旧任务缺少可恢复的业务资源标识，只能查看错误码、进度和诊断信息。",
+      recoverable: false,
+      diagnostic_only: true,
+      resume_target: {{route: "", stage: "", resource_id: "", job_id: "", task_type: "", mode: "manual"}},
     }}],
     capabilities: {{running_task_count: 0, stale_task_count: 500}},
   }};
@@ -1524,6 +1538,9 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
     assert "已完成到" in result["failureRecovery"]
     assert "仍可使用" in result["failureRecovery"]
     assert "按提示恢复" in result["failureRecovery"]
+    diagnostic_card = result["failureRecovery"].split("旧蒸馏任务仅诊断", 1)[1].split("</article>", 1)[0]
+    assert "旧任务缺少可恢复的业务资源标识" in diagnostic_card
+    assert "按提示恢复" not in diagnostic_card
     assert "继续上次任务" in result["resumable"]
     assert "选择分析对象" in result["empty"]
     assert "分析单条作品" in result["empty"]
@@ -1664,6 +1681,91 @@ function reset(nextScenario) {
     assert normal_flow["rawCalls"] == 1
     assert normal_flow["distillCalls"] == 1
     assert normal_flow["requestedUrls"] == ["/api/jobs/job_demo"]
+
+
+def test_workbench_resource_less_recovery_and_profile_scan_observation_run_in_javascript() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; Workbench recovery return values are covered by static assertions.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    single_recovery = source[
+        source.index("function safeWorkbenchJobId") : source.index("async function monitorWorkbenchSingleJob")
+    ]
+    profile_scan_observer = source[
+        source.index("async function monitorWorkbenchProfileScanJob") : source.index("async function openWorkbenchProfileTarget")
+    ]
+    runner = (
+        "let activeJobs = [];\n"
+        "let fetchCalls = 0;\n"
+        "let singleMonitorCalls = 0;\n"
+        "let restoredSets = [];\n"
+        "let targetResults = [];\n"
+        "let currentLocalVideoId = '';\n"
+        "const WORKBENCH_TASK_STALE_SECONDS = 1800;\n"
+        "const singleForm = {elements: {value: {value: ''}}};\n"
+        "const jobResult = null;\n"
+        "const jobMessage = {className: '', textContent: ''};\n"
+        "const profileScanStatus = {textContent: ''};\n"
+        "const window = {location: {origin: 'http://127.0.0.1:8765'}, scrollTo() {}, setTimeout(resolve) { resolve(); }};\n"
+        "function setHomeRoute() {}\n"
+        "function placeJobCard() {}\n"
+        "function renderJobStatus() {}\n"
+        "function getCaseId() { return ''; }\n"
+        "function showJson() {}\n"
+        "function profileBuildJobAgeSeconds() { return 0; }\n"
+        "async function refreshProfilePoolFromPersistedSet(setId) { restoredSets.push(setId); }\n"
+        "async function readJsonResponse(response) { return response.payload; }\n"
+        "async function fetch() {\n"
+        "  fetchCalls += 1;\n"
+        "  const job = activeJobs.length > 1 ? activeJobs.shift() : activeJobs[0];\n"
+        "  return {payload: {job}};\n"
+        "}\n"
+        "function notifyWorkbenchTargetResult(ok) { targetResults.push(Boolean(ok)); }\n"
+        + single_recovery
+        + "\nasync function monitorWorkbenchSingleJob() { singleMonitorCalls += 1; return true; }\n"
+        + profile_scan_observer
+        + "\n(async () => {\n"
+        + "  activeJobs = [{id: 'job_manual', type: 'analyze-case', status: 'failed', progress: 75, result_json: {}}];\n"
+        + "  const manualWithoutContext = await openWorkbenchSingleTarget({mode: 'manual', job_id: 'job_manual'}, '');\n"
+        + "  notifyWorkbenchTargetResult(manualWithoutContext);\n"
+        + "  const manualWithoutJob = await openWorkbenchSingleTarget({mode: 'manual'}, '');\n"
+        + "  activeJobs = [{id: 'job_running', type: 'analyze-case', status: 'running', progress: 20, result_json: {}}];\n"
+        + "  const observedRunning = await openWorkbenchSingleTarget({mode: 'observe', job_id: 'job_running'}, '');\n"
+        + "  const restoredAweme = await openWorkbenchSingleTarget({mode: 'manual', resource_id: '7622653084993647603'}, '');\n"
+        + "  activeJobs = [\n"
+        + "    {id: 'job_profile', type: 'profile-scan', status: 'running', progress: 30, result_json: {}},\n"
+        + "    {id: 'job_profile', type: 'profile-scan', status: 'success', progress: 100, result_json: {set: {set_id: 'clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}}},\n"
+        + "  ];\n"
+        + "  const observedProfile = await monitorWorkbenchProfileScanJob('job_profile');\n"
+        + "  process.stdout.write(JSON.stringify({\n"
+        + "    manualWithoutContext, manualWithoutJob, targetResults, observedRunning, singleMonitorCalls,\n"
+        + "    restoredAweme, awemeInput: singleForm.elements.value.value, observedProfile, restoredSets, fetchCalls,\n"
+        + "  }));\n"
+        + "})().catch((error) => { console.error(error); process.exit(1); });\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["manualWithoutContext"] is False
+    assert result["manualWithoutJob"] is False
+    assert result["targetResults"] == [False]
+    assert result["observedRunning"] is True
+    assert result["singleMonitorCalls"] == 1
+    assert result["restoredAweme"] is True
+    assert result["awemeInput"] == "7622653084993647603"
+    assert result["observedProfile"] is True
+    assert result["restoredSets"] == ["clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
 
 
 def test_creator_clone_import_baseline_behavior_runs_in_javascript() -> None:
