@@ -67,9 +67,11 @@ from app.services.creator_clone import (
 client = TestClient(app)
 
 
-@pytest.fixture(autouse=True)
-def isolate_runtime_settings_file(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", tmp_path / ".local_settings.json")
+def test_pytest_runtime_is_isolated_from_default_database_and_outputs(tmp_path: Path) -> None:
+    assert str(tmp_path) in settings.database_url
+    assert settings.output_dir.is_relative_to(tmp_path)
+    assert settings.cases_dir.is_relative_to(settings.output_dir)
+    assert settings.creator_clones_dir.is_relative_to(settings.output_dir)
 
 
 def detailed_visual_analysis() -> dict:
@@ -589,6 +591,23 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "shortVideoAgent.recentProfileStage" in script
     assert "function restoreRecentCreatorCloneSet" in script
     assert "function restoreRecentProfileBuildJob" in script
+    assert "function renderWorkbenchRestoredJobStatus" in script
+    assert 'job?.status === "stale"' in script
+    assert 'mode === "manual" && ["pending", "running"].includes(job?.status)' in script
+    assert "已恢复蒸馏步骤，但不会自动轮询、重试或修改任务状态" in script
+    restore_profile_build = script.split("async function restoreRecentProfileBuildJob", 1)[1].split(
+        "function escapeHtml",
+        1,
+    )[0]
+    assert restore_profile_build.index("renderProfileQueue(job.result_json)") < restore_profile_build.index(
+        "options.pollActive === false"
+    )
+    assert "restoreQueue: false" in script
+    assert "allowAutoDistill: false" in script
+    assert "safeStatus: true" in script
+    assert "`/api/workbench/jobs/${encodeURIComponent(safeJobId)}`" in script
+    assert "return pollProfileQueue(jobId, options);" in script
+    assert "return pollCreatorCloneDistillJob(jobId, options);" in script
     assert "function profilePayloadFromCreatorIntelligenceProject" in script
     assert "function sampleViewItemFromCreatorSample" in script
     assert "function cloneSetFromCreatorIntelligenceProject" in script
@@ -1361,6 +1380,7 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
     running_tasks: Array.from({{length: 5}}, (_, index) => ({{
       task_id: `job_${{index + 1}}`, title: `正在富化 ${{index + 1}}`, status: "running", progress: 30,
     }})),
+    stale_tasks: [],
     resumable_tasks: [{{task_id: "clone_1", title: "可继续创作者", status: "resumable"}}],
     recent_cases: [{{title: "部分结果下仍显示的 Case", type: "单作品 Case", status: "ready"}}],
     recent_creator_reports: [], recent_strategy_plans: [], recent_failures: [],
@@ -1374,6 +1394,14 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
   }};
   eval({json.dumps(source)});
   await new Promise((resolve) => setTimeout(resolve, 0));
+  const normalizedTarget = WorkbenchTasks.normalizeResumeTarget({{
+    route: "profile", stage: "enrich", resource_id: "clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    job_id: "job_1234", task_type: "profile-build-cases", mode: "manual",
+  }});
+  const rejectedTarget = WorkbenchTasks.normalizeResumeTarget({{
+    route: "profile", stage: "enrich", resource_id: "../../secret", job_id: "not-a-job",
+    mode: "retry", open_url: "https://example.com/cases/case_secret",
+  }});
   const running = elements["workbench-priority"].innerHTML;
   const partialWarning = elements["workbench-source-warning"].innerHTML;
   const partialOnly = elements["workbench-source-warning"].classList.contains("partial-only");
@@ -1384,7 +1412,69 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
   await WorkbenchTasks.refresh();
   const runningExact = elements["workbench-priority"].innerHTML;
 
-  payload = {{...payload, running_tasks: [], capabilities: {{running_task_count: 0}}}};
+  payload = {{
+    ...payload,
+    running_tasks: [],
+    stale_tasks: [{{
+      task_id: "job_stale",
+      task_type: "profile-build-cases",
+      title: "富化创作者样本",
+      status: "stale",
+      stage: "证据富化",
+      progress: 62,
+      message: "等待上游响应",
+      updated_at: "2026-07-01T00:00:00Z",
+      last_completed_stage: "已完成素材包 8 条",
+      available_results: ["素材池", "已选样本", "已完成素材包 8 条"],
+      recovery_hint: "任务较长时间没有更新。系统不会自动重试，也不会把该任务自动改成失败。",
+      recoverable: true,
+      resume_target: {{route: "profile", stage: "enrich", resource_id: "clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", job_id: "job_stale", task_type: "profile-build-cases", mode: "manual"}},
+    }}],
+    recent_failures: [{{
+      task_id: "job_failed",
+      task_type: "creator-clone-distill",
+      title: "创作者蒸馏",
+      status: "failed",
+      error_code: "LLM_REQUEST_FAILED",
+      message: "模型请求失败",
+      updated_at: "2026-07-01T00:00:00Z",
+      last_completed_stage: "已选样本",
+      available_results: ["素材池", "已选样本"],
+      recovery_hint: "检查模型配置后，进入蒸馏步骤手动重新执行。",
+      recoverable: true,
+      resume_target: {{route: "profile", stage: "distill", resource_id: "clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", job_id: "job_failed", task_type: "creator-clone-distill", mode: "manual"}},
+    }}, {{
+      task_id: "job_failed_legacy",
+      task_type: "creator-clone-distill",
+      title: "旧蒸馏任务仅诊断",
+      status: "failed",
+      error_code: "LLM_REQUEST_FAILED",
+      message: "旧任务缺少素材池标识",
+      updated_at: "2026-07-01T00:00:00Z",
+      last_completed_stage: "任务已执行至 45%",
+      available_results: [],
+      recovery_hint: "旧任务缺少可恢复的业务资源标识，只能查看错误码、进度和诊断信息。",
+      recoverable: false,
+      diagnostic_only: true,
+      resume_target: {{route: "", stage: "", resource_id: "", job_id: "", task_type: "", mode: "manual"}},
+    }}],
+    capabilities: {{running_task_count: 0, stale_task_count: 500}},
+  }};
+  await WorkbenchTasks.refresh();
+  const stale = elements["workbench-priority"].innerHTML;
+  const failureRecovery = elements["workbench-recent-failures"].innerHTML;
+
+  payload = {{
+    ...payload,
+    running_tasks: Array.from({{length: 5}}, (_, index) => ({{
+      task_id: `job_active_${{index + 1}}`, title: `运行任务 ${{index + 1}}`, status: "running", progress: 30,
+    }})),
+    capabilities: {{running_task_count: 500, stale_task_count: 500}},
+  }};
+  await WorkbenchTasks.refresh();
+  const runningWithStale = elements["workbench-priority"].innerHTML;
+
+  payload = {{...payload, running_tasks: [], stale_tasks: [], capabilities: {{running_task_count: 0, stale_task_count: 0}}}};
   await WorkbenchTasks.refresh();
   const resumable = elements["workbench-priority"].innerHTML;
 
@@ -1398,7 +1488,8 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
   const announcement = elements["workbench-overview-announcement"].textContent;
 
   process.stdout.write(JSON.stringify({{
-    running, runningExact, partialWarning, partialOnly, recentCase, capabilities, resumable, empty, failed, announcement,
+    normalizedTarget, rejectedTarget, running, runningExact, partialWarning, partialOnly, recentCase, capabilities, stale, runningWithStale, failureRecovery,
+    resumable, empty, failed, announcement,
   }}));
 }})().catch((error) => {{ console.error(error); process.exit(1); }});
 """
@@ -1412,6 +1503,19 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
     result = json.loads(completed.stdout)
 
     assert "正在运行" in result["running"]
+    assert result["normalizedTarget"] == {
+        "route": "profile",
+        "resource_id": "clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "job_id": "job_1234",
+        "task_type": "profile-build-cases",
+        "stage": "enrich",
+        "mode": "manual",
+        "open_url": "",
+    }
+    assert result["rejectedTarget"]["resource_id"] == ""
+    assert result["rejectedTarget"]["job_id"] == ""
+    assert result["rejectedTarget"]["mode"] == "manual"
+    assert result["rejectedTarget"]["open_url"] == ""
     assert "显示 5 / 共 500 个运行任务" in result["running"]
     assert "5 个任务" in result["runningExact"]
     assert "显示 5 / 共" not in result["runningExact"]
@@ -1425,12 +1529,243 @@ def test_workbench_task_console_prioritizes_tasks_and_degrades_safely() -> None:
     assert "部分结果下仍显示的 Case" in result["recentCase"]
     assert "运行任务" in result["capabilities"]
     assert "500" in result["capabilities"]
+    assert "任务可能已停止更新" in result["stale"]
+    assert "500 个任务" in result["stale"]
+    assert "显示 1 / 共 500 条待人工确认" in result["runningWithStale"]
+    assert "重新打开当前步骤" in result["stale"]
+    assert "不会自动重试" in result["stale"]
+    assert "LLM_REQUEST_FAILED" in result["failureRecovery"]
+    assert "已完成到" in result["failureRecovery"]
+    assert "仍可使用" in result["failureRecovery"]
+    assert "按提示恢复" in result["failureRecovery"]
+    diagnostic_card = result["failureRecovery"].split("旧蒸馏任务仅诊断", 1)[1].split("</article>", 1)[0]
+    assert "旧任务缺少可恢复的业务资源标识" in diagnostic_card
+    assert "按提示恢复" not in diagnostic_card
     assert "继续上次任务" in result["resumable"]
     assert "选择分析对象" in result["empty"]
     assert "分析单条作品" in result["empty"]
     assert "分析创作者账号" in result["empty"]
     assert "分析单条作品" in result["failed"]
     assert "概览读取失败" in result["announcement"]
+
+
+def test_workbench_profile_recovery_uses_safe_status_without_auto_distill() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; Workbench recovery is covered by static assertions.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    recovery_fetch = source[
+        source.index("function safeWorkbenchJobId") : source.index("function renderWorkbenchRestoredJobStatus")
+    ]
+    queue_polling = source[
+        source.index("async function refreshProfilePoolFromPersistedSet") : source.index("// Creator Clone: enrichment queue")
+    ]
+    runner = (
+        """
+const SET_ID = "clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const CREATOR_CLONE_MAX_DISTILL_SAMPLES = 20;
+let scenario = "";
+let safeCalls = 0;
+let rawCalls = 0;
+let postCalls = 0;
+let persistedCalls = 0;
+let distillCalls = 0;
+let refreshedSampleCounts = [];
+const requestedUrls = [];
+const profileAutoDistill = {checked: true};
+const profileScanStatus = {textContent: ""};
+const jobMessage = {className: "", textContent: ""};
+const window = {setTimeout(resolve) { resolve(); }};
+function isSafeCreatorCloneSetId(value) { return /^clone_[a-f0-9]{32}$/i.test(String(value || "")); }
+function profilePayloadFromCreatorIntelligenceProject(payload) { return payload; }
+function refreshProfilePoolFromSet(set) { refreshedSampleCounts.push(Array.isArray(set?.samples) ? set.samples.length : -1); }
+function setActiveProfileBuildJob() {}
+function clearActiveProfileBuildJob() {}
+function renderJobStatus() {}
+function renderProfileQueue() {}
+function updateCreatorCloneSelectionStatus() {}
+function isProfileBuildJobStale() { return false; }
+function selectedCreatorSampleViewItems() { return [{sample_id: "sample_1"}]; }
+function setProfileStageView() {}
+function formatNumber(value) { return String(value); }
+async function batchDistillSelectedCreatorClone() { distillCalls += 1; }
+async function distillSelectedCreatorClone() { distillCalls += 1; }
+async function readJsonResponse(response) { return response.payload; }
+async function fetch(url, options = {}) {
+  requestedUrls.push(String(url));
+  if (options.method && options.method !== "GET") postCalls += 1;
+  if (String(url).startsWith("/api/workbench/jobs/")) {
+    safeCalls += 1;
+    const status = scenario === "safe-transition" && safeCalls === 1 ? "running"
+      : scenario === "safe-transition" ? "stale"
+      : "success";
+    return {payload: {job: {
+      id: "job_demo", type: "profile-build-cases", status, progress: status === "stale" ? 45 : 100,
+      message: status === "stale" ? "停止更新" : "完成",
+      result_json: {set: {set_id: SET_ID, samples: [{sample_id: "compact"}]}, items: []},
+      resume_target: {resource_id: SET_ID},
+    }}};
+  }
+  if (String(url).startsWith("/api/creator-clone/sets/")) {
+    persistedCalls += 1;
+    return {payload: {set: {set_id: SET_ID, samples: [{sample_id: "full_1"}, {sample_id: "full_2"}], warnings: []}}};
+  }
+  if (String(url).startsWith("/api/jobs/")) {
+    rawCalls += 1;
+    return {payload: {job: {
+      id: "job_demo", type: "profile-build-cases", status: "success", progress: 100,
+      result_json: {set: {set_id: SET_ID, samples: [{sample_id: "normal"}]}, items: []},
+    }}};
+  }
+  throw new Error(`Unexpected URL: ${url}`);
+}
+"""
+        + recovery_fetch
+        + queue_polling
+        + """
+function reset(nextScenario) {
+  scenario = nextScenario; safeCalls = 0; rawCalls = 0; postCalls = 0; persistedCalls = 0; distillCalls = 0;
+  refreshedSampleCounts = []; requestedUrls.length = 0; profileScanStatus.textContent = ""; jobMessage.textContent = "";
+}
+(async () => {
+  reset("safe-success");
+  await pollProfileQueue("job_demo", {safeStatus: true, allowAutoDistill: false, setId: SET_ID});
+  const safeSuccess = {safeCalls, rawCalls, postCalls, persistedCalls, distillCalls, refreshedSampleCounts, requestedUrls: [...requestedUrls], status: profileScanStatus.textContent};
+
+  reset("safe-transition");
+  await pollProfileQueue("job_demo", {safeStatus: true, allowAutoDistill: false, setId: SET_ID});
+  const staleRecovery = {safeCalls, rawCalls, postCalls, persistedCalls, distillCalls, requestedUrls: [...requestedUrls], status: profileScanStatus.textContent};
+
+  reset("normal-success");
+  await pollProfileQueue("job_demo");
+  const normalFlow = {safeCalls, rawCalls, postCalls, persistedCalls, distillCalls, requestedUrls: [...requestedUrls]};
+  process.stdout.write(JSON.stringify({safeSuccess, staleRecovery, normalFlow}));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    safe_success = result["safeSuccess"]
+    assert safe_success["safeCalls"] == 1
+    assert safe_success["rawCalls"] == 0
+    assert safe_success["postCalls"] == 0
+    assert safe_success["persistedCalls"] == 1
+    assert safe_success["distillCalls"] == 0
+    assert safe_success["refreshedSampleCounts"] == [2]
+    assert safe_success["requestedUrls"][0] == "/api/workbench/jobs/job_demo"
+    assert safe_success["requestedUrls"][1] == f"/api/creator-clone/sets/{'clone_' + 'a' * 32}"
+
+    stale_recovery = result["staleRecovery"]
+    assert stale_recovery["safeCalls"] == 2
+    assert stale_recovery["rawCalls"] == 0
+    assert stale_recovery["postCalls"] == 0
+    assert stale_recovery["persistedCalls"] == 0
+    assert stale_recovery["distillCalls"] == 0
+    assert all(url == "/api/workbench/jobs/job_demo" for url in stale_recovery["requestedUrls"])
+    assert "保持只读" in stale_recovery["status"]
+
+    normal_flow = result["normalFlow"]
+    assert normal_flow["safeCalls"] == 0
+    assert normal_flow["rawCalls"] == 1
+    assert normal_flow["distillCalls"] == 1
+    assert normal_flow["requestedUrls"] == ["/api/jobs/job_demo"]
+
+
+def test_workbench_resource_less_recovery_and_profile_scan_observation_run_in_javascript() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; Workbench recovery return values are covered by static assertions.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    single_recovery = source[
+        source.index("function safeWorkbenchJobId") : source.index("async function monitorWorkbenchSingleJob")
+    ]
+    profile_scan_observer = source[
+        source.index("async function monitorWorkbenchProfileScanJob") : source.index("async function openWorkbenchProfileTarget")
+    ]
+    runner = (
+        "let activeJobs = [];\n"
+        "let fetchCalls = 0;\n"
+        "let singleMonitorCalls = 0;\n"
+        "let restoredSets = [];\n"
+        "let targetResults = [];\n"
+        "let currentLocalVideoId = '';\n"
+        "const WORKBENCH_TASK_STALE_SECONDS = 1800;\n"
+        "const singleForm = {elements: {value: {value: ''}}};\n"
+        "const jobResult = null;\n"
+        "const jobMessage = {className: '', textContent: ''};\n"
+        "const profileScanStatus = {textContent: ''};\n"
+        "const window = {location: {origin: 'http://127.0.0.1:8765'}, scrollTo() {}, setTimeout(resolve) { resolve(); }};\n"
+        "function setHomeRoute() {}\n"
+        "function placeJobCard() {}\n"
+        "function renderJobStatus() {}\n"
+        "function getCaseId() { return ''; }\n"
+        "function showJson() {}\n"
+        "function profileBuildJobAgeSeconds() { return 0; }\n"
+        "async function refreshProfilePoolFromPersistedSet(setId) { restoredSets.push(setId); }\n"
+        "async function readJsonResponse(response) { return response.payload; }\n"
+        "async function fetch() {\n"
+        "  fetchCalls += 1;\n"
+        "  const job = activeJobs.length > 1 ? activeJobs.shift() : activeJobs[0];\n"
+        "  return {payload: {job}};\n"
+        "}\n"
+        "function notifyWorkbenchTargetResult(ok) { targetResults.push(Boolean(ok)); }\n"
+        + single_recovery
+        + "\nasync function monitorWorkbenchSingleJob() { singleMonitorCalls += 1; return true; }\n"
+        + profile_scan_observer
+        + "\n(async () => {\n"
+        + "  activeJobs = [{id: 'job_manual', type: 'analyze-case', status: 'failed', progress: 75, result_json: {}}];\n"
+        + "  const manualWithoutContext = await openWorkbenchSingleTarget({mode: 'manual', job_id: 'job_manual'}, '');\n"
+        + "  notifyWorkbenchTargetResult(manualWithoutContext);\n"
+        + "  const manualWithoutJob = await openWorkbenchSingleTarget({mode: 'manual'}, '');\n"
+        + "  activeJobs = [{id: 'job_running', type: 'analyze-case', status: 'running', progress: 20, result_json: {}}];\n"
+        + "  const observedRunning = await openWorkbenchSingleTarget({mode: 'observe', job_id: 'job_running'}, '');\n"
+        + "  const restoredAweme = await openWorkbenchSingleTarget({mode: 'manual', resource_id: '7622653084993647603'}, '');\n"
+        + "  activeJobs = [\n"
+        + "    {id: 'job_profile', type: 'profile-scan', status: 'running', progress: 30, result_json: {}},\n"
+        + "    {id: 'job_profile', type: 'profile-scan', status: 'success', progress: 100, result_json: {set: {set_id: 'clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}}},\n"
+        + "  ];\n"
+        + "  const observedProfile = await monitorWorkbenchProfileScanJob('job_profile');\n"
+        + "  process.stdout.write(JSON.stringify({\n"
+        + "    manualWithoutContext, manualWithoutJob, targetResults, observedRunning, singleMonitorCalls,\n"
+        + "    restoredAweme, awemeInput: singleForm.elements.value.value, observedProfile, restoredSets, fetchCalls,\n"
+        + "  }));\n"
+        + "})().catch((error) => { console.error(error); process.exit(1); });\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["manualWithoutContext"] is False
+    assert result["manualWithoutJob"] is False
+    assert result["targetResults"] == [False]
+    assert result["observedRunning"] is True
+    assert result["singleMonitorCalls"] == 1
+    assert result["restoredAweme"] is True
+    assert result["awemeInput"] == "7622653084993647603"
+    assert result["observedProfile"] is True
+    assert result["restoredSets"] == ["clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
 
 
 def test_creator_clone_import_baseline_behavior_runs_in_javascript() -> None:
@@ -1502,9 +1837,12 @@ def test_creator_clone_distill_success_report_recovery_runs_in_javascript() -> N
         "var currentCloneSetId = '';\n"
         "var currentCreatorRuntimeReport = null;\n"
         "var profileScanStatus = {textContent: ''};\n"
+        "var jobMessage = {className: '', textContent: ''};\n"
         "var order = [];\n"
         "var renderCalls = 0;\n"
         "var hydrateCalls = 0;\n"
+        "var rawFetchCalls = 0;\n"
+        "var workbenchFetchCalls = 0;\n"
         "function makeClassList() {\n"
         "  const values = new Set(['hidden', 'stage-hidden']);\n"
         "  return {add(...items) { items.forEach((item) => values.add(item)); }, remove(...items) { items.forEach((item) => values.delete(item)); }, contains(item) { return values.has(item); }};\n"
@@ -1553,25 +1891,32 @@ def test_creator_clone_distill_success_report_recovery_runs_in_javascript() -> N
         "}\n"
         "function applyCreatorCloneDistillPayload() {}\n"
         "var activePayload = null;\n"
-        "async function fetch() { return {}; }\n"
+        "async function fetch() { rawFetchCalls += 1; return {}; }\n"
+        "async function fetchWorkbenchJob() { workbenchFetchCalls += 1; return activePayload.job; }\n"
         "async function readJsonResponse() { return activePayload; }\n"
         + visibility_functions
         + "\n"
         + poll_function
         + "\n"
-        + "async function runScenario(nextScenario) {\n"
+        + "async function runScenario(nextScenario, options = {}) {\n"
         + "  scenario = nextScenario; runtimeApplied = false; runtimeState = null; reportPresent = false; promptPresent = false;\n"
         + "  profileStageView = 'distill'; currentCloneSetId = ''; currentCreatorRuntimeReport = null; profileScanStatus.textContent = '';\n"
-        + "  order = []; renderCalls = 0; hydrateCalls = 0; creatorCloneResultCard.classList = makeClassList();\n"
-        + "  activePayload = {job: {status: 'success', result_json: {set: {set_id: 'set_demo'}, result: {summary: 'ready'}, creator_intelligence: {runtime_state: {workflow: {state: 'DONE'}}}}}};\n"
-        + "  await pollCreatorCloneDistillJob('job_demo');\n"
-        + "  return {order, runtime: runtimeState?.workflow?.state || '', stage: profileStageView, reportPresent, hidden: creatorCloneResultCard.classList.contains('hidden'), stageHidden: creatorCloneResultCard.classList.contains('stage-hidden'), status: profileScanStatus.textContent, renderCalls, hydrateCalls};\n"
+        + "  order = []; renderCalls = 0; hydrateCalls = 0; rawFetchCalls = 0; workbenchFetchCalls = 0; creatorCloneResultCard.classList = makeClassList();\n"
+        + "  activePayload = nextScenario === 'safe_status'\n"
+        + "    ? {job: {status: 'success', result_json: {set_id: 'set_demo'}}}\n"
+        + "    : nextScenario === 'safe_stale'\n"
+        + "    ? {job: {status: 'stale', progress: 52, message: '停止更新', result_json: {set_id: 'set_demo'}}}\n"
+        + "    : {job: {status: 'success', result_json: {set: {set_id: 'set_demo'}, result: {summary: 'ready'}, creator_intelligence: {runtime_state: {workflow: {state: 'DONE'}}}}}};\n"
+        + "  await pollCreatorCloneDistillJob('job_demo', options);\n"
+        + "  return {order, runtime: runtimeState?.workflow?.state || '', stage: profileStageView, reportPresent, hidden: creatorCloneResultCard.classList.contains('hidden'), stageHidden: creatorCloneResultCard.classList.contains('stage-hidden'), status: profileScanStatus.textContent, renderCalls, hydrateCalls, rawFetchCalls, workbenchFetchCalls};\n"
         + "}\n"
         + "(async () => {\n"
         + "  const output = {\n"
         + "    hydrateFailure: await runScenario('hydrate_failure'),\n"
         + "    jobRenderFailure: await runScenario('job_render_failure'),\n"
         + "    bothFailure: await runScenario('both_failure'),\n"
+        + "    safeStatus: await runScenario('safe_status', {safeStatus: true, setId: 'set_demo'}),\n"
+        + "    safeStale: await runScenario('safe_stale', {safeStatus: true, setId: 'set_demo'}),\n"
         + "  };\n"
         + "  process.stdout.write(JSON.stringify(output));\n"
         + "})().catch((error) => { console.error(error); process.exit(1); });\n"
@@ -1609,6 +1954,20 @@ def test_creator_clone_distill_success_report_recovery_runs_in_javascript() -> N
     assert both_failure["hidden"] is False
     assert both_failure["stageHidden"] is False
     assert both_failure["status"].startswith("REPORT_RENDER_FAILED")
+
+    safe_status = result["safeStatus"]
+    assert safe_status["rawFetchCalls"] == 0
+    assert safe_status["workbenchFetchCalls"] == 1
+    assert safe_status["hydrateCalls"] == 1
+    assert safe_status["reportPresent"] is True
+    assert safe_status["runtime"] == ""
+
+    safe_stale = result["safeStale"]
+    assert safe_stale["rawFetchCalls"] == 0
+    assert safe_stale["workbenchFetchCalls"] == 1
+    assert safe_stale["hydrateCalls"] == 0
+    assert safe_stale["reportPresent"] is False
+    assert "保持只读" in safe_stale["status"]
 
 
 def test_creator_clone_distill_finalizes_report_after_unlock_in_javascript() -> None:
@@ -3305,6 +3664,26 @@ def test_analyze_case_job_reports_llm_not_configured(monkeypatch, tmp_path: Path
     assert job is not None
     assert job["status"] == "failed"
     assert job["error_code"] == "LLM_NOT_CONFIGURED"
+    assert job["result_json"]["recovery_context"]["case_id"] == case_id
+
+
+def test_resolve_qualities_job_keeps_aweme_recovery_context_on_failure(monkeypatch) -> None:
+    aweme_id = "7622653084993647603"
+
+    def fail_resolve(*_args, **_kwargs):
+        raise AppError(ErrorCode.PROVIDER_FAILED, "Provider unavailable")
+
+    monkeypatch.setattr("app.routes.jobs.resolve_quality_candidates", fail_resolve)
+
+    create_response = client.post("/api/jobs/resolve-qualities", json={"aweme_ids": [aweme_id]})
+    assert create_response.status_code == 200
+    job_response = client.get(f"/api/jobs/{create_response.json()['job_id']}")
+    assert job_response.status_code == 200
+    job = job_response.json()["job"]
+
+    assert job["status"] == "failed"
+    assert job["error_code"] == "PROVIDER_FAILED"
+    assert job["result_json"]["recovery_context"]["aweme_id"] == aweme_id
 
 
 def test_auto_analyzer_falls_back_to_text_when_vision_request_fails(tmp_path: Path) -> None:

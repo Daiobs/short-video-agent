@@ -1,13 +1,13 @@
 # Workbench Roadmap
 
-本文记录“任务驱动的短视频拆解工作台”的长期阶段、阶段边界和验收状态。当前只执行 Stage A；文中“候选完成”表示实现已进入阶段工作树，但仍需集成审查、完整测试和 Draft PR 审查，不能视为已经验收或合并。
+本文记录“任务驱动的短视频拆解工作台”的长期阶段、阶段边界和验收状态。Stage A 已完成审查并合并；Stage B 已获得用户授权，正在独立分支中实施。后续阶段仍必须逐阶段创建 Draft PR、等待人工审查，不得自动合并或自动进入下一阶段。
 
 ## 长期阶段 A-E
 
 | 阶段 | 建议分支 | 纵向目标 | 入口条件 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| Stage A | `codex/workbench-task-console-v1` | 将 `/` 升级为任务控制台，聚合运行中任务、可继续任务、最近结果和能力状态 | Workbench Shell v1 已进入 `main` | 候选完成，等待 Draft PR 人工审查 |
-| Stage B | `codex/workbench-recovery-v1` | 统一任务状态、精确恢复目标、失败诊断和 stale 任务处理 | Stage A 经审查后合并，并获得人工确认 | 未开始 |
+| Stage A | `codex/workbench-task-console-v1` | 将 `/` 升级为任务控制台，聚合运行中任务、可继续任务、最近结果和能力状态 | Workbench Shell v1 已进入 `main` | 已合并：PR #12，`48b7feeb8279d548ebe7f0d0343d6f3af378eab8` |
+| Stage B | `codex/workbench-recovery-v1` | 统一任务状态、精确恢复目标、失败诊断和 stale 任务处理 | Stage A 已合并，用户已明确授权 | 候选完成，等待 Draft PR 人工审查 |
 | Stage C | `codex/workbench-library-v1` | 建立 Case、Creator Report 和 Strategy Plan 的只读资产库 | Stage B 经审查后合并 | 未开始 |
 | Stage D | `codex/frontend-modules-v1` | 在不引入框架和构建链的前提下拆分前端模块 | Stage C 合并且行为稳定 | 未开始 |
 | Stage E | `research/douyin-local-connector` | 研究 Douyin 本地连接器的权限、配对协议和威胁模型 | Stage A-D 完成，或用户明确要求提前研究 | 未开始；默认不接入生产流程 |
@@ -76,28 +76,27 @@ Overview 只聚合已有本机状态，不建立第二真源：
 - 来源被截断或部分失败时返回明确元信息，不能静默伪装为完整结果。
 - Stage A 验收前必须增加至少 500 个 Case、任务或报告条目的规模测试；如需缓存，只允许可重建缓存或分页，不建立不可恢复的第二真源。
 
-## 当前完成项（待人工审查）
+## Stage A 完成项
 
-以下项目已经通过本分支自动化与本机冒烟验证，但在 Draft PR 获得人工审查并合并前，Stage A 仍不能视为完成：
+以下项目已经通过自动化与本机冒烟验证，并随 PR #12 合并到 `main`：
 
-- Workbench Shell v1、Creator Clone 报告即时显示、唯一设置入口和六步任务流程已作为 Stage A 基线进入 `main`，仍需在本阶段做回归验证。
-- `GET /api/workbench/overview` 的只读路由与聚合服务已有候选实现，并已接入应用路由候选改动。
-- 候选响应已覆盖 `running_tasks`、`resumable_tasks`、`recent_cases`、`recent_creator_reports`、`recent_strategy_plans`、`recent_failures`、`capabilities`、`source_errors` 和截断元信息。
-- job、Case、Creator Runtime、Creator Clone 产物采用来源级独立读取；单一来源失败时保留其他区块的候选降级逻辑。
+- Workbench Shell v1、Creator Clone 报告即时显示、唯一设置入口和六步任务流程已作为 Stage A 基线进入 `main`，并完成本阶段回归验证。
+- `GET /api/workbench/overview` 的只读路由与聚合服务已合并并接入应用路由。
+- Overview 响应已覆盖 `running_tasks`、`resumable_tasks`、`recent_cases`、`recent_creator_reports`、`recent_strategy_plans`、`recent_failures`、`capabilities`、`source_errors` 和截断元信息。
+- job、Case、Creator Runtime、Creator Clone 产物采用来源级独立读取；单一来源失败时保留其他区块并安全降级。
 - Douyin 数据源采用最近一次已知健康状态，LLM 只汇总是否配置，本地工具只做无网络、无子进程的摘要检查。
-- 候选实现已加入结果数量、数据库查询、Runtime 候选和 JSON 文件大小上限，并对公开文本、资源标识和输出入口进行约束。
-- Strategy Plan 候选列表已比较报告与方案更新时间，并把明显早于报告的方案标记为 `stale`；该规则仍不能完全证明方案语义上新鲜。
+- 实现已加入结果数量、数据库查询、Runtime 候选和 JSON 文件大小上限，并对公开文本、资源标识和输出入口进行约束。
+- Strategy Plan 列表已比较报告与方案更新时间，并把明显早于报告的方案标记为 `stale`；该规则仍不能完全证明方案语义上新鲜。
 - 首页已按“运行中任务 → 可继续任务 → 新建任务”的顺序渲染，并通过 Node 行为测试覆盖三种优先级和接口失败降级。
 - 首页已展示紧凑的 Douyin 数据源、LLM、本地工具和运行任务状态；最近 Case、Creator Report、Strategy Plan 和失败任务各限制最多 5 条。
 - Overview 已覆盖空状态、来源失败、文件缺失、畸形 `samples.json`、Bearer token 脱敏、超限 Runtime 索引、500 条规模和只读文件树测试。
 - 完整测试、JavaScript 语法、Python 编译、实际 HTTP 冒烟和浏览器响应式检查均已通过，详见测试记录。
 
-## 明确未完成
+## 当前未完成
 
-- Stage A Draft PR #12 已创建；人工审查、合并和合并 commit 均未完成。
-- Stage B 未开始，当前不得实现其统一恢复模型、自动诊断或 stale 任务操作。
-
-因此，当前不能宣布 Stage A 完成。
+- Stage B 的统一任务 DTO、精确恢复、失败诊断和 stale 派生展示已在 `codex/workbench-recovery-v1` 完成候选实现与本机回归，仍需 Draft PR 人工审查。
+- Stage B Draft PR 编号、人工审查结论与合并状态待创建 PR 后记录；本阶段不得自动合并。
+- Stage C 及后续阶段未获启动授权；Stage B 完成后只创建 Draft PR，不合并、不进入 Stage C。
 
 ## 已否决
 
@@ -107,7 +106,7 @@ Overview 只聚合已有本机状态，不建立第二真源：
 - 否决在首页或 API 暴露 Cookie、API Key、token、签名 URL、敏感配置或本机绝对路径。
 - 否决继续把首页第一屏用作大段产品功能介绍。
 - 否决在 Stage A 同时交付资产库、前端模块化、浏览器扩展、新平台、自动发布或账号矩阵能力。
-- 否决在 Draft PR 后自动合并或直接开始 Stage B。
+- 否决在 Stage B Draft PR 后自动合并或直接开始 Stage C。
 
 ## 已知问题
 
@@ -119,7 +118,7 @@ Overview 只聚合已有本机状态，不建立第二真源：
 
 ### 2. 旧 stale job
 
-历史 `pending` 或 `running` job 可能已失去心跳但仍保留旧状态。当前候选实现用更新时间窗口避免其占据“正在运行”，但不会展示 stale 诊断，也不会修改原状态。Stage A 需验证旧记录不会污染运行中数量；显式 stale 状态、恢复提示和人工重新执行入口留给 Stage B。
+历史 `pending` 或 `running` job 可能已失去心跳但仍保留旧状态。Stage B 以 30 分钟心跳窗口派生 `stale` 展示，并在 Overview 中单列 `stale_tasks` 与 `stale_task_count`。该判断只影响只读 DTO，不回写数据库、不把原任务改成 `failed`，也不触发重试；恢复提示和人工重新执行入口正在本阶段实现。
 
 ### 3. Strategy Plan 陈旧性风险
 
@@ -129,18 +128,19 @@ Overview 只聚合已有本机状态，不建立第二真源：
 
 为限制请求成本，Creator Runtime 只检查有界数量的最新候选。超过上限时，较旧但仍可继续的任务或报告可能不出现在首页；候选响应会把该来源标记为截断和部分结果，任务控制台会显示非阻断式“部分结果”提示。Stage A 已覆盖 API 截断与前端展示行为；完整历史浏览或分页属于后续资产库范围。
 
-## Stage B 入口条件
+## Stage B 实施状态
 
-只有同时满足以下条件，才可从最新 `main` 新建 `codex/workbench-recovery-v1`：
+Stage B 入口条件已经满足：Stage A 的 PR #12 已完成审查并以 squash commit `48b7feeb8279d548ebe7f0d0343d6f3af378eab8` 合并，合并后 `main` 回归为 `356 passed, 1 warning`，用户已明确授权从最新 `main` 新建 `codex/workbench-recovery-v1`。
 
-1. Stage A 的 API、首页优先级、最近结果、能力状态、空状态和安全降级全部通过验收。
-2. 单作品、Creator Clone、报告即时显示、刷新恢复、设置入口和本机安全合同完成回归。
-3. 全局测试、JavaScript `--check`、差异检查、至少 500 条规模测试和可用的页面/HTTP 冒烟结果已如实记录。
-4. 四项已知问题均已有明确处置：测试数据隔离已关闭；旧 stale job 留待 Stage B 建立显式状态；Strategy Plan 通过时间比较与 `stale` 测试提示风险；Runtime 截断已由 API 和 UI 明示，完整历史浏览留待 Stage C。
-5. Stage A Draft PR 已完成人工审查并合并，合并 commit 已记录。
-6. 用户明确确认进入 Stage B；不得由自动流程自行推进。
+Stage B 当前范围固定为：
 
-Stage B 的首要工作是统一任务 DTO、精确 `resume_target`、失败恢复提示和 stale 状态表达，不得回头改变 Stage A 的只读安全边界。
+1. 统一任务 DTO，状态仅使用 `pending`、`running`、`success`、`failed`、`recoverable`、`stale`。
+2. 使用结构化 `resume_target` 精确恢复到单作品或 Creator 六步流程的正确页面与步骤。
+3. 失败任务展示 `error_code`、`last_completed_stage`、`available_results` 和 `recovery_hint`。
+4. 对超过 30 分钟未更新的 `pending` / `running` 任务派生 `stale` 视图；Overview 新增 `stale_tasks` 和 `capabilities.stale_task_count`。
+5. 恢复入口只负责读取状态和导航；不自动重试、不自动执行工作流、不修改任务数据库状态。
+
+稳定 DTO 见 `docs/workbench-task-model.md`，逐流程恢复行为见 `docs/workbench-recovery.md`。Stage B 完成后必须运行完整验证并只创建 Draft PR，等待人工审查；不得合并或进入 Stage C。
 
 ## 测试记录
 
@@ -159,18 +159,36 @@ Stage B 的首要工作是统一任务 DTO、精确 `resume_target`、失败恢�
 | 实际 HTTP 冒烟 | 通过 | `/` 与 `/api/workbench/overview` 均返回 200；热请求约 0.04 秒，响应约 9 KiB |
 | 浏览器、移动端与键盘检查 | 通过 | 1280 / 1024 / 390 视口无横向溢出；当前本机数据渲染成功，控制台错误 0 |
 
+### Stage B 测试记录
+
+| 检查 | 结果 | 证据 |
+| --- | --- | --- |
+| 完整 Python 测试 | 通过 | `368 passed, 1 warning`；warning 为 Starlette TestClient 的 httpx2 迁移提示 |
+| JavaScript 语法 | 通过 | `app.js`、`workbench.js`、`workbench-tasks.js` 均通过 bundled Node `--check` |
+| Python 编译 | 通过 | Stage B 新增/修改的任务 DTO、Overview、Job 路由和测试隔离模块通过 `compileall` |
+| 差异格式 | 通过 | `git diff --check` 无输出 |
+| 测试数据隔离 | 通过 | 完整测试前后默认 SQLite SHA-256 与 `outputs` 文件树指纹一致；测试使用逐用例临时数据库和产物目录 |
+| HTTP / 浏览器冒烟 | 通过 | `/` 与 Overview 正常渲染；5,639 个 Creator 目录下冷请求约 0.46 秒，短 TTL 缓存后的热请求约 0.05 秒，响应约 18 KiB；旧任务显示 stale；恢复后精确进入 Creator 第 5 步；失败 Case 进入对应详情页；控制台错误 0 |
+| 不自动修改状态 | 通过 | stale Creator Job 恢复前后仍为原始 `running`、进度与 `updated_at` 不变，未触发自动重试 |
+| 安全恢复接口 | 通过 | Workbench 只读取 `/api/workbench/jobs/{job_id}`；响应不含原始 Job JSON、签名 URL、Prompt、请求头或本机路径，恢复富化不会自动进入蒸馏 |
+| 素材池兜底索引 | 通过 | 只有 `samples.json`、尚未进入 Runtime 会话的素材池可恢复到素材池/选样；扫描与响应均有硬上限，超限明确标记部分结果 |
+
+开发注意事项：手动开发冒烟仍应使用临时或明确可清理的数据目录，避免污染默认 job、Case、Creator Runtime 或最近报告。
+
 浏览器自动化若不可用，必须记录实际 HTTP 冒烟、Node 纯函数或 DOM 行为模拟的替代结果，并明确列出未覆盖项。
 
-## PR 信息占位
+## 阶段 PR 记录
 
 | 字段 | 当前记录 |
 | --- | --- |
-| Stage A 状态 | Draft PR #12，等待人工审查 |
+| Stage A 状态 | 已完成并合并 |
 | Head 分支 | `codex/workbench-task-console-v1` |
 | Base 分支与基线 commit | `main` / `a4f0dd1` |
-| Draft PR 编号 | #12 |
-| Draft PR 链接 | `https://github.com/Daiobs/short-video-agent/pull/12` |
-| 人工审查结论 | 待记录 |
-| 合并状态 | 未合并 |
-| 合并 commit | 不适用，待合并后记录 |
-| Stage B 授权 | 未获得；不得开始 |
+| PR 编号 | #12 |
+| PR 链接 | `https://github.com/Daiobs/short-video-agent/pull/12` |
+| 人工审查结论 | 通过；由用户明确授权 Ready for review 与 squash merge |
+| 合并状态 | 已 squash merge |
+| 合并 commit | `48b7feeb8279d548ebe7f0d0343d6f3af378eab8`（`Add task-first workbench console`） |
+| 合并后回归 | `356 passed, 1 warning` |
+| Stage B 授权 | 已获得；正在 `codex/workbench-recovery-v1` 实施 |
+| Stage B PR | 候选实现与回归已完成，待创建 Draft PR；不得自动合并 |

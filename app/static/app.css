@@ -481,6 +481,7 @@ p {
 
 .workbench-section-heading,
 .workbench-running-task > header,
+.workbench-stale-task > header,
 .workbench-resumable-task > header,
 .workbench-recent-item,
 .workbench-recent-copy > div {
@@ -506,6 +507,7 @@ p {
 
 .workbench-section-heading h3,
 .workbench-running-task h4,
+.workbench-stale-task h4,
 .workbench-resumable-task h4,
 .workbench-recent-section h3,
 .workbench-recent-item h4 {
@@ -566,11 +568,13 @@ p {
 }
 
 .workbench-running-list,
+.workbench-stale-list,
 .workbench-resumable-list {
     display: grid;
 }
 
 .workbench-running-task,
+.workbench-stale-task,
 .workbench-resumable-task {
     min-width: 0;
     padding: 14px 0;
@@ -579,17 +583,20 @@ p {
 }
 
 .workbench-running-task:first-child,
+.workbench-stale-task:first-child,
 .workbench-resumable-task:first-child {
     padding-top: 4px;
     border-top: 0;
 }
 
 .workbench-running-task:last-child,
+.workbench-stale-task:last-child,
 .workbench-resumable-task:last-child {
     padding-bottom: 0;
 }
 
-.workbench-running-task.is-selected {
+.workbench-running-task.is-selected,
+.workbench-stale-task.is-selected {
     margin: 0 -8px;
     padding-right: 8px;
     padding-left: 8px;
@@ -598,6 +605,7 @@ p {
 }
 
 .workbench-running-task h4,
+.workbench-stale-task h4,
 .workbench-resumable-task h4 {
     font-size: 15px;
     line-height: 1.35;
@@ -605,6 +613,7 @@ p {
 }
 
 .workbench-running-task header p,
+.workbench-stale-task header p,
 .workbench-resumable-task header p,
 .workbench-task-detail,
 .workbench-task-message {
@@ -659,6 +668,85 @@ p {
     color: #991b1b;
 }
 
+.workbench-item-status.stale {
+    background: #ffedd5;
+    color: #9a3412;
+}
+
+.workbench-stale-subsection {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #fed7aa;
+}
+
+.workbench-stale-subsection > header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    color: #9a3412;
+    font-size: 12px;
+}
+
+.workbench-stale-subsection > header span {
+    color: #c2410c;
+    font-size: 11px;
+}
+
+.workbench-recovery-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 10px 0 0;
+}
+
+.workbench-recovery-facts div {
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    background: #f8fafc;
+}
+
+.workbench-recovery-facts dt {
+    color: #64748b;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.workbench-recovery-facts dd {
+    margin: 3px 0 0;
+    color: #1f2937;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.workbench-recovery-facts.compact {
+    grid-template-columns: 1fr;
+    gap: 5px;
+    margin-top: 8px;
+}
+
+.workbench-recovery-facts.compact div {
+    padding: 6px 8px;
+}
+
+.workbench-recovery-hint,
+.workbench-manual-note {
+    margin: 8px 0 0;
+    max-width: none;
+    color: #475569;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.workbench-manual-note {
+    color: #9a3412;
+    font-weight: 700;
+}
+
 .workbench-task-progress {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 40px;
@@ -684,6 +772,7 @@ p {
 }
 
 .workbench-running-task footer,
+.workbench-stale-task footer,
 .workbench-resumable-task footer,
 .workbench-recent-actions {
     display: flex;
@@ -694,6 +783,7 @@ p {
 }
 
 .workbench-running-task footer,
+.workbench-stale-task footer,
 .workbench-resumable-task footer {
     justify-content: flex-start;
     padding: 0;
@@ -789,6 +879,10 @@ p {
     color: #991b1b !important;
 }
 
+.workbench-failure-item {
+    align-items: flex-start;
+}
+
 .workbench-recent-actions {
     flex: 0 0 auto;
     margin-top: 0;
@@ -821,7 +915,8 @@ p {
 }
 
 .workbench-console button:focus-visible,
-.workbench-running-task:focus-visible {
+.workbench-running-task:focus-visible,
+.workbench-stale-task:focus-visible {
     outline: 3px solid rgba(37, 99, 235, .22);
     outline-offset: 2px;
 }
@@ -5968,6 +6063,7 @@ footer {
     }
 
     .workbench-running-task footer,
+    .workbench-stale-task footer,
     .workbench-resumable-task footer,
     .workbench-recent-actions {
         justify-content: flex-start;
@@ -5980,6 +6076,10 @@ footer {
 
     .workbench-recent-actions {
         width: 100%;
+    }
+
+    .workbench-recovery-facts {
+        grid-template-columns: 1fr;
     }
 
     .workbench-compact-flow {
