@@ -188,8 +188,8 @@ async function requestJson(url, options = {{}}) {{
   if (url === "/api/settings/llm/test") return {{test: {{message: "pong"}}}};
   if (url === "/api/settings/llm") return {{llm: {{configured: true, provider: "openai_compatible", api_base: "https://api.example.test/v1", model: "vision", has_api_key: true, masked_api_key: "sk-****abcd", temperature: 0.2}}}};
   if (url === "/api/settings/data-sources/douyin/test") return {{test: {{status: "ok", message: "通过", cookie_diagnostics: {{has_cookie: true, pair_count: 5, login_key_count: 2}}, api_checked: true, status_code: 200, is_json: true, aweme_count: 3}}}};
-  if (url === "/api/settings/data-sources/douyin") return {{data_sources: {{has_cookie: true, masked_cookie: "sessionid=****abcd", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
-  if (url === "/api/settings/data-sources") return {{data_sources: {{has_cookie: true, masked_cookie: "sessionid=****abcd", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
+  if (url === "/api/settings/data-sources/douyin") return {{data_sources: {{configured: true, has_cookie: true, masked_cookie: "********", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
+  if (url === "/api/settings/data-sources") return {{data_sources: {{configured: true, has_cookie: true, masked_cookie: "********", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
   throw {{error_code: "UNEXPECTED", message: url}};
 }}
 let preflightCalls = 0;
@@ -208,6 +208,11 @@ const options = {{
 const first = context.SettingsPanel.init(options);
 const second = context.SettingsPanel.init(options);
 await first.loadLlmStatus();
+await first.loadDataSourceStatus();
+const configuredBadge = e.dataSourceStatusBadge.textContent;
+first.renderDataSourceStatus({{configured: false, has_cookie: true, masked_cookie: "********"}});
+const invalidBadge = e.dataSourceStatusBadge.textContent;
+const invalidSummary = e.dataSourceStatusList.innerHTML;
 await first.loadDataSourceStatus();
 await emit(e.toggle, "click");
 const opened = !e.modal.classList.contains("hidden");
@@ -234,6 +239,7 @@ process.stdout.write(JSON.stringify({{
   toggleListeners: e.toggle.listeners.click.length,
   llmSubmitListeners: e.llmForm.listeners.submit.length,
   opened, closed, preflightCalls, llmStatusCalls,
+  configuredBadge, invalidBadge, invalidSummary,
   requestPairs: requests.map((item) => item.slice(0, 2)),
   leakedKey: visible.includes("sk-live-secret-never-render"),
   leakedCookie: visible.includes("raw-cookie-never-render"),
@@ -252,6 +258,9 @@ process.stdout.write(JSON.stringify({{
     assert result["llmSubmitListeners"] == 1
     assert result["opened"] is True
     assert result["closed"] is True
+    assert result["configuredBadge"] == "主力数据源已配置"
+    assert result["invalidBadge"] == "配置需修正"
+    assert "已保存但不可用" in result["invalidSummary"]
     assert result["preflightCalls"] >= 2
     assert result["llmStatusCalls"] >= 2
     assert ["/api/settings/llm", "PUT"] in result["requestPairs"]

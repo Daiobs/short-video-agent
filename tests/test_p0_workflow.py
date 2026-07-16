@@ -2122,7 +2122,10 @@ def test_readme_documents_main_workflow_before_advanced_quality_loop() -> None:
     assert "创作者克隆实验室" in readme
     assert "单主线 Wizard" in readme
     assert "DataSourceManager" in readme
-    assert "Cookie / Web API，多作品链接、公开扫描和本机 Chrome 辅助作为回退" in readme
+    assert "个人账号 Douyin Cookie / Web API 为正式主路径" in readme
+    assert "本机 Chrome 辅助只作为用户显式触发的高级工具" in readme
+    assert "Stage E 已取消" in readme
+    assert Path("docs/douyin-cookie-provider.md").is_file()
     assert "公开网站 / 本机助手模式的目标边界" in readme
     assert "`handoff_manifest.json` 必须带有安全契约声明" in readme
     assert "公开站 / 本机助手边界" in readme
@@ -2474,7 +2477,7 @@ def test_llm_settings_masks_configured_api_key(monkeypatch) -> None:
 
 
 def test_data_source_settings_masks_cookie(monkeypatch) -> None:
-    secret = "sessionid=very-secret-cookie-value"
+    secret = "sessionid=synthetic-session; sid_guard=synthetic-guard; uid_tt=synthetic-uid"
     monkeypatch.setattr("app.services.data_source_settings.settings.douyin_cookie", secret)
     monkeypatch.setattr("app.services.data_source_settings.settings.douyin_user_agent", "UA")
     monkeypatch.setattr("app.services.data_source_settings.settings.douyin_referer", "https://www.douyin.com/")
@@ -2487,11 +2490,11 @@ def test_data_source_settings_masks_cookie(monkeypatch) -> None:
     status = payload["data_sources"]
     assert status["configured"] is True
     assert status["has_cookie"] is True
-    assert status["masked_cookie"].startswith("sess")
+    assert status["masked_cookie"] == "********"
     assert secret not in json.dumps(payload, ensure_ascii=False)
     assert {source["id"] for source in status["sources"]} >= {"manual_links", "browser_dom", "cookie_api", "external_api"}
     assert status["cookie_diagnostics"]["has_cookie"] is True
-    assert status["cookie_diagnostics"]["pair_count"] == 1
+    assert status["cookie_diagnostics"]["pair_count"] == 3
     assert "very-secret-cookie-value" not in json.dumps(status["cookie_diagnostics"], ensure_ascii=False)
 
 
@@ -2792,6 +2795,9 @@ def test_llm_connection_test_uses_mock_provider(monkeypatch) -> None:
 def test_openai_compatible_provider_requests_json_object(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200
+        headers = {"content-type": "application/json"}
+        text = ""
+        content = b""
         text = "{\"choices\": []}"
 
         def json(self):
@@ -9871,7 +9877,10 @@ def test_douyin_cookie_profile_provider_parses_web_api_payload(monkeypatch) -> N
             captured["headers"] = headers or {}
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.profile_scan.settings.douyin_cookie", "sessionid=test-secret-cookie")
+    monkeypatch.setattr(
+        "app.services.profile_scan.settings.douyin_cookie",
+        "sessionid=synthetic_session; sid_guard=synthetic_guard; uid_tt=synthetic_uid",
+    )
     monkeypatch.setattr("app.services.profile_scan.settings.douyin_user_agent", "UA")
     monkeypatch.setattr("app.services.profile_scan.settings.douyin_referer", "https://www.douyin.com/")
     monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
@@ -9884,7 +9893,7 @@ def test_douyin_cookie_profile_provider_parses_web_api_payload(monkeypatch) -> N
     assert result.items[0].source_provider == "cookie_api"
     assert captured["url"].endswith("/aweme/v1/web/aweme/post/")
     assert captured["params"]["sec_user_id"] == sec_uid
-    assert captured["headers"]["Cookie"] == "sessionid=test-secret-cookie"
+    assert captured["headers"]["Cookie"].startswith("sessionid=synthetic_session")
 
 
 def test_douyin_cookie_profile_provider_tries_next_endpoint_after_404(monkeypatch) -> None:
@@ -10005,7 +10014,7 @@ def test_douyin_cookie_profile_provider_paginates_until_count(monkeypatch) -> No
     )
 
     assert cursors == ["0", "1", "2", "3", "4", "5", "6"]
-    assert page_counts == [50, 50, 50, 50, 50, 50, 50]
+    assert page_counts == [20, 20, 20, 20, 20, 20, 20]
     assert len(result.items) == 65
     assert result.has_more is True
     assert result.next_cursor == "7"
@@ -10017,7 +10026,7 @@ def test_cookie_profile_provider_requires_cookie(monkeypatch) -> None:
     with pytest.raises(AppError) as raised:
         DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
 
-    assert raised.value.code == "COOKIE_REQUIRED"
+    assert raised.value.code == "DOUYIN_COOKIE_NOT_CONFIGURED"
 
 
 def test_cookie_profile_provider_empty_payload_explains_browser_context(monkeypatch) -> None:
@@ -10054,9 +10063,8 @@ def test_cookie_profile_provider_empty_payload_explains_browser_context(monkeypa
     with pytest.raises(AppError) as raised:
         DouyinCookieProfileProvider().scan(ProfileScanRequest(profile_url="https://www.douyin.com/user/MS4wLjABAAAAabc12345"))
 
-    assert raised.value.code == "EMPTY_AWEME_LIST"
-    assert "Cookie 结构看起来完整" in raised.value.message
-    assert "浏览器签名/风控上下文" in raised.value.message
+    assert raised.value.code == "DOUYIN_NO_PUBLIC_WORKS"
+    assert "公开视频" in raised.value.message
     assert "secret" not in raised.value.message
 
 
@@ -10097,7 +10105,7 @@ def test_data_source_manager_falls_back_after_cookie_failure(monkeypatch) -> Non
 
     assert result.provider == "douyin_public"
     assert result.items[0].aweme_id == "7622653084993647603"
-    assert any("COOKIE_INVALID" in warning for warning in result.warnings)
+    assert any("DOUYIN_LOGIN_REQUIRED" in warning for warning in result.warnings)
 
 
 def test_profile_scan_endpoint_reports_risk_control_without_html_leak(monkeypatch) -> None:
@@ -10118,6 +10126,7 @@ def test_profile_scan_endpoint_reports_risk_control_without_html_leak(monkeypatc
         def get(self, *args, **kwargs):
             return FakeResponse()
 
+    monkeypatch.setattr("app.services.profile_scan.settings.profile_scan_provider", "public")
     monkeypatch.setattr("app.services.profile_scan.httpx.Client", FakeClient)
     response = client.post(
         "/api/profile/scan",
