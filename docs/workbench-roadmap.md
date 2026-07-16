@@ -1,6 +1,6 @@
 # Workbench Roadmap
 
-本文记录“任务驱动的短视频拆解工作台”的长期阶段、阶段边界和验收状态。Stage A、Stage B 与 Stage C 已完成审查并合并；Stage D 已从最新 `main` 的独立分支启动。后续阶段仍必须逐阶段创建 Draft PR、等待人工审查，不得自动合并或自动进入下一阶段。
+本文记录“任务驱动的短视频拆解工作台”的长期阶段、阶段边界和验收状态。Stage A-D 已完成审查并合并；Stage E 已明确取消，不启动。后续维护仍必须从最新 `main` 创建独立分支和 Draft PR，等待人工审查，不得自动合并。
 
 ## 长期阶段 A-E
 
@@ -9,8 +9,8 @@
 | Stage A | `codex/workbench-task-console-v1` | 将 `/` 升级为任务控制台，聚合运行中任务、可继续任务、最近结果和能力状态 | Workbench Shell v1 已进入 `main` | 已合并：PR #12，`48b7feeb8279d548ebe7f0d0343d6f3af378eab8` |
 | Stage B | `codex/workbench-recovery-v1` | 统一任务状态、精确恢复目标、失败诊断和 stale 任务处理 | Stage A 已合并，用户已明确授权 | 已合并：PR #13，`98293b802919c32dc2037c6c438a13f3aee9093f` |
 | Stage C | `codex/workbench-library-v1` | 建立 Case、Creator Report 和 Strategy Plan 的只读资产库 | Stage B 经审查后合并 | 已完成：PR #14，`e1628f8174938a9493a1c2e8c14dc16373f943bd`；治理记录 PR #15，`9883c6ae0a4585d031fea8191e7a4ed9c4153e5f` |
-| Stage D | `codex/frontend-modules-v1` | 在不引入框架和构建链的前提下拆分前端模块 | Stage C 合并且行为稳定 | 实施中；基线 `9883c6ae0a4585d031fea8191e7a4ed9c4153e5f` |
-| Stage E | `research/douyin-local-connector` | 研究 Douyin 本地连接器的权限、配对协议和威胁模型 | Stage A-D 完成，或用户明确要求提前研究 | 未开始；默认不接入生产流程 |
+| Stage D | `codex/frontend-modules-v1` | 在不引入框架和构建链的前提下拆分前端模块 | Stage C 合并且行为稳定 | 已完成并合并：`8e32166a8f377435380122204c33334034ec44eb` |
+| Stage E | 不创建 | 原计划的 Douyin 本地连接器研究 | 已取消 | 已取消，不启动；禁止浏览器 Cookie 自动读取、本地连接器扩展、签名破解和验证码绕过 |
 
 每个阶段必须从最新 `main` 新建独立分支，形成一个可单独合并的纵向切片，运行该阶段要求的完整测试，创建 Draft PR 后等待人工审查。不得自动合并，也不得自动进入下一阶段。
 
@@ -92,12 +92,12 @@ Overview 只聚合已有本机状态，不建立第二真源：
 - Overview 已覆盖空状态、来源失败、文件缺失、畸形 `samples.json`、Bearer token 脱敏、超限 Runtime 索引、500 条规模和只读文件树测试。
 - 完整测试、JavaScript 语法、Python 编译、实际 HTTP 冒烟和浏览器响应式检查均已通过，详见测试记录。
 
-## 当前未完成
+## 当前维护
 
-- Stage D 正在 `codex/frontend-modules-v1` 进行低风险前端模块化；第一批只提取 Creator 报告视图和设置弹窗。
-- Creator Runtime、六步流程状态、任务轮询、恢复合同、单作品流程和 Strategy Plan 编排仍由 `app.js` 持有，避免本轮产生第二状态源。
-- Stage D 完成后只允许推送分支并创建 Draft PR，不自动合并，也不创建 Stage E 分支。
-- Stage E 尚未开始。
+- Stage D 已合并；Creator 报告视图与设置弹窗已建立显式模块边界。
+- Creator Runtime、六步流程状态、任务轮询、恢复合同、单作品流程和 Strategy Plan 编排仍由 `app.js` 持有，继续避免第二状态源。
+- 当前维护分支强化个人账号 Cookie + Douyin Web API 主页扫描主路径；合同见 `docs/douyin-cookie-provider.md`。
+- Stage E 已取消，不创建 `research/douyin-local-connector`，也不接入新的隐式采集路径。
 
 ## 已否决
 
@@ -158,9 +158,9 @@ Stage C 已知边界：Runtime `DONE`、Creator 报告文件或 Strategy Plan �
 
 合并后 `main` 已完成完整回归和只读 HTTP 冒烟；Stage C 的治理记录由 PR #15 以 squash commit `9883c6ae0a4585d031fea8191e7a4ed9c4153e5f` 合并。Stage D 从该最新 `main` SHA 启动，不复用 Stage C 分支。
 
-## Stage D 实施状态
+## Stage D 完成状态
 
-Stage D 基线为 `main` 的 `9883c6ae0a4585d031fea8191e7a4ed9c4153e5f`，分支为 `codex/frontend-modules-v1`。本轮不引入前端框架或构建链，只建立显式、可测试的浏览器模块边界：
+Stage D 基线为 `main` 的 `9883c6ae0a4585d031fea8191e7a4ed9c4153e5f`，最终以 `8e32166a8f377435380122204c33334034ec44eb` 合并。本轮未引入前端框架或构建链，只建立显式、可测试的浏览器模块边界：
 
 1. `CreatorReportView` 只负责 Creator 蒸馏报告的 HTML 生成、挂载、空状态和渲染失败降级；报告数据获取、工作流推进、Runtime 与 Strategy Plan 仍由 `app.js` 编排。
 2. `SettingsPanel` 只负责设置弹窗交互、配置状态展示和既有设置 API 调用；敏感值不进入页面，调用方只注入 DOM、请求函数和必要回调。
@@ -169,6 +169,16 @@ Stage D 基线为 `main` 的 `9883c6ae0a4585d031fea8191e7a4ed9c4153e5f`，分支
 5. 依赖方向、DOM/API 所有权、事件合同和暂不拆分的高风险边界记录在 `docs/frontend-modules.md`。
 
 Stage D 当前边界：`app.js` 仍然较大，但本轮刻意不拆 Creator 六步状态机、轮询、恢复、单作品和 Strategy Plan。后续模块化必须继续以单一状态源和现有 Workbench 合同为门禁，不能仅为了减少行数迁移状态。
+
+## Douyin Cookie Provider 维护
+
+Stage D 合并后，主页扫描正式主路径收敛为用户主动配置的个人账号 Cookie + 现有 Douyin Web API Provider。维护范围包括安全诊断、稳定错误分类、有界分页、有界重试和明确降级，不新增数据源或绕过能力。
+
+- Cookie 只保存在本机运行时配置，不进入数据库、Job、Creator/Case 产物、Prompt、报告、日志或浏览器存储。
+- 默认每页 20、配置最大 10 页，硬上限 20 页 / 200 条；重复 cursor、空页、连续无新增和分页合同异常立即停止。
+- 每页最多一次重试，只覆盖网络错误、timeout、429 和 5xx。
+- 主页主路径失败时保留作品链接、JSON/CSV、已有 Case 和既有公开页面回退；不会自动启动 Chrome 或读取浏览器 Cookie。
+- Stage E 明确取消。本维护不创建本地连接器、浏览器扩展、签名破解、验证码处理或批量账号能力。
 
 ## 测试记录
 
@@ -229,7 +239,7 @@ Stage D 当前边界：`app.js` 仍然较大，但本轮刻意不拆 Creator 六
 | 实际 HTTP | 通过 | `/`、`/library`、Overview、资产 API 与 `/calibration` 均返回 200；资产 API 保持 `Cache-Control: no-store` |
 | 响应式 | 通过 | 1280 / 1024 / 390 视口下首页报告、设置弹窗与资产库均无页面级横向溢出；手机端六步条保留既有的区块内横向滚动 |
 
-Stage D 尚未合并；上述结果只对应 `codex/frontend-modules-v1` 的当前候选实现。完整验证和 Draft PR 状态以该分支最终 Head 为准。
+Stage D 已合并到 `main`；上述结果对应合并候选实现。后续 Cookie Provider 维护使用独立分支，不复用 Stage D 分支。
 
 开发注意事项：手动开发冒烟仍应使用临时或明确可清理的数据目录，避免污染默认 job、Case、Creator Runtime 或最近报告。
 
@@ -260,4 +270,5 @@ Stage D 尚未合并；上述结果只对应 `codex/frontend-modules-v1` 的当�
 | Stage C 治理记录 | PR #15，`9883c6ae0a4585d031fea8191e7a4ed9c4153e5f`（`Record Stage C merge`） |
 | Stage D 分支与基线 | `codex/frontend-modules-v1` / `9883c6ae0a4585d031fea8191e7a4ed9c4153e5f` |
 | Stage D 当前范围 | Creator 报告视图与设置弹窗低风险提取；完整合同见 `docs/frontend-modules.md` |
-| Stage D 状态 | 实施中；完成验证后仅创建 Draft PR，等待人工审查 |
+| Stage D 状态 | 已完成并合并；merge SHA `8e32166a8f377435380122204c33334034ec44eb` |
+| Stage E 状态 | 已取消，不启动 |

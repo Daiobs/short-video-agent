@@ -29,7 +29,7 @@
 1. 单作品解析：当前可用。围绕一条视频完成链接输入、解析、下载、生成素材包、AI 拆解和 case 查看。
 2. 创作者克隆实验室：P3.0 当前推进中。用于导入一个创作者或账号的对标素材，自由选择 N 条样本，通过大模型蒸馏出选题规则、表达方式、爆款公式和 AI 创作者克隆规则。
 
-当前阶段的创作者克隆实验室已经收敛为单主线 Wizard：导入素材 -> 构建素材池 -> 选择 N 条样本 -> 证据富化 -> 大模型蒸馏 -> 可视化输出。页面只保留一个主按钮 `Start Creator Analysis` 驱动下一步；主页扫描优先使用用户主动配置的 Douyin Cookie / Web API，多作品链接、公开扫描和本机 Chrome 辅助作为回退。系统不会自动下载全部作品，也不会自动发布；选中作品后才进入素材包或蒸馏流程。
+当前阶段的创作者克隆实验室已经收敛为单主线 Wizard：导入素材 -> 构建素材池 -> 选择 N 条样本 -> 证据富化 -> 大模型蒸馏 -> 可视化输出。页面只保留一个主按钮 `Start Creator Analysis` 驱动下一步；主页扫描以用户主动配置的个人账号 Douyin Cookie / Web API 为正式主路径，作品链接、JSON/CSV 和已有 Case 是安全兜底，既有公开扫描可以明确降级使用。本机 Chrome 辅助只作为用户显式触发的高级工具。系统不会自动下载全部作品，也不会自动发布；选中作品后才进入素材包或蒸馏流程。
 
 ## Creator Clone Lab / 创作者克隆实验室
 
@@ -41,7 +41,7 @@
 
 数据源由 `DataSourceManager` 统一调度：
 
-- `cookie_api`：主页扫描主力数据源。用户主动配置 `DOUYIN_COOKIE`、`DOUYIN_USER_AGENT` 和 `DOUYIN_REFERER` 后，系统优先尝试抖音 Web API `/aweme/v1/web/user/post/`；失败再进入安全回退。
+- `cookie_api`：主页扫描正式主路径。用户主动配置 `DOUYIN_COOKIE`、`DOUYIN_USER_AGENT` 和 `DOUYIN_REFERER` 后，系统使用有界分页访问内置 Douyin HTTPS Web API；失败后只进入明确记录的安全回退。
 - `manual_links`：稳定回退。支持一行一个链接、整段分享文案、纯 aweme_id 和混合输入，会自动去重。
 - `browser_dom`：高级备用采集。只读取本机 Chrome 当前页面可见作品列表和元数据，不读取 Cookie 或登录 token。
 - `external_api`：预留授权数据源，不作为默认路径。
@@ -56,6 +56,7 @@ Cookie 设置用于主页 Web API 扫描，不作为绕过平台验证的手段�
 - 已保存 Cookie 不回显原文。
 - Cookie 不进入数据库、素材包、Prompt 或日志。
 - 本机 Chrome 辅助不读取 Cookie。
+- Cookie Provider 的错误分类、分页/重试硬上限和人工更新流程见 `docs/douyin-cookie-provider.md`。
 
 环境变量示例：
 
@@ -98,10 +99,10 @@ DOUYIN_REFERER=https://www.douyin.com/
 
 - 部分抖音主页即使 URL 有效，公开 HTTP 请求也只会返回浏览器校验脚本，例如包含 `_$jsvmprt`、`byted_acrawler`、`__ac_nonce` 或验证码标记。此时系统会返回 `DOUYIN_RISK_CONTROL`。
 - `DOUYIN_RISK_CONTROL` 代表平台没有返回公开作品列表，不是主页 URL 格式错误，也不是图文/照片作品导致。
-- 当前项目边界是不绕验证码、不绕风控、不做签名破解；Cookie API 是主页扫描的主力数据源，但遇到风控、结构不可解析或 Cookie 失效时，推荐改用“多作品链接粘贴”“浏览器辅助采集”“JSON / CSV 导入”或“已有 Case 导入”继续整理素材池。
+- 当前项目边界是不绕验证码、不绕风控、不做签名破解；Cookie API 是主页扫描正式主路径，但遇到结构不可解析或 Cookie 失效时，推荐改用“多作品链接粘贴”“JSON / CSV 导入”或“已有 Case 导入”继续整理素材池。浏览器辅助仅由用户显式触发，不会在失败后自动启动。
 - 多作品粘贴是当前账号级分析的稳定入口；支持一行一个作品链接、整段分享文案、纯 aweme_id 和混合输入，并会显示识别、去重、忽略无效内容的统计。
 - 作品池富化队列默认一次最多处理 150 条可下载视频，可通过 `PROFILE_BUILD_MAX_ITEMS` 调整。每条作品会逐条复用单作品解析、下载、素材包生成、enrichment 归档、可选 ASR/OCR 和可选 AI 拆解流程；某条失败不影响后续条目。大模型蒸馏仍默认最多选择 20 条代表样本，避免上下文过长。
-- 后续如果确认要继续增强账号级扫描，应优先完善授权数据源和浏览器可见信息交接，不做 A_Bogus / X_Bogus、验证码绕过或隐式登录态依赖。
+- Stage E 已取消；不开发本地连接器、浏览器 Cookie 自动读取、A_Bogus / X_Bogus、验证码绕过或隐式登录态依赖。
 - 后续再继续做更多平台适配器、浏览器辅助的本地版采集、评论导入联动和更完整的案例库策略层。
 
 核心功能：
