@@ -18,7 +18,7 @@ class ProfileScanPayload(BaseModel):
     manual_links: str = ""
     structured_items: str = ""
     count: int = 20
-    max_pages: int = 1
+    max_pages: int = 0
     sort_by: str = "like_count"
 
 

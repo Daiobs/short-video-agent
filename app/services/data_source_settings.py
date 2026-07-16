@@ -4,7 +4,12 @@ import hashlib
 from datetime import datetime, timezone
 
 from app.config import settings
-from app.services.profile_scan import inspect_douyin_cookie, test_douyin_cookie_api
+from app.errors import AppError, ErrorCode
+from app.services.profile_scan import (
+    inspect_douyin_cookie,
+    public_cookie_diagnostics,
+    test_douyin_cookie_api,
+)
 from app.services.runtime_settings import (
     effective_douyin_settings,
     load_local_settings,
@@ -45,7 +50,24 @@ def douyin_source_health_payload() -> dict:
             "status": "not_configured",
             "label": "未配置",
             "last_checked_at": "",
-            "status_message": "未配置 Douyin Cookie；仍可使用手动链接或本机 Chrome 辅助。",
+            "status_message": "未配置 Douyin Cookie；仍可使用作品链接、JSON/CSV 或已有 Case。",
+        }
+    diagnostics = inspect_douyin_cookie(cookie)
+    if not diagnostics.get("format_valid"):
+        return {
+            "configured": False,
+            "status": "invalid",
+            "label": "格式无效",
+            "last_checked_at": "",
+            "status_message": "已保存的 Douyin Cookie 格式无效；远端请求不会执行。",
+        }
+    if not diagnostics.get("login_state_sufficient"):
+        return {
+            "configured": False,
+            "status": "login_required",
+            "label": "登录态不足",
+            "last_checked_at": "",
+            "status_message": "已保存的 Douyin Cookie 缺少必要登录态字段；远端请求不会执行。",
         }
 
     payload = load_local_settings()
@@ -58,7 +80,7 @@ def douyin_source_health_payload() -> dict:
         message = "最近一次 Cookie Web API 自检成功。"
     elif status == "failed":
         label = "自检失败"
-        message = "最近一次 Cookie Web API 自检失败，可改用手动链接或本机 Chrome 辅助。"
+        message = "最近一次 Cookie Web API 自检失败，可改用作品链接、JSON/CSV 或已有 Case。"
     else:
         status = "pending"
         label = "已配置待自检"
@@ -74,26 +96,24 @@ def douyin_source_health_payload() -> dict:
 
 def mask_cookie(value: str) -> str:
     cleaned = (value or "").strip()
-    if not cleaned:
-        return ""
-    if len(cleaned) <= 10:
-        return "****"
-    return f"{cleaned[:4]}****{cleaned[-4:]}"
+    return "********" if cleaned else ""
 
 
 def data_source_status_payload() -> dict:
     effective = effective_douyin_settings()
     has_cookie = bool((effective["cookie"] or "").strip())
+    cookie_diagnostics = inspect_douyin_cookie(effective["cookie"])
+    cookie_ready = bool(cookie_diagnostics.get("looks_complete"))
     has_user_agent = bool((effective["user_agent"] or "").strip())
     referer = effective["referer"] or "https://www.douyin.com/"
     sources = [
         {
             "id": "manual_links",
             "label": "多作品链接粘贴",
-            "role": "main",
+            "role": "fallback",
             "enabled": True,
             "status": "ready",
-            "message": "稳定主路径：不依赖 Cookie、不绕风控，适合上线默认入口。",
+            "message": "安全兜底：不依赖 Cookie、不绕风控。",
         },
         {
             "id": "browser_dom",
@@ -105,11 +125,11 @@ def data_source_status_payload() -> dict:
         },
         {
             "id": "cookie_api",
-            "label": "Cookie Web API 增强",
-            "role": "enhancement",
-            "enabled": has_cookie,
-            "status": "configured" if has_cookie else "not_configured",
-            "message": "只用于提高 Web API 成功率；失败会回退到手动链接或浏览器辅助。",
+            "label": "个人账号 Cookie Web API",
+            "role": "main",
+            "enabled": cookie_ready,
+            "status": "configured" if cookie_ready else "invalid" if has_cookie else "not_configured",
+            "message": "主页作品扫描正式主路径；仅使用用户主动配置的本机 Cookie。",
         },
         {
             "id": "external_api",
@@ -121,25 +141,27 @@ def data_source_status_payload() -> dict:
         },
     ]
     return {
-        "configured": has_cookie,
+        "configured": cookie_ready,
         "provider": "cookie_api",
         "has_cookie": has_cookie,
         "masked_cookie": mask_cookie(effective["cookie"]),
-        "cookie_diagnostics": inspect_douyin_cookie(effective["cookie"]),
+        "cookie_diagnostics": public_cookie_diagnostics(cookie_diagnostics),
         "user_agent_configured": has_user_agent,
         "user_agent": effective["user_agent"],
         "referer": referer,
         "profile_scan_provider": settings.profile_scan_provider,
         "sources": sources,
         "status_message": (
-            "已配置 Cookie API 增强层；它只会作为可选加速/补全尝试，失败后仍回到主流程。"
+            "个人账号 Cookie Web API 已配置并作为主页扫描主路径。"
+            if cookie_ready
+            else "已保存 Cookie，但登录态字段不足；远端自检不会发起请求。"
             if has_cookie
-            else "未配置 Cookie API；当前默认使用手动链接和浏览器辅助采集，不影响主流程。"
+            else "未配置个人账号 Cookie；请使用作品链接、JSON/CSV 或已有 Case 作为安全兜底。"
         ),
         "safety_notes": [
-            "Cookie 不会返回给前端，不会写入 case、prompt 或日志。",
-            "Cookie 不是默认依赖，也不用于绕验证码或风控。",
-            "公开扫描失败时，请使用多作品链接粘贴或浏览器辅助采集。",
+            "Cookie 仅保存在本机运行时配置，不进入数据库、Job、Case、Prompt、报告、日志或浏览器存储。",
+            "系统不会自动读取浏览器 Cookie，也不用于绕验证码、绕风控或破解签名。",
+            "Cookie 主路径失败时，请人工更新 Cookie，或使用作品链接、JSON/CSV、已有 Case。",
         ],
         "health": douyin_source_health_payload(),
     }
@@ -161,7 +183,13 @@ def update_douyin_settings_payload(payload: dict) -> dict:
     if payload.get("clear_cookie"):
         values["cookie"] = ""
     elif str(payload.get("douyin_cookie") or payload.get("cookie") or "").strip():
-        values["cookie"] = normalize_cookie_input(str(payload.get("douyin_cookie") or payload.get("cookie") or ""))
+        candidate = normalize_cookie_input(str(payload.get("douyin_cookie") or payload.get("cookie") or ""))
+        diagnostics = inspect_douyin_cookie(candidate)
+        if not diagnostics.get("format_valid"):
+            raise AppError(ErrorCode.DOUYIN_COOKIE_INVALID)
+        if not diagnostics.get("login_state_sufficient"):
+            raise AppError(ErrorCode.DOUYIN_LOGIN_REQUIRED)
+        values["cookie"] = candidate
     update_douyin_runtime_settings(values)
     current_cookie = effective_douyin_settings()["cookie"]
     if _cookie_fingerprint(current_cookie) != previous_cookie_fingerprint:

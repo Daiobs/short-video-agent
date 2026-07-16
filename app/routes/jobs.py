@@ -64,7 +64,7 @@ class ProfileScanJobRequest(BaseModel):
     manual_links: str = ""
     structured_items: str = ""
     count: int = 20
-    max_pages: int = 1
+    max_pages: int = 0
     sort_by: str = "like_count"
 
 
@@ -267,12 +267,26 @@ def _run_profile_scan_job(job_id: str, payload: dict) -> None:
     except AppError as error:
         job = db.get(Job, job_id)
         if job:
-            _set_job(job, "failed", job.progress, error.message, error_code=error.code)
+            diagnostics = error.public_details()
+            _set_job(
+                job,
+                "failed",
+                job.progress,
+                error.message,
+                result={"diagnostics": diagnostics} if diagnostics else None,
+                error_code=error.code,
+            )
             db.commit()
-    except Exception as error:
+    except Exception:
         job = db.get(Job, job_id)
         if job:
-            _set_job(job, "failed", job.progress, str(error)[:500], error_code=ErrorCode.PROFILE_SCAN_FAILED)
+            _set_job(
+                job,
+                "failed",
+                job.progress,
+                "主页扫描发生内部错误，请改用作品链接、JSON/CSV 或已有 Case 导入。",
+                error_code=ErrorCode.PROFILE_SCAN_FAILED,
+            )
             db.commit()
     finally:
         db.close()

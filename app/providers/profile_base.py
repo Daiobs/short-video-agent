@@ -19,7 +19,9 @@ class ProfileScanRequest:
     manual_links: str | None = None
     structured_items: str | None = None
     count: int = 20
-    max_pages: int = 1
+    # Zero delegates the default to PROFILE_SCAN_MAX_PAGES while every provider
+    # still applies its own hard upper bound.
+    max_pages: int = 0
     sort_by: str = "like_count"
 
 
@@ -137,6 +139,7 @@ class ProfileScanResult:
     next_cursor: str = ""
     warnings: list[str] = field(default_factory=list)
     import_stats: dict = field(default_factory=dict)
+    scan_meta: dict = field(default_factory=dict)
     summary: ProfileScanSummary | None = None
 
     def to_dict(self) -> dict:
@@ -150,6 +153,7 @@ class ProfileScanResult:
             "next_cursor": self.next_cursor,
             "warnings": self.warnings,
             "import_stats": self.import_stats,
+            "scan_meta": self.scan_meta,
             "summary": summary.to_dict(),
         }
 

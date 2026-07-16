@@ -60,9 +60,9 @@ class Settings:
     candidate_probe_enabled: bool = os.getenv("CANDIDATE_PROBE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     candidate_probe_timeout_seconds: float = _float_env("CANDIDATE_PROBE_TIMEOUT_SECONDS", 1.2)
     candidate_probe_max_candidates: int = _int_env("CANDIDATE_PROBE_MAX_CANDIDATES", 3)
-    profile_scan_provider: str = os.getenv("PROFILE_SCAN_PROVIDER", "public").strip().lower()
+    profile_scan_provider: str = os.getenv("PROFILE_SCAN_PROVIDER", "cookie_api").strip().lower()
     profile_scan_api_base: str = os.getenv("PROFILE_SCAN_API_BASE", "").rstrip("/")
-    profile_scan_max_pages: int = _int_env("PROFILE_SCAN_MAX_PAGES", 1)
+    profile_scan_max_pages: int = _int_env("PROFILE_SCAN_MAX_PAGES", 10)
     profile_scan_count_per_page: int = _int_env("PROFILE_SCAN_COUNT_PER_PAGE", 20)
     profile_build_max_items: int = _int_env("PROFILE_BUILD_MAX_ITEMS", 150)
     keyframe_max_count: int = _int_env("KEYFRAME_MAX_COUNT", 30)

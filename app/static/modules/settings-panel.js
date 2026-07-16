@@ -129,24 +129,28 @@
 
     function renderDataSourceStatus(rawStatus = {}) {
       const status = rawStatus && typeof rawStatus === "object" ? rawStatus : {};
+      const configured = Boolean(status.configured);
+      const hasCookie = Boolean(status.has_cookie);
       if (elements.dataSourceStatusBadge) {
-        elements.dataSourceStatusBadge.textContent = status.has_cookie ? "主力数据源已配置" : "待配置";
-        elements.dataSourceStatusBadge.className = `status-badge ${status.has_cookie ? "success" : "muted-badge"}`;
+        elements.dataSourceStatusBadge.textContent = configured
+          ? "主力数据源已配置"
+          : hasCookie ? "配置需修正" : "待配置";
+        elements.dataSourceStatusBadge.className = `status-badge ${configured ? "success" : hasCookie ? "warning" : "muted-badge"}`;
       }
       if (elements.dataSourceStatusList) {
         elements.dataSourceStatusList.innerHTML = `
           <dl>
-            <dt>Cookie API</dt><dd>${status.has_cookie ? "已配置" : "未配置"}</dd>
+            <dt>Cookie API</dt><dd>${configured ? "已配置可用" : hasCookie ? "已保存但不可用" : "未配置"}</dd>
             <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
             <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
             ${cookieDiagnosticsRows(status.cookie_diagnostics || {})}
-            <dt>当前策略</dt><dd>Douyin Cookie / Web API 优先用于主页扫描；失败后回退到公开扫描、手动链接或高级工具。</dd>
+            <dt>当前策略</dt><dd>个人账号 Cookie / Web API 是主页扫描主路径；失败时明确提示人工更新，并保留作品链接、JSON/CSV、已有 Case 等安全兜底。</dd>
           </dl>
         `;
       }
       if (elements.douyinCookieInput) {
         elements.douyinCookieInput.value = "";
-        elements.douyinCookieInput.placeholder = status.has_cookie
+        elements.douyinCookieInput.placeholder = hasCookie
           ? `留空保留当前 Cookie（${status.masked_cookie || "已配置"}）`
           : "粘贴 Douyin Cookie";
       }
@@ -167,12 +171,14 @@
         : ["config_only", "not_configured"].includes(test.status) ? "muted-badge" : "warning";
       const rows = [
         ["自检状态", test.status || ""],
+        ["错误码", test.error_code || ""],
         ["Cookie 结构", diagnostics.has_cookie ? `${numberText(diagnostics.pair_count)} 个字段，${numberText(diagnostics.login_key_count)} 个登录态字段` : "未配置"],
         ["关键字段", items(diagnostics.present_important_keys).join(" / ") || "未检测到"],
         ["API 请求", test.api_checked ? `已请求，HTTP ${test.status_code || "未知"}` : "未请求"],
         ["返回类型", test.api_checked ? `${test.is_json ? "JSON" : "非 JSON"}${test.content_type ? ` · ${test.content_type}` : ""}` : "未检测"],
+        ["发生跳转", test.api_checked ? (test.redirected ? "是，已停止" : "否") : ""],
+        ["重试次数", test.api_checked ? numberText(test.retry_count) : ""],
         ["返回作品", test.api_checked ? `${numberText(test.aweme_count)} 条` : "未检测"],
-        ["接口消息", test.api_status_msg || ""],
       ].filter(([, value]) => value !== "");
       const nextSteps = items(test.safe_next_steps);
       const endpointResults = items(test.endpoint_results);

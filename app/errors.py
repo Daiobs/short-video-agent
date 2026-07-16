@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 
 class ErrorCode:
@@ -11,6 +12,20 @@ class ErrorCode:
     DOUYIN_RISK_CONTROL = "DOUYIN_RISK_CONTROL"
     COOKIE_REQUIRED = "COOKIE_REQUIRED"
     COOKIE_INVALID = "COOKIE_INVALID"
+    DOUYIN_COOKIE_NOT_CONFIGURED = "DOUYIN_COOKIE_NOT_CONFIGURED"
+    DOUYIN_COOKIE_INVALID = "DOUYIN_COOKIE_INVALID"
+    DOUYIN_LOGIN_REQUIRED = "DOUYIN_LOGIN_REQUIRED"
+    DOUYIN_AUTH_EXPIRED = "DOUYIN_AUTH_EXPIRED"
+    DOUYIN_UPSTREAM_REDIRECT = "DOUYIN_UPSTREAM_REDIRECT"
+    DOUYIN_UPSTREAM_NON_JSON = "DOUYIN_UPSTREAM_NON_JSON"
+    DOUYIN_UPSTREAM_RATE_LIMITED = "DOUYIN_UPSTREAM_RATE_LIMITED"
+    DOUYIN_UPSTREAM_FORBIDDEN = "DOUYIN_UPSTREAM_FORBIDDEN"
+    DOUYIN_UPSTREAM_TIMEOUT = "DOUYIN_UPSTREAM_TIMEOUT"
+    DOUYIN_UPSTREAM_UNAVAILABLE = "DOUYIN_UPSTREAM_UNAVAILABLE"
+    DOUYIN_RESPONSE_INVALID = "DOUYIN_RESPONSE_INVALID"
+    DOUYIN_PAGINATION_INVALID = "DOUYIN_PAGINATION_INVALID"
+    DOUYIN_PAGE_LIMIT_REACHED = "DOUYIN_PAGE_LIMIT_REACHED"
+    DOUYIN_NO_PUBLIC_WORKS = "DOUYIN_NO_PUBLIC_WORKS"
     EMPTY_AWEME_LIST = "EMPTY_AWEME_LIST"
     PROVIDER_FAILED = "PROVIDER_FAILED"
     QUALITY_NOT_FOUND = "QUALITY_NOT_FOUND"
@@ -64,6 +79,20 @@ ERROR_MESSAGES = {
     ErrorCode.DOUYIN_RISK_CONTROL: "主页扫描失败：疑似被抖音风控。可以配置 DOUYIN_COOKIE，或改用单作品链接/本地视频上传模式。",
     ErrorCode.COOKIE_REQUIRED: "当前请求可能需要 Cookie。请在 .env 中配置 DOUYIN_COOKIE，或使用本地视频上传模式。",
     ErrorCode.COOKIE_INVALID: "Cookie 缺失或失效。请更新 .env 中的 DOUYIN_COOKIE，或使用本地视频上传模式。",
+    ErrorCode.DOUYIN_COOKIE_NOT_CONFIGURED: "个人账号 Cookie Web API 未配置。请在本机设置中配置 Cookie，或使用作品链接、JSON/CSV、已有 Case 导入。",
+    ErrorCode.DOUYIN_COOKIE_INVALID: "个人账号 Cookie 格式无效。请重新复制完整 Cookie，并确认没有重复字段、占位值或截断内容。",
+    ErrorCode.DOUYIN_LOGIN_REQUIRED: "抖音 Web API 需要有效登录态。请人工更新个人 Cookie，或使用作品链接、JSON/CSV、已有 Case 导入。",
+    ErrorCode.DOUYIN_AUTH_EXPIRED: "个人账号 Cookie 已过期或登录态失效。请人工更新 Cookie 后重试。",
+    ErrorCode.DOUYIN_UPSTREAM_REDIRECT: "抖音 Web API 返回了非预期跳转，已停止请求。请检查登录态后重试。",
+    ErrorCode.DOUYIN_UPSTREAM_NON_JSON: "抖音 Web API 没有返回 JSON，可能是登录页、校验页或临时错误页。",
+    ErrorCode.DOUYIN_UPSTREAM_RATE_LIMITED: "抖音 Web API 当前限流。请稍后重试，或改用安全兜底导入。",
+    ErrorCode.DOUYIN_UPSTREAM_FORBIDDEN: "抖音 Web API 拒绝了当前请求。请检查账号权限和个人 Cookie。",
+    ErrorCode.DOUYIN_UPSTREAM_TIMEOUT: "抖音 Web API 请求超时。请稍后重试，或改用安全兜底导入。",
+    ErrorCode.DOUYIN_UPSTREAM_UNAVAILABLE: "抖音 Web API 当前不可用。请稍后重试，或改用安全兜底导入。",
+    ErrorCode.DOUYIN_RESPONSE_INVALID: "抖音 Web API 返回结构无法识别，可能是接口结构变化。",
+    ErrorCode.DOUYIN_PAGINATION_INVALID: "抖音 Web API 分页信息无效，已停止继续扫描。",
+    ErrorCode.DOUYIN_PAGE_LIMIT_REACHED: "主页扫描已达到配置的页数上限，当前结果为部分结果。",
+    ErrorCode.DOUYIN_NO_PUBLIC_WORKS: "抖音 Web API 没有返回当前账号的公开视频。",
     ErrorCode.EMPTY_AWEME_LIST: "作品列表为空。",
     ErrorCode.PROVIDER_FAILED: "清晰度 Provider 调用失败。",
     ErrorCode.QUALITY_NOT_FOUND: "未找到可用清晰度候选。",
@@ -114,13 +143,44 @@ ERROR_MESSAGES = {
 class AppError(Exception):
     code: str
     message: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.message:
             self.message = ERROR_MESSAGES.get(self.code, "操作失败。")
 
-    def as_dict(self) -> dict[str, str]:
-        return {"error_code": self.code, "message": self.message}
+    def public_details(self) -> dict[str, Any]:
+        allowed = {
+            "status_code",
+            "content_type",
+            "redirected",
+            "page_count",
+            "item_count",
+            "duplicate_count",
+            "invalid_item_count",
+            "partial",
+            "truncated_reason",
+            "retry_count",
+        }
+        payload: dict[str, Any] = {}
+        for key in allowed:
+            value = self.details.get(key)
+            if isinstance(value, bool):
+                payload[key] = value
+            elif isinstance(value, int):
+                payload[key] = value
+            elif isinstance(value, str):
+                payload[key] = value[:160]
+            elif value is None and key in self.details:
+                payload[key] = None
+        return payload
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"error_code": self.code, "message": self.message}
+        diagnostics = self.public_details()
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
+        return payload
 
 
 def error_message(code: str) -> str:

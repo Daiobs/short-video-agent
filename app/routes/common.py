@@ -8,7 +8,8 @@ from app.errors import AppError, error_message
 def error_response(error: AppError, status_code: int = 400) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
-        content={"ok": False, "error_code": error.code, "message": error.message},
+        content={"ok": False, **error.as_dict()},
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -21,4 +22,3 @@ def not_implemented_response() -> JSONResponse:
             "message": error_message("NOT_IMPLEMENTED"),
         },
     )
-

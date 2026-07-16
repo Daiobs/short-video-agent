@@ -263,7 +263,7 @@ def build_sample_set(
             )
             samples.extend(samples_from_profile_result(result))
             warnings.extend(result.warnings)
-            warnings.append("主页扫描已通过统一 profile pipeline 执行；本机配置 Cookie 时会优先尝试 Cookie API，失败后再回退公开页面扫描。")
+            warnings.append("主页扫描已通过统一 profile pipeline 执行；个人账号 Cookie Web API 是正式主路径，失败时只使用现有安全回退。")
         except AppError as error:
             if not (manual_links.strip() or structured_items.strip() or case_ids.strip()):
                 raise

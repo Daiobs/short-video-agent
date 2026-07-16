@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from pydantic import BaseModel
 
 from app.errors import AppError
@@ -70,20 +70,26 @@ def get_preflight_settings():
 
 
 @router.get("/data-sources")
-def get_data_source_settings():
+def get_data_source_settings(response: Response):
+    response.headers["Cache-Control"] = "no-store"
     return {"ok": True, "data_sources": data_source_settings.data_source_status_payload()}
 
 
 @router.put("/data-sources/douyin")
-def update_douyin_data_source_settings(payload: DouyinSettingsUpdate):
-    return {
-        "ok": True,
-        "data_sources": data_source_settings.update_douyin_settings_payload(_payload_dict(payload)),
-    }
+def update_douyin_data_source_settings(payload: DouyinSettingsUpdate, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return {
+            "ok": True,
+            "data_sources": data_source_settings.update_douyin_settings_payload(_payload_dict(payload)),
+        }
+    except AppError as error:
+        return error_response(error)
 
 
 @router.post("/data-sources/douyin/test")
-def test_douyin_data_source_settings(payload: DouyinSettingsTest):
+def test_douyin_data_source_settings(payload: DouyinSettingsTest, response: Response):
+    response.headers["Cache-Control"] = "no-store"
     return {
         "ok": True,
         "test": data_source_settings.test_douyin_settings_payload(_payload_dict(payload)),

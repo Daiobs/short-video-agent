@@ -51,7 +51,7 @@ class CreatorCloneImportRequest(BaseModel):
     structured_items: str = ""
     case_ids: str = ""
     count: int = 20
-    max_pages: int = 1
+    max_pages: int = 0
     sort_by: str = "engagement_score"
 
 
