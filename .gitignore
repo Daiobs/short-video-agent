@@ -15,6 +15,7 @@ outputs/creator_clones/*
 outputs/creator_state/*
 outputs/local_chrome_profile/*
 samples/
+.research-private/
 !outputs/uploads/.gitkeep
 !outputs/cases/.gitkeep
 !outputs/downloads/.gitkeep
