@@ -1585,6 +1585,7 @@ let persistedCalls = 0;
 let distillCalls = 0;
 let refreshedSampleCounts = [];
 const requestedUrls = [];
+let activeHomeRoute = "profile";
 const profileAutoDistill = {checked: true};
 const profileScanStatus = {textContent: ""};
 const jobMessage = {className: "", textContent: ""};
@@ -1713,16 +1714,29 @@ def test_workbench_resource_less_recovery_and_profile_scan_observation_run_in_ja
         "let singleMonitorCalls = 0;\n"
         "let restoredSets = [];\n"
         "let targetResults = [];\n"
+        "let currentSingleJob = {id: 'job_previous'};\n"
+        "let loadedHomeCase = {case_id: 'case_previous'};\n"
+        "let singleItemFlow = {stage: 'acquisition', status: 'failed', error_code: 'DOWNLOAD_FAILED'};\n"
+        "let observationGeneration = 0;\n"
+        "let observationJobId = '';\n"
+        "let activeHomeRoute = 'profile';\n"
         "let currentLocalVideoId = '';\n"
         "const WORKBENCH_TASK_STALE_SECONDS = 1800;\n"
         "const singleForm = {elements: {value: {value: ''}}};\n"
+        "const homeCaseView = {classList: {add() {}}};\n"
+        "const resultCard = {classList: {add() {}}};\n"
+        "const singleButton = {disabled: false, textContent: ''};\n"
+        "const buildCaseButton = {disabled: false};\n"
         "const jobResult = null;\n"
         "const jobMessage = {className: '', textContent: ''};\n"
         "const profileScanStatus = {textContent: ''};\n"
         "const window = {location: {origin: 'http://127.0.0.1:8765'}, scrollTo() {}, setTimeout(resolve) { resolve(); }};\n"
-        "function setHomeRoute() {}\n"
-        "function placeJobCard() {}\n"
+        "function setHomeRoute(route) { activeHomeRoute = route; }\n"
+        "function placeJobCard() { return true; }\n"
         "function renderJobStatus() {}\n"
+        "function renderSingleItemStatus() {}\n"
+        "function startSingleItemObservation(jobId = '') { observationGeneration += 1; observationJobId = jobId; return observationGeneration; }\n"
+        "function isCurrentSingleItemObservation(jobId, generation) { return jobId === observationJobId && generation === observationGeneration; }\n"
         "function getCaseId() { return ''; }\n"
         "function showJson() {}\n"
         "function profileBuildJobAgeSeconds() { return 0; }\n"
@@ -1749,6 +1763,7 @@ def test_workbench_resource_less_recovery_and_profile_scan_observation_run_in_ja
         + "    {id: 'job_profile', type: 'profile-scan', status: 'running', progress: 30, result_json: {}},\n"
         + "    {id: 'job_profile', type: 'profile-scan', status: 'success', progress: 100, result_json: {set: {set_id: 'clone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}}},\n"
         + "  ];\n"
+        + "  activeHomeRoute = 'profile';\n"
         + "  const observedProfile = await monitorWorkbenchProfileScanJob('job_profile');\n"
         + "  process.stdout.write(JSON.stringify({\n"
         + "    manualWithoutContext, manualWithoutJob, targetResults, observedRunning, singleMonitorCalls,\n"
@@ -1851,6 +1866,7 @@ def test_creator_clone_distill_success_report_recovery_runs_in_javascript() -> N
         "var hydrateCalls = 0;\n"
         "var rawFetchCalls = 0;\n"
         "var workbenchFetchCalls = 0;\n"
+        "var activeHomeRoute = 'profile';\n"
         "function makeClassList() {\n"
         "  const values = new Set(['hidden', 'stage-hidden']);\n"
         "  return {add(...items) { items.forEach((item) => values.add(item)); }, remove(...items) { items.forEach((item) => values.delete(item)); }, contains(item) { return values.has(item); }};\n"

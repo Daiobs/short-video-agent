@@ -310,24 +310,47 @@ LLM_MODEL=支持图片输入的模型</pre>
                     <button type="submit" id="single-button">解析</button>
                 </div>
             </form>
-            <div class="task-status-grid" aria-label="当前任务状态">
-                <div>
-                    <span>解析状态</span>
-                    <strong id="parse-status">等待输入</strong>
+            <section class="single-item-status-card" id="single-item-status-card" aria-labelledby="single-item-status-title" aria-busy="false">
+                <div class="single-item-status-heading">
+                    <div>
+                        <span class="entry-label">Task Progress</span>
+                        <h3 id="single-item-status-title">任务进度</h3>
+                    </div>
+                    <span class="single-item-overall-status" id="single-item-overall-status">等待开始</span>
                 </div>
-                <div>
-                    <span>下载状态</span>
-                    <strong id="download-status">未开始</strong>
-                </div>
-                <div>
-                    <span>素材包状态</span>
-                    <strong id="package-status">未生成</strong>
-                </div>
-                <div>
-                    <span>AI 拆解状态</span>
-                    <strong id="analysis-status">未运行</strong>
-                </div>
-            </div>
+                <ol class="task-status-grid single-item-stage-list" id="single-item-stage-list" aria-label="单作品任务进度">
+                    <li class="single-item-stage pending" data-single-item-stage="received" data-stage-state="pending">
+                        <span class="single-item-stage-icon" aria-hidden="true">○</span>
+                        <span class="single-item-stage-copy">
+                            <span class="single-item-stage-name">1. 已接收</span>
+                            <strong id="parse-status">未开始</strong>
+                        </span>
+                    </li>
+                    <li class="single-item-stage pending" data-single-item-stage="acquisition" data-stage-state="pending">
+                        <span class="single-item-stage-icon" aria-hidden="true">○</span>
+                        <span class="single-item-stage-copy">
+                            <span class="single-item-stage-name">2. 获取素材</span>
+                            <strong id="download-status">未开始</strong>
+                        </span>
+                    </li>
+                    <li class="single-item-stage pending" data-single-item-stage="analysis" data-stage-state="pending">
+                        <span class="single-item-stage-icon" aria-hidden="true">○</span>
+                        <span class="single-item-stage-copy">
+                            <span class="single-item-stage-name">3. 生成分析</span>
+                            <strong id="analysis-status">未开始</strong>
+                        </span>
+                    </li>
+                    <li class="single-item-stage pending" data-single-item-stage="complete" data-stage-state="pending">
+                        <span class="single-item-stage-icon" aria-hidden="true">○</span>
+                        <span class="single-item-stage-copy">
+                            <span class="single-item-stage-name">4. 完成</span>
+                            <strong id="package-status">未开始</strong>
+                        </span>
+                    </li>
+                </ol>
+                <div id="single-item-partial-summary" class="single-item-partial-summary hidden"></div>
+                <p id="single-item-status-announcement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true">等待开始</p>
+            </section>
             <div id="single-result" class="inline-result hidden"></div>
         </section>
 
