@@ -1,3 +1,615 @@
+// BEGIN SINGLE_ITEM_JOB_STATUS
+(function initializeSingleItemJobStatus(global) {
+  "use strict";
+
+  const stageDefinitions = Object.freeze([
+    Object.freeze({id: "received", label: "已接收"}),
+    Object.freeze({id: "acquisition", label: "获取素材"}),
+    Object.freeze({id: "analysis", label: "生成分析"}),
+    Object.freeze({id: "complete", label: "完成"}),
+  ]);
+  const displayStates = new Set(["pending", "active", "completed", "partial", "failed"]);
+  const flowStatuses = new Set(["pending", "active", "completed", "partial", "failed"]);
+  const jobStatuses = new Set(["pending", "running", "success", "failed", "recoverable", "stale"]);
+  const analysisStatuses = new Set([
+    "", "pending", "running", "success", "failed", "skipped",
+    "completed", "not_configured", "not_analyzed", "artifact_incomplete",
+  ]);
+  const optionalStatuses = new Set([
+    "", "pending", "success", "failed", "provider_missing", "missing",
+    "no_speech", "no_text", "disabled", "not_configured", "skipped", "not_required",
+  ]);
+  const successfulOptionalStatuses = new Set(["success", "no_speech", "no_text"]);
+  const failedOptionalStatuses = new Set(["failed", "provider_missing", "missing"]);
+  const acquisitionErrorCodes = new Set([
+    "INVALID_AWEME_URL", "AWEME_ID_NOT_FOUND", "PROVIDER_FAILED", "QUALITY_NOT_FOUND",
+    "URL_EXPIRED", "HOST_NOT_ALLOWED", "REDIRECT_HOST_NOT_ALLOWED", "CONTENT_TYPE_INVALID",
+    "CONTENT_LENGTH_TOO_LARGE", "DOWNLOAD_TIMEOUT", "DOWNLOAD_FAILED", "INVALID_VIDEO_FILE",
+    "LOCAL_UPLOAD_FAILED",
+  ]);
+  const caseErrorCodes = new Set([
+    "FFMPEG_NOT_FOUND", "FFPROBE_FAILED", "KEYFRAME_EXTRACT_FAILED", "CASE_BUILD_FAILED",
+  ]);
+  const stateLabels = Object.freeze({
+    pending: "未开始",
+    active: "进行中",
+    completed: "已完成",
+    partial: "部分完成",
+    failed: "失败",
+  });
+  const stateIcons = Object.freeze({
+    pending: "○",
+    active: "●",
+    completed: "✓",
+    partial: "!",
+    failed: "×",
+  });
+  const optionalResultDefinitions = Object.freeze([
+    Object.freeze({id: "asr", label: "语音检查结果", category: "语音文本不可用"}),
+    Object.freeze({id: "ocr", label: "画面文字检查结果", category: "画面文字不可用"}),
+    Object.freeze({id: "comments", label: "评论摘要", category: "辅助证据不可用"}),
+    Object.freeze({id: "metrics", label: "指标快照", category: "辅助证据不可用"}),
+    Object.freeze({id: "index", label: "结构化索引", category: "辅助证据不可用"}),
+  ]);
+
+  function record(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  }
+
+  function hasRecordContent(value) {
+    return value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0;
+  }
+
+  function itemList(value, limit = 20) {
+    return Array.isArray(value)
+      ? value.filter((item) => item !== undefined && item !== null).slice(0, limit)
+      : [];
+  }
+
+  function normalizedStatus(value) {
+    return String(value || "").trim().toLowerCase().slice(0, 64);
+  }
+
+  function escapeMarkup(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function diagnoseUnknown(source) {
+    const host = String(global.location?.hostname || "").toLowerCase();
+    if (["localhost", "127.0.0.1", "::1"].includes(host) && global.console?.warn) {
+      global.console.warn("[single-item-status] 未识别状态，已安全降级。", {source});
+    }
+  }
+
+  function failureCategory(errorCode, source = "") {
+    const code = String(errorCode || "").trim().toUpperCase().slice(0, 96);
+    const kind = String(source || "").trim().toLowerCase().slice(0, 48);
+    if (code.startsWith("ASR_") || kind === "asr") {
+      return "语音文本不可用";
+    }
+    if (code.startsWith("OCR_") || kind === "ocr") {
+      return "画面文字不可用";
+    }
+    if (
+      code.startsWith("DOWNLOAD_")
+      || code.startsWith("QUALITY_")
+      || code.startsWith("PROVIDER_")
+      || code.startsWith("URL_")
+      || acquisitionErrorCodes.has(code)
+      || kind === "download"
+      || kind === "acquisition"
+    ) {
+      return "素材获取未完成";
+    }
+    if (
+      code.startsWith("CASE_BUILD_")
+      || code.startsWith("FFMPEG_")
+      || code.startsWith("FFPROBE_")
+      || code.startsWith("KEYFRAME_")
+      || caseErrorCodes.has(code)
+      || kind === "case"
+    ) {
+      return "素材包未完整";
+    }
+    if (code.startsWith("LLM_") || code === "AUTO_ANALYSIS_FAILED" || kind === "analysis") {
+      return "自动拆解未生成";
+    }
+    if (code.startsWith("ENRICHMENT_") || code === "COMMENTS_IMPORT_FAILED" || kind === "enrichment") {
+      return "证据补充未完成";
+    }
+    if (/SAVE|WRITE|PERSIST/.test(code) || kind === "storage") {
+      return "结果保存未完成";
+    }
+    return "状态暂时不可确认";
+  }
+
+  function optionalStatus(caseData, manifestStatuses, id) {
+    const enrichment = record(caseData.enrichment);
+    if (id === "asr") {
+      return normalizedStatus(record(enrichment.asr_status).status || manifestStatuses.asr);
+    }
+    if (id === "ocr") {
+      return normalizedStatus(record(enrichment.ocr_status).status || manifestStatuses.ocr);
+    }
+    return normalizedStatus(manifestStatuses[id]);
+  }
+
+  function normalizedFlowStage(flow) {
+    const raw = normalizedStatus(flow.stage || flow.phase || "idle");
+    return {
+      receiving: "received",
+      acquiring: "acquisition",
+      analyzing: "analysis",
+      done: "complete",
+    }[raw] || raw || "idle";
+  }
+
+  function makeStages() {
+    return stageDefinitions.map((stage) => ({
+      ...stage,
+      state: "pending",
+      statusLabel: stateLabels.pending,
+    }));
+  }
+
+  function setStage(stages, id, state) {
+    const stage = stages.find((item) => item.id === id);
+    if (!stage || !displayStates.has(state)) {
+      return;
+    }
+    stage.state = state;
+    stage.statusLabel = stateLabels[state];
+  }
+
+  function markPreviousCompleted(stages, id) {
+    const index = stageDefinitions.findIndex((stage) => stage.id === id);
+    for (let position = 0; position < index; position += 1) {
+      if (!["partial", "failed"].includes(stages[position].state)) {
+        setStage(stages, stages[position].id, "completed");
+      }
+    }
+  }
+
+  function derive({job: rawJob = null, caseData: rawCase = null, flow: rawFlow = null} = {}) {
+    const job = record(rawJob);
+    const caseData = record(rawCase);
+    const flow = record(rawFlow);
+    const result = record(job.result_json || job.result);
+    const resultCase = record(result.case);
+    const analysisPayload = record(result.analysis);
+    const workflow = record(caseData.primary_workflow);
+    const enrichment = record(caseData.enrichment);
+    const manifestStatuses = record(record(enrichment.manifest).statuses);
+    const stages = makeStages();
+    const availableResults = new Set();
+    const failedCapabilities = new Set();
+    const failureCategories = new Set();
+    let analysisFailureKnown = false;
+    let unknown = false;
+
+    function noteFailure(capability, category) {
+      failedCapabilities.add(capability);
+      failureCategories.add(category);
+    }
+
+    const jobStatus = normalizedStatus(job.status);
+    const jobType = normalizedStatus(job.type || job.task_type);
+    const flowStage = normalizedFlowStage(flow);
+    const flowStatus = normalizedStatus(flow.status || (flowStage === "idle" ? "pending" : "active"));
+    const caseId = String(caseData.case_id || result.case_id || resultCase.case_id || "").trim();
+    const downloadAvailable = Boolean(
+      record(result.download).local_video_id
+      || result.local_video_id
+      || caseData.local_video_id,
+    );
+    const caseAvailable = Boolean(caseId);
+    const resultCaseProvesArtifact = Boolean(
+      resultCase.case_id
+      && resultCase.local_video_id,
+    );
+    const workflowHasArtifactVerdict = typeof workflow.artifact_ready === "boolean";
+    const baseReady = workflowHasArtifactVerdict
+      ? workflow.artifact_ready === true
+      : resultCaseProvesArtifact;
+    const workflowAnalysisStatus = normalizedStatus(workflow.analysis_status);
+    let analysisStatus = normalizedStatus(
+      result.analysis_status
+      || record(caseData.analysis_job).status
+      || workflowAnalysisStatus,
+    );
+    if (analysisStatus === "completed") {
+      analysisStatus = "success";
+    } else if (analysisStatus === "not_configured") {
+      analysisStatus = "skipped";
+    } else if (analysisStatus === "not_analyzed" || analysisStatus === "artifact_incomplete") {
+      analysisStatus = "pending";
+    }
+    const caseAnalysisAvailable = Boolean(
+      hasRecordContent(caseData.analysis_result)
+      || caseData.analysis_report
+      || workflowAnalysisStatus === "completed"
+    );
+    const jobAnalysisAvailable = Boolean(
+      hasRecordContent(analysisPayload.analysis_result)
+      || analysisPayload.analysis_report
+    );
+    const loadedCaseAnalysisUnavailable = Object.keys(caseData).length > 0
+      && ["not_analyzed", "not_configured", "artifact_incomplete"].includes(workflowAnalysisStatus);
+    if (caseAnalysisAvailable || jobAnalysisAvailable) {
+      analysisStatus = "success";
+    } else if (loadedCaseAnalysisUnavailable && analysisStatus === "success") {
+      analysisStatus = workflowAnalysisStatus === "not_configured" ? "skipped" : "pending";
+    }
+    const analysisAvailable = Boolean(
+      caseAnalysisAvailable
+      || jobAnalysisAvailable
+      || analysisStatus === "success",
+    );
+    const recoveryResultsAvailable = itemList(job.available_results || result.available_results, 10).length > 0;
+    const analysisRequestActive = ["pending", "running"].includes(jobStatus)
+      || (flowStage === "analysis" && ["pending", "active"].includes(flowStatus));
+    const analysisKnownMissing = !analysisRequestActive && !analysisAvailable && (
+      workflowAnalysisStatus === "not_analyzed"
+      || (jobStatus === "success" && baseReady && analysisStatus === "pending")
+    );
+
+    if (baseReady) {
+      availableResults.add("基础素材包");
+    }
+    if (analysisAvailable) {
+      availableResults.add("AI 拆解报告");
+    }
+    if (recoveryResultsAvailable) {
+      availableResults.add("已保留结果");
+    }
+
+    const missingArtifacts = itemList(workflow.missing_artifacts, 12);
+    if (missingArtifacts.length || workflow.artifact_ready === false) {
+      noteFailure("material-package", "素材包未完整");
+    } else if (workflow.analysis_status === "artifact_incomplete") {
+      noteFailure("material-package", "素材包未完整");
+    }
+
+    for (const definition of optionalResultDefinitions) {
+      const status = optionalStatus(caseData, manifestStatuses, definition.id);
+      if (!optionalStatuses.has(status)) {
+        unknown = true;
+        diagnoseUnknown("case.enrichment." + definition.id);
+        continue;
+      }
+      if (successfulOptionalStatuses.has(status)) {
+        availableResults.add(definition.label);
+      } else if (failedOptionalStatuses.has(status)) {
+        noteFailure("optional-" + definition.id, definition.category);
+        analysisFailureKnown = true;
+      }
+    }
+
+    if (!analysisStatuses.has(analysisStatus)) {
+      unknown = true;
+      diagnoseUnknown("analysis_status");
+    } else if (analysisStatus === "failed") {
+      noteFailure("analysis", failureCategory(record(result.analysis_error).error_code, "analysis"));
+      analysisFailureKnown = true;
+    } else if (analysisStatus === "skipped") {
+      noteFailure("analysis", "分析产物缺失");
+      analysisFailureKnown = true;
+    } else if (analysisKnownMissing) {
+      noteFailure("analysis", "分析产物缺失");
+      analysisFailureKnown = true;
+    }
+
+    if (jobStatus && !jobStatuses.has(jobStatus)) {
+      unknown = true;
+      diagnoseUnknown("job.status");
+    }
+    const caseStatus = normalizedStatus(caseData.status);
+    if (caseStatus && !["success", "failed", "missing"].includes(caseStatus)) {
+      unknown = true;
+      diagnoseUnknown("case.status");
+    }
+    if (caseStatus === "failed" || caseStatus === "missing") {
+      noteFailure("material-package", "素材包未完整");
+    }
+
+    const hasUsableResult = availableResults.size > 0;
+    const analysisJobType = ["analyze-case", "enrich-case", "asr-case", "ocr-case"].includes(jobType);
+    const jobFailureStage = analysisJobType || caseAvailable || downloadAvailable ? "analysis" : "acquisition";
+
+    if (!flowStatuses.has(flowStatus)) {
+      unknown = true;
+      diagnoseUnknown("flow.status");
+    }
+
+    if (flowStage !== "idle" && !jobStatus) {
+      if (["received", "acquisition", "analysis", "complete"].includes(flowStage)) {
+        markPreviousCompleted(stages, flowStage);
+        setStage(
+          stages,
+          flowStage,
+          ["completed", "partial", "failed"].includes(flowStatus) ? flowStatus : "active",
+        );
+      } else {
+        unknown = true;
+        diagnoseUnknown("flow.stage");
+        setStage(stages, "received", "active");
+      }
+    }
+
+    if (caseAvailable || downloadAvailable || jobStatus) {
+      setStage(stages, "received", "completed");
+    }
+    if (downloadAvailable || baseReady) {
+      setStage(stages, "acquisition", "completed");
+    }
+    if (analysisAvailable) {
+      setStage(stages, "analysis", "completed");
+      if (!jobStatus || jobStatus === "success") {
+        markPreviousCompleted(stages, "complete");
+        setStage(stages, "complete", "completed");
+      }
+    }
+
+    if (jobStatus === "pending" || jobStatus === "running") {
+      if (downloadAvailable || caseAvailable || baseReady || analysisJobType || analysisStatus === "pending") {
+        markPreviousCompleted(stages, "analysis");
+        setStage(stages, "analysis", "active");
+      } else {
+        markPreviousCompleted(stages, "acquisition");
+        setStage(stages, "acquisition", "active");
+      }
+    } else if (jobStatus === "success") {
+      if (!caseAvailable && !baseReady && !analysisAvailable && jobType !== "build-case") {
+        unknown = true;
+        diagnoseUnknown("job.success_result");
+      }
+      if (analysisAvailable && analysisStatus === "success") {
+        markPreviousCompleted(stages, "complete");
+        setStage(stages, "analysis", "completed");
+        setStage(stages, "complete", "completed");
+      } else if (["failed", "skipped"].includes(analysisStatus) || analysisKnownMissing) {
+        setStage(stages, "analysis", hasUsableResult ? "partial" : "failed");
+        setStage(stages, "complete", hasUsableResult ? "partial" : "failed");
+      }
+    } else if (jobStatus === "failed") {
+      if (!failedCapabilities.size) {
+        noteFailure(
+          jobFailureStage === "analysis" ? "analysis" : "material-acquisition",
+          failureCategory(job.error_code, jobFailureStage),
+        );
+      }
+      if (hasUsableResult) {
+        if (baseReady || caseAvailable) {
+          setStage(stages, "analysis", "partial");
+        } else if (downloadAvailable) {
+          setStage(stages, "analysis", "failed");
+        }
+        setStage(stages, "complete", "partial");
+      } else {
+        markPreviousCompleted(stages, jobFailureStage);
+        setStage(stages, jobFailureStage, "failed");
+      }
+    } else if (jobStatus === "recoverable") {
+      if (hasUsableResult) {
+        setStage(stages, analysisAvailable ? "complete" : "analysis", "partial");
+      } else {
+        unknown = true;
+        diagnoseUnknown("job.recoverable_without_result");
+      }
+    } else if (jobStatus === "stale") {
+      unknown = true;
+      const uncertainStage = analysisAvailable
+        ? "complete"
+        : downloadAvailable || caseAvailable || baseReady
+          ? "analysis"
+          : "acquisition";
+      setStage(stages, uncertainStage, "active");
+    }
+
+    if (
+      missingArtifacts.length
+      || workflow.artifact_ready === false
+      || workflowAnalysisStatus === "artifact_incomplete"
+      || caseStatus === "failed"
+      || caseStatus === "missing"
+    ) {
+      setStage(stages, "acquisition", hasUsableResult ? "partial" : "failed");
+      if (!hasUsableResult) {
+        setStage(stages, "analysis", "pending");
+      }
+    }
+
+    const failedCount = failedCapabilities.size;
+    const partialSummary = hasUsableResult && failedCount > 0
+      ? {
+          successfulCount: availableResults.size,
+          failedCount,
+          categories: Array.from(failureCategories),
+          availableResults: Array.from(availableResults),
+        }
+      : null;
+    if (partialSummary) {
+      if (analysisFailureKnown && !["failed", "partial"].includes(stages[2].state)) {
+        setStage(stages, "analysis", "partial");
+      }
+      setStage(stages, "complete", "partial");
+    }
+
+    const explicitFailure = flowStatus === "failed"
+      || jobStatus === "failed"
+      || analysisStatus === "failed"
+      || analysisStatus === "skipped"
+      || analysisKnownMissing
+      || missingArtifacts.length > 0
+      || workflow.artifact_ready === false
+      || workflowAnalysisStatus === "artifact_incomplete"
+      || caseStatus === "failed"
+      || caseStatus === "missing";
+    const completeFailure = Boolean(explicitFailure && !hasUsableResult);
+    if (completeFailure && !failureCategories.size) {
+      const flowFailureSource = flowStage === "analysis" ? "analysis" : "acquisition";
+      failureCategories.add(failureCategory(flow.error_code, flowFailureSource));
+    }
+    if (completeFailure && !stages.some((stage) => stage.state === "failed")) {
+      setStage(stages, flowStage === "received" ? "received" : jobFailureStage, "failed");
+    }
+    if (completeFailure) {
+      setStage(stages, "complete", "failed");
+    }
+
+    if (unknown) {
+      const allCompleted = stages.every((stage) => stage.state === "completed");
+      if (allCompleted) {
+        setStage(stages, "complete", "active");
+      } else if (!stages.some((stage) => ["active", "failed", "partial"].includes(stage.state))) {
+        const uncertain = stages.find((stage) => stage.state !== "completed") || stages[3];
+        setStage(stages, uncertain.id, "active");
+      }
+    }
+
+    const failureCategoryLabel = Array.from(failureCategories)[0] || "状态暂时不可确认";
+    const hasPartialStage = stages.some((stage) => stage.state === "partial");
+    let overallLabel = "等待开始";
+    if (unknown) {
+      overallLabel = "状态更新中";
+    } else if (completeFailure) {
+      overallLabel = "任务未完成 · " + failureCategoryLabel;
+    } else if (partialSummary || hasPartialStage) {
+      overallLabel = "部分结果可用";
+    } else if (stages.every((stage) => stage.state === "completed")) {
+      overallLabel = "已完成";
+    } else if (stages.some((stage) => stage.state === "active")) {
+      overallLabel = "处理中";
+    } else if (hasUsableResult) {
+      overallLabel = "可继续";
+    }
+
+    return Object.freeze({
+      stages: Object.freeze(stages.map((stage) => Object.freeze({...stage}))),
+      overallLabel,
+      partialSummary: partialSummary ? Object.freeze({
+        successfulCount: partialSummary.successfulCount,
+        failedCount: partialSummary.failedCount,
+        categories: Object.freeze([...partialSummary.categories]),
+        availableResults: Object.freeze([...partialSummary.availableResults]),
+      }) : null,
+      completeFailure,
+      failureCategory: completeFailure ? failureCategoryLabel : "",
+      hasUsableResult,
+      unknown,
+    });
+  }
+
+  function stageItemsMarkup(viewModel) {
+    return viewModel.stages.map((stage, index) => {
+      const current = stage.state === "active" ? ' aria-current="step"' : "";
+      return [
+        '<li class="single-item-stage ' + escapeMarkup(stage.state) + '"',
+        ' data-single-item-stage="' + escapeMarkup(stage.id) + '"',
+        ' data-stage-state="' + escapeMarkup(stage.state) + '"' + current + ">",
+        '<span class="single-item-stage-icon" aria-hidden="true">' + escapeMarkup(stateIcons[stage.state]) + "</span>",
+        '<span class="single-item-stage-copy">',
+        '<span class="single-item-stage-name">' + (index + 1) + ". " + escapeMarkup(stage.label) + "</span>",
+        "<strong>" + escapeMarkup(stage.statusLabel) + "</strong>",
+        "</span></li>",
+      ].join("");
+    }).join("");
+  }
+
+  function partialMarkup(summary) {
+    if (!summary) {
+      return "";
+    }
+    return [
+      "<strong>现有结果仍可继续查看</strong>",
+      "<p>已确认 " + summary.successfulCount + " 项结果可用，" + summary.failedCount + " 项失败或缺失。</p>",
+      "<dl>",
+      "<dt>未完成原因</dt><dd>" + escapeMarkup(summary.categories.join("、") || "状态暂时不可确认") + "</dd>",
+      "<dt>可查看结果</dt><dd>" + escapeMarkup(summary.availableResults.join("、") || "已保留结果") + "</dd>",
+      "</dl>",
+    ].join("");
+  }
+
+  function renderMarkup(viewModel) {
+    const safeView = viewModel && Array.isArray(viewModel.stages) ? viewModel : derive();
+    const summary = safeView.partialSummary
+      ? '<div class="single-item-partial-summary" role="status">' + partialMarkup(safeView.partialSummary) + "</div>"
+      : "";
+    return [
+      '<section class="single-item-status-card" aria-labelledby="single-item-status-title">',
+      '<h3 id="single-item-status-title">任务进度</h3>',
+      '<span class="single-item-overall-status">' + escapeMarkup(safeView.overallLabel) + "</span>",
+      '<ol class="task-status-grid single-item-stage-list" aria-label="单作品任务进度">',
+      stageItemsMarkup(safeView),
+      "</ol>",
+      summary,
+      "</section>",
+    ].join("");
+  }
+
+  function render(viewModel, elements = {}) {
+    const safeView = viewModel && Array.isArray(viewModel.stages) ? viewModel : derive();
+    if (elements.overall) {
+      elements.overall.textContent = safeView.overallLabel;
+    }
+    if (elements.root) {
+      const hasPartialStage = safeView.stages.some((stage) => stage.state === "partial");
+      elements.root.dataset.overallStatus = safeView.unknown
+        ? "unknown"
+        : safeView.completeFailure
+          ? "failed"
+          : safeView.partialSummary || hasPartialStage
+            ? "partial"
+            : "normal";
+      elements.root.setAttribute(
+        "aria-busy",
+        safeView.stages.some((stage) => stage.state === "active") ? "true" : "false",
+      );
+    }
+    if (elements.stageList) {
+      safeView.stages.forEach((stage) => {
+        const item = elements.stageList.querySelector('[data-single-item-stage="' + stage.id + '"]');
+        if (!item) {
+          return;
+        }
+        item.className = "single-item-stage " + stage.state;
+        item.dataset.stageState = stage.state;
+        if (stage.state === "active") {
+          item.setAttribute("aria-current", "step");
+        } else {
+          item.removeAttribute("aria-current");
+        }
+        const icon = item.querySelector(".single-item-stage-icon");
+        const status = item.querySelector("strong");
+        if (icon) {
+          icon.textContent = stateIcons[stage.state];
+        }
+        if (status) {
+          status.textContent = stage.statusLabel;
+        }
+      });
+    }
+    if (elements.partialSummary) {
+      elements.partialSummary.classList.toggle("hidden", !safeView.partialSummary);
+      elements.partialSummary.innerHTML = partialMarkup(safeView.partialSummary);
+    }
+    if (elements.announcement) {
+      elements.announcement.textContent = safeView.partialSummary
+        ? safeView.overallLabel + "：" + safeView.partialSummary.successfulCount + " 项可用，" + safeView.partialSummary.failedCount + " 项未完成。"
+        : safeView.overallLabel;
+    }
+    return safeView;
+  }
+
+  global.SingleItemJobStatus = Object.freeze({derive, failureCategory, render, renderMarkup});
+})(window);
+// END SINGLE_ITEM_JOB_STATUS
+
 // Settings
 const settingsToggle = document.getElementById("settings-toggle");
 const settingsModal = document.getElementById("settings-modal");
@@ -6,10 +618,11 @@ const singleForm = document.getElementById("single-form");
 const singleButton = document.getElementById("single-button");
 const singleResult = document.getElementById("single-result");
 const qualityPreference = document.getElementById("quality-preference");
-const parseStatus = document.getElementById("parse-status");
-const downloadStatus = document.getElementById("download-status");
-const packageStatus = document.getElementById("package-status");
-const analysisStatus = document.getElementById("analysis-status");
+const singleItemStatusCard = document.getElementById("single-item-status-card");
+const singleItemStageList = document.getElementById("single-item-stage-list");
+const singleItemOverallStatus = document.getElementById("single-item-overall-status");
+const singleItemPartialSummary = document.getElementById("single-item-partial-summary");
+const singleItemStatusAnnouncement = document.getElementById("single-item-status-announcement");
 const llmStatusBadge = document.getElementById("llm-status-badge");
 const llmStatusList = document.getElementById("llm-status-list");
 const llmConfigHint = document.getElementById("llm-config-hint");
@@ -166,6 +779,9 @@ let currentLocalVideoId = "";
 let currentAwemeId = "";
 let selectedCandidate = null;
 let loadedHomeCase = null;
+let currentSingleJob = null;
+let singleItemFlow = {stage: "idle", status: "pending", error_code: ""};
+let currentJobCardScope = "profile";
 let runtimeSampleRows = [];
 let profileSelectedKeys = new Set();
 let profileScanPayload = null;
@@ -215,11 +831,45 @@ const creatorReportView = window.CreatorReportView?.createRenderer({
   cleanPublicReportText,
 }) || null;
 
-function setStatus(element, value) {
-  if (element) {
-    element.textContent = value;
+function renderSingleItemStatus({job = currentSingleJob, caseData = loadedHomeCase, flow = singleItemFlow} = {}) {
+  const statusView = window.SingleItemJobStatus?.derive({job, caseData, flow});
+  if (!statusView) {
+    return null;
   }
+  return window.SingleItemJobStatus.render(statusView, {
+    root: singleItemStatusCard,
+    stageList: singleItemStageList,
+    overall: singleItemOverallStatus,
+    partialSummary: singleItemPartialSummary,
+    announcement: singleItemStatusAnnouncement,
+  });
 }
+
+function setSingleItemFlow(stage, status = "active", errorCode = "") {
+  singleItemFlow = {stage, status, error_code: errorCode};
+  return renderSingleItemStatus();
+}
+
+function singleItemFailureCategory(error, source = "") {
+  return window.SingleItemJobStatus?.failureCategory(error?.error_code, source)
+    || "状态暂时不可确认";
+}
+
+function singleItemJobMessage(job, fallbackMessage = "") {
+  if (job?.status === "failed") {
+    return singleItemFailureCategory(job, "");
+  }
+  if (["stale", "recoverable"].includes(job?.status)) {
+    return "状态暂时无法确认，已保留结果仍可查看";
+  }
+  return fallbackMessage || {
+    pending: "任务已接收",
+    running: "正在处理单作品",
+    success: "任务处理完成",
+  }[job?.status] || "状态更新中";
+}
+
+renderSingleItemStatus();
 
 function setHomeRoute(route, updateHash = true) {
   const activeRoute = window.WorkbenchShell?.normalizeRoute(route)
@@ -770,6 +1420,7 @@ function renderDefinitionList(element, rows) {
 }
 
 function placeJobCard(scope = "profile") {
+  currentJobCardScope = scope;
   if (!jobCard) {
     return;
   }
@@ -871,9 +1522,16 @@ function renderJobStatus(job, fallbackMessage = "") {
   if (!progressBar || !jobMessage || !job) {
     return;
   }
+  if (currentJobCardScope === "single") {
+    currentSingleJob = job;
+    renderSingleItemStatus();
+  }
   progressBar.style.width = `${job.progress || 0}%`;
   jobMessage.className = `job-message ${job.status === "failed" ? "failed" : job.status === "success" ? "success" : ""}`;
-  jobMessage.textContent = `${job.status || "running"} · ${job.progress || 0}% · ${job.message || fallbackMessage || ""}`;
+  const message = currentJobCardScope === "single"
+    ? singleItemJobMessage(job, fallbackMessage)
+    : job.message || fallbackMessage || "";
+  jobMessage.textContent = `${job.status || "running"} · ${job.progress || 0}% · ${message}`;
   renderJobPhase(job);
 }
 
@@ -5514,7 +6172,7 @@ function renderWorkflowResult(result) {
     </dl>
   `;
   uploadResult.classList.add("hidden");
-  uploadResult.textContent = JSON.stringify(result, null, 2);
+  uploadResult.textContent = "";
 }
 
 function getCaseId(result) {
@@ -5530,6 +6188,7 @@ async function loadCasePayload(caseId) {
 
 function renderHomeCase(data) {
   loadedHomeCase = data;
+  renderSingleItemStatus();
   const metadata = data.metadata || {};
   const analysisInput = data.analysis_input || {};
   const stats = analysisInput.stats || {};
@@ -5554,7 +6213,7 @@ function renderHomeCase(data) {
     homeAiReport.innerHTML = renderPublicAnalysisReport(analysisResult);
   } else if (analysisJob.status === "failed") {
     const error = analysisJob.error || {};
-    homeAiStatus.textContent = `${error.error_code || "AI_FAILED"}：${error.message || "AI 自动拆解失败，可更换模型后重新解析或打开完整 case 重试。"}`;
+    homeAiStatus.textContent = `${singleItemFailureCategory(error, "analysis")}。可更换模型后重新解析，或打开完整素材包查看现有结果。`;
     homeAiReport.innerHTML = "";
   } else if (analysisJob.status === "skipped") {
     homeAiStatus.textContent = "视频已准备好，但 AI 自动拆解未配置。配置模型后可重新解析。";
@@ -5679,17 +6338,33 @@ function renderWorkbenchRestoredJobStatus(job, mode, fallbackMessage = "已恢�
     || (mode === "manual" && ["pending", "running"].includes(job?.status));
   if (staleView && jobMessage) {
     jobMessage.className = "job-message";
-    jobMessage.textContent = `stale · ${job.progress || 0}% · ${job.message || "任务较长时间没有更新"}`;
+    const isSingleScope = typeof currentJobCardScope !== "undefined" && currentJobCardScope === "single";
+    const message = isSingleScope
+      ? singleItemJobMessage({...job, status: "stale"})
+      : job.message || "任务较长时间没有更新";
+    jobMessage.textContent = `stale · ${job.progress || 0}% · ${message}`;
   }
   return staleView;
 }
 
 async function renderRecoveredSingleJob(job, {scroll = false} = {}) {
+  const canRenderSingleItemStatus = typeof renderSingleItemStatus === "function";
+  if (typeof currentSingleJob !== "undefined") {
+    currentSingleJob = job || null;
+  }
+  if (canRenderSingleItemStatus) {
+    renderSingleItemStatus();
+  }
   const result = job?.result_json || {};
   const caseId = getCaseId(result);
   if (!caseId) {
     if (jobResult && Object.keys(result).length) {
-      showJson(jobResult, result);
+      const statusView = canRenderSingleItemStatus ? renderSingleItemStatus() : null;
+      showJson(jobResult, {
+        status: job?.status || "unknown",
+        progress: Number(job?.progress || 0),
+        result_summary: statusView?.overallLabel || "状态更新中",
+      });
     }
     return false;
   }
@@ -5697,13 +6372,10 @@ async function renderRecoveredSingleJob(job, {scroll = false} = {}) {
   resultCard.classList.remove("hidden");
   buildCaseButton.hidden = true;
   renderWorkflowResult(result);
-  setStatus(downloadStatus, result.download || currentLocalVideoId ? "完成" : "已保留");
-  setStatus(packageStatus, "已生成");
-  setStatus(analysisStatus, job.status === "success" ? "完成" : "处理中");
   try {
     await showAnalysisInline(result, {scroll, updateMessage: false});
   } catch (error) {
-    homeAiStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "Case 视图暂时无法加载"}`;
+    homeAiStatus.textContent = `${singleItemFailureCategory(error, "case")}。素材包视图暂时无法加载。`;
   }
   return true;
 }
@@ -5928,7 +6600,10 @@ document.addEventListener("workbench:open-target", async (event) => {
       const restored = await openWorkbenchSingleTarget(target, openUrl);
       notifyWorkbenchTargetResult(restored, restored ? "" : "单作品任务状态无法恢复，请重新导入。" );
     } catch (error) {
-      notifyWorkbenchTargetResult(false, `${error.error_code || "ERROR"}：${error.message || "单作品任务恢复失败"}`);
+      notifyWorkbenchTargetResult(
+        false,
+        `${singleItemFailureCategory(error, "case")}。单作品任务状态暂时无法恢复。`,
+      );
     }
     return;
   }
@@ -6068,13 +6743,13 @@ async function runSingleValue(value) {
   singleButton.disabled = true;
   singleButton.textContent = "解析中...";
   selectedCandidate = null;
+  currentAwemeId = "";
   currentLocalVideoId = "";
+  currentSingleJob = null;
+  loadedHomeCase = null;
   homeCaseView.classList.add("hidden");
   resultCard.classList.add("hidden");
-  setStatus(parseStatus, "解析中");
-  setStatus(downloadStatus, "未开始");
-  setStatus(packageStatus, "未生成");
-  setStatus(analysisStatus, "未运行");
+  setSingleItemFlow("received", "active");
   try {
     const importResponse = await fetch("/api/videos/import-single", {
       method: "POST",
@@ -6083,6 +6758,7 @@ async function runSingleValue(value) {
     });
     const imported = await readJsonResponse(importResponse);
     currentAwemeId = imported.video.aweme_id;
+    setSingleItemFlow("acquisition", "active");
     singleResult.classList.remove("hidden");
     singleResult.textContent = `已导入作品：${currentAwemeId}，正在解析可用清晰度...`;
     await resolveQualities([currentAwemeId]);
@@ -6091,8 +6767,8 @@ async function runSingleValue(value) {
     }
   } catch (error) {
     singleResult.classList.remove("hidden");
-    singleResult.textContent = `${error.error_code || "ERROR"}：${error.message || "导入失败"}`;
-    setStatus(parseStatus, "失败");
+    singleResult.textContent = `${singleItemFailureCategory(error, "acquisition")}。请检查作品链接或稍后重试。`;
+    setSingleItemFlow(currentAwemeId ? "acquisition" : "received", "failed", error.error_code);
     singleButton.disabled = false;
     singleButton.textContent = "解析";
   } finally {
@@ -6318,7 +6994,7 @@ async function resolveQualities(awemeIds) {
   const candidates = payload.results[currentAwemeId] || [];
   if (!candidates.length) {
     singleResult.textContent = "没有解析到可用清晰度候选。";
-    setStatus(parseStatus, "未解析到候选");
+    setSingleItemFlow("acquisition", "failed", "QUALITY_NO_CANDIDATE");
     return;
   }
   selectedCandidate = chooseCandidate(candidates);
@@ -6329,7 +7005,7 @@ async function resolveQualities(awemeIds) {
     ? `${Math.round(selectedCandidate.bitrate / 1000)} kbps`
     : "未知码率";
   singleResult.textContent = `已按设置选择：${selectedCandidate.quality_label || "网页候选"} · ${sizeMb} MB · ${bitrate}`;
-  setStatus(parseStatus, "已解析");
+  setSingleItemFlow("acquisition", "active");
 }
 
 function chooseCandidate(candidates) {
@@ -6347,10 +7023,8 @@ async function downloadCandidate(candidate) {
   let inlineCaseShown = false;
   setHomeRoute("single");
   placeJobCard("single");
+  setSingleItemFlow("acquisition", "active");
   resetJobCard("创建下载和素材包任务...");
-  setStatus(downloadStatus, "等待任务");
-  setStatus(packageStatus, "等待生成");
-  setStatus(analysisStatus, "等待自动拆解");
   caseSummary.innerHTML = "";
   resultCard.classList.add("hidden");
   buildCaseButton.hidden = true;
@@ -6371,14 +7045,11 @@ async function downloadCandidate(candidate) {
       resultCard.classList.remove("hidden");
       buildCaseButton.hidden = true;
       renderWorkflowResult(result);
-      setStatus(downloadStatus, "完成");
-      setStatus(packageStatus, "已生成");
-      setStatus(analysisStatus, job.status === "success" ? "完成" : "AI 自动拆解中，本地拆解已可查看");
       try {
         await showAnalysisInline(result, {scroll, updateMessage: false});
         inlineCaseShown = true;
       } catch (error) {
-        homeAiStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "本地拆解视图加载失败，任务仍在继续"}`;
+        homeAiStatus.textContent = `${singleItemFailureCategory(error, "case")}。本地拆解视图暂时无法加载，任务仍在继续。`;
       }
     };
     return pollJob(payload.job_id, async (job) => {
@@ -6387,19 +7058,8 @@ async function downloadCandidate(candidate) {
         resultCard.classList.remove("hidden");
         buildCaseButton.hidden = true;
         renderWorkflowResult(job.result_json);
-        setStatus(downloadStatus, "完成");
-        setStatus(packageStatus, "已生成");
-        setStatus(
-          analysisStatus,
-          {
-            success: "已生成",
-            failed: "失败，可更换模型后重试",
-            skipped: "未配置",
-            pending: "未完成",
-          }[job.result_json.analysis_status] || "未完成",
-        );
         if (await showAnalysisInline(job.result_json, {scroll: !inlineCaseShown, updateMessage: false})) {
-          jobMessage.textContent = `success · 100% · ${job.message || "任务完成"}`;
+          jobMessage.textContent = "success · 100% · 任务处理完成";
           return;
         }
       }
@@ -6408,8 +7068,8 @@ async function downloadCandidate(candidate) {
     });
   } catch (error) {
     jobMessage.className = "job-message failed";
-    jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "任务创建失败"}`;
-    setStatus(downloadStatus, "失败");
+    jobMessage.textContent = singleItemFailureCategory(error, "acquisition");
+    setSingleItemFlow("acquisition", "failed", error.error_code);
     singleButton.disabled = false;
     singleButton.textContent = "解析";
   }
@@ -6421,6 +7081,7 @@ buildCaseButton.addEventListener("click", async () => {
   }
   buildCaseButton.disabled = true;
   placeJobCard("single");
+  setSingleItemFlow("acquisition", "active");
   resetJobCard("创建任务...");
   try {
     const response = await fetch("/api/jobs/build-case", {
@@ -6432,7 +7093,8 @@ buildCaseButton.addEventListener("click", async () => {
     pollJob(payload.job_id);
   } catch (error) {
     jobMessage.className = "job-message failed";
-    jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "任务创建失败"}`;
+    jobMessage.textContent = singleItemFailureCategory(error, "case");
+    setSingleItemFlow("acquisition", "failed", error.error_code);
     buildCaseButton.disabled = false;
   }
 });
@@ -6457,19 +7119,24 @@ async function pollJob(jobId, onSuccess, onProgress) {
     }
     if (job.status === "failed") {
       jobMessage.className = "job-message failed";
-      jobMessage.textContent = `${job.error_code || "ERROR"}：${job.message || "任务失败"}`;
+      jobMessage.textContent = singleItemFailureCategory(job, "");
       if (jobResult) {
-        showJson(jobResult, job);
+        showJson(jobResult, {
+          status: "failed",
+          progress: Number(job.progress || 0),
+          error_category: singleItemFailureCategory(job, ""),
+        });
       }
-      setStatus(downloadStatus, "失败");
       buildCaseButton.disabled = false;
       singleButton.disabled = false;
       singleButton.textContent = "解析";
       return;
     }
     if (["pending", "running"].includes(job.status) && profileBuildJobAgeSeconds(job) >= WORKBENCH_TASK_STALE_SECONDS) {
+      currentSingleJob = {...job, status: "stale"};
+      renderSingleItemStatus();
       jobMessage.className = "job-message";
-      jobMessage.textContent = `stale · ${job.progress || 0}% · ${job.message || "任务较长时间没有更新"}`;
+      jobMessage.textContent = `stale · ${job.progress || 0}% · ${singleItemJobMessage(currentSingleJob)}`;
       buildCaseButton.disabled = false;
       singleButton.disabled = false;
       singleButton.textContent = "解析";
@@ -6483,8 +7150,10 @@ async function pollJob(jobId, onSuccess, onProgress) {
     });
     return pollJob(jobId, onSuccess, onProgress);
   } catch (error) {
+    currentSingleJob = {...(currentSingleJob || {}), status: "stale"};
+    renderSingleItemStatus();
     jobMessage.className = "job-message failed";
-    jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "查询任务失败"}`;
+    jobMessage.textContent = "任务状态暂时无法确认，请稍后重新进入工作台查看。";
     buildCaseButton.disabled = false;
     singleButton.disabled = false;
     singleButton.textContent = "解析";

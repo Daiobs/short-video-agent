@@ -3174,28 +3174,180 @@ button:disabled {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 12px;
+    margin-bottom: 0;
     margin-top: 18px;
+    padding: 0;
+    list-style: none;
 }
 
-.task-status-grid > div {
+.single-item-status-card {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+}
+
+.single-item-status-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+}
+
+.single-item-status-heading h3 {
+    margin: 0;
+}
+
+.single-item-overall-status {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #3730a3;
+    font-size: 12px;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.single-item-status-card[data-overall-status="partial"] .single-item-overall-status {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.single-item-status-card[data-overall-status="failed"] .single-item-overall-status {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.single-item-status-card[data-overall-status="unknown"] .single-item-overall-status {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.single-item-stage {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
     padding: 14px;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: #f9fafb;
 }
 
-.task-status-grid span {
+.single-item-stage-icon {
+    display: inline-grid;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    border: 2px solid #cbd5e1;
+    border-radius: 999px;
+    color: #64748b;
+    font-size: 15px;
+    font-weight: 950;
+}
+
+.single-item-stage-copy {
+    min-width: 0;
+}
+
+.single-item-stage-name {
     display: block;
     color: var(--muted);
     font-size: 12px;
     font-weight: 800;
     margin-bottom: 6px;
+    overflow-wrap: anywhere;
 }
 
-.task-status-grid strong {
+.single-item-stage strong {
     display: block;
     color: var(--text);
     font-size: 14px;
+    overflow-wrap: anywhere;
+}
+
+.single-item-stage.active {
+    border-color: rgba(37, 99, 235, .48);
+    background: #eff6ff;
+}
+
+.single-item-stage.active .single-item-stage-icon {
+    border-color: var(--brand);
+    background: var(--brand);
+    color: #fff;
+}
+
+.single-item-stage.completed {
+    border-color: rgba(4, 120, 87, .3);
+    background: #ecfdf5;
+}
+
+.single-item-stage.completed .single-item-stage-icon {
+    border-color: var(--ok);
+    background: var(--ok);
+    color: #fff;
+}
+
+.single-item-stage.partial {
+    border-color: rgba(217, 119, 6, .4);
+    background: #fffbeb;
+}
+
+.single-item-stage.partial .single-item-stage-icon {
+    border-color: #b45309;
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.single-item-stage.failed {
+    border-color: rgba(185, 28, 28, .36);
+    background: #fef2f2;
+}
+
+.single-item-stage.failed .single-item-stage-icon {
+    border-color: var(--danger);
+    background: var(--danger);
+    color: #fff;
+}
+
+.single-item-partial-summary {
+    margin-top: 14px;
+    padding: 14px 16px;
+    border: 1px solid rgba(217, 119, 6, .38);
+    border-radius: 10px;
+    background: #fffbeb;
+    color: #78350f;
+}
+
+.single-item-partial-summary strong,
+.single-item-partial-summary p {
+    margin: 0;
+    color: inherit;
+}
+
+.single-item-partial-summary p {
+    margin-top: 6px;
+    line-height: 1.55;
+}
+
+.single-item-partial-summary dl {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 6px 12px;
+    margin: 12px 0 0;
+}
+
+.single-item-partial-summary dt {
+    font-weight: 900;
+}
+
+.single-item-partial-summary dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
 }
 
 .template-preview-section {
@@ -3403,6 +3555,18 @@ button:disabled {
 
 .hidden {
     display: none !important;
+}
+
+.visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
 }
 
 .muted {
@@ -5686,6 +5850,10 @@ footer {
     .grid {
         grid-template-columns: 1fr;
         flex-direction: column;
+    }
+
+    .single-item-partial-summary dl {
+        grid-template-columns: 1fr;
     }
 
     .site-header {
