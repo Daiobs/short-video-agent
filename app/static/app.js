@@ -20,7 +20,7 @@
     "no_speech", "no_text", "disabled", "not_configured", "skipped", "not_required",
   ]);
   const successfulOptionalStatuses = new Set(["success", "no_speech", "no_text"]);
-  const failedOptionalStatuses = new Set(["failed", "provider_missing", "missing"]);
+  const failedOptionalStatuses = new Set(["failed", "provider_missing"]);
   const acquisitionErrorCodes = new Set([
     "INVALID_AWEME_URL", "AWEME_ID_NOT_FOUND", "PROVIDER_FAILED", "QUALITY_NOT_FOUND",
     "URL_EXPIRED", "HOST_NOT_ALLOWED", "REDIRECT_HOST_NOT_ALLOWED", "CONTENT_TYPE_INVALID",
@@ -177,10 +177,18 @@
 
   function derive({job: rawJob = null, caseData: rawCase = null, flow: rawFlow = null} = {}) {
     const job = record(rawJob);
-    const caseData = record(rawCase);
+    const observedCase = record(rawCase);
     const flow = record(rawFlow);
     const result = record(job.result_json || job.result);
     const resultCase = record(result.case);
+    const expectedCaseId = String(result.case_id || resultCase.case_id || "").trim();
+    const observedCaseId = String(observedCase.case_id || "").trim();
+    const caseIdentityMismatch = Boolean(
+      expectedCaseId
+      && observedCaseId
+      && expectedCaseId !== observedCaseId,
+    );
+    const caseData = caseIdentityMismatch ? {} : observedCase;
     const analysisPayload = record(result.analysis);
     const workflow = record(caseData.primary_workflow);
     const enrichment = record(caseData.enrichment);
@@ -190,7 +198,11 @@
     const failedCapabilities = new Set();
     const failureCategories = new Set();
     let analysisFailureKnown = false;
-    let unknown = false;
+    let unknown = caseIdentityMismatch;
+
+    if (caseIdentityMismatch) {
+      diagnoseUnknown("case.identity");
+    }
 
     function noteFailure(capability, category) {
       failedCapabilities.add(capability);
@@ -199,9 +211,16 @@
 
     const jobStatus = normalizedStatus(job.status);
     const jobType = normalizedStatus(job.type || job.task_type);
+    const jobErrorCode = String(job.error_code || "").trim();
+    const jobErrorKnown = Boolean(
+      jobErrorCode
+      && failureCategory(jobErrorCode) !== "状态暂时不可确认",
+    );
+    const isWorkbenchProjection = Boolean(String(job.task_id || "").trim());
+    const jobUnsettled = ["pending", "running", "stale"].includes(jobStatus);
     const flowStage = normalizedFlowStage(flow);
     const flowStatus = normalizedStatus(flow.status || (flowStage === "idle" ? "pending" : "active"));
-    const caseId = String(caseData.case_id || result.case_id || resultCase.case_id || "").trim();
+    const caseId = String(expectedCaseId || caseData.case_id || "").trim();
     const downloadAvailable = Boolean(
       record(result.download).local_video_id
       || result.local_video_id
@@ -212,6 +231,17 @@
       resultCase.case_id
       && resultCase.local_video_id,
     );
+    const caseAwaitingVerification = Boolean(
+      expectedCaseId
+      && !caseData.case_id
+      && (
+        (isWorkbenchProjection && !resultCaseProvesArtifact)
+        || job.__singleItemCaseVerificationPending === true
+      ),
+    );
+    if (caseAwaitingVerification) {
+      unknown = true;
+    }
     const workflowHasArtifactVerdict = typeof workflow.artifact_ready === "boolean";
     const baseReady = workflowHasArtifactVerdict
       ? workflow.artifact_ready === true
@@ -222,6 +252,7 @@
       || record(caseData.analysis_job).status
       || workflowAnalysisStatus,
     );
+    const analysisSuccessClaimed = ["success", "completed"].includes(analysisStatus);
     if (analysisStatus === "completed") {
       analysisStatus = "success";
     } else if (analysisStatus === "not_configured") {
@@ -237,6 +268,8 @@
     const jobAnalysisAvailable = Boolean(
       hasRecordContent(analysisPayload.analysis_result)
       || analysisPayload.analysis_report
+      || hasRecordContent(result.analysis_result)
+      || result.analysis_report
     );
     const loadedCaseAnalysisUnavailable = Object.keys(caseData).length > 0
       && ["not_analyzed", "not_configured", "artifact_incomplete"].includes(workflowAnalysisStatus);
@@ -245,13 +278,30 @@
     } else if (loadedCaseAnalysisUnavailable && analysisStatus === "success") {
       analysisStatus = workflowAnalysisStatus === "not_configured" ? "skipped" : "pending";
     }
-    const analysisAvailable = Boolean(
-      caseAnalysisAvailable
-      || jobAnalysisAvailable
-      || analysisStatus === "success",
+    const analysisAvailable = Boolean(caseAnalysisAvailable || jobAnalysisAvailable);
+    const unverifiedAnalysisSuccess = Boolean(
+      analysisSuccessClaimed
+      && !analysisAvailable
+      && !loadedCaseAnalysisUnavailable,
     );
-    const recoveryResultsAvailable = itemList(job.available_results || result.available_results, 10).length > 0;
-    const analysisRequestActive = ["pending", "running"].includes(jobStatus)
+    if (unverifiedAnalysisSuccess) {
+      unknown = true;
+      diagnoseUnknown("analysis.success_without_result");
+    }
+    const unconfirmedWorkbenchFailure = Boolean(
+      jobStatus === "failed"
+      && isWorkbenchProjection
+      && !jobErrorKnown,
+    );
+    const failureEvidenceDeferred = Boolean(
+      jobUnsettled
+      || caseAwaitingVerification
+      || unverifiedAnalysisSuccess,
+    );
+    const analysisRequestActive = jobUnsettled
+      || caseAwaitingVerification
+      || unverifiedAnalysisSuccess
+      || unconfirmedWorkbenchFailure
       || (flowStage === "analysis" && ["pending", "active"].includes(flowStatus));
     const analysisKnownMissing = !analysisRequestActive && !analysisAvailable && (
       workflowAnalysisStatus === "not_analyzed"
@@ -264,14 +314,13 @@
     if (analysisAvailable) {
       availableResults.add("AI 拆解报告");
     }
-    if (recoveryResultsAvailable) {
-      availableResults.add("已保留结果");
-    }
-
     const missingArtifacts = itemList(workflow.missing_artifacts, 12);
-    if (missingArtifacts.length || workflow.artifact_ready === false) {
-      noteFailure("material-package", "素材包未完整");
-    } else if (workflow.analysis_status === "artifact_incomplete") {
+    const artifactFailureKnown = !failureEvidenceDeferred && Boolean(
+      missingArtifacts.length
+      || workflow.artifact_ready === false
+      || workflowAnalysisStatus === "artifact_incomplete",
+    );
+    if (artifactFailureKnown) {
       noteFailure("material-package", "素材包未完整");
     }
 
@@ -284,7 +333,7 @@
       }
       if (successfulOptionalStatuses.has(status)) {
         availableResults.add(definition.label);
-      } else if (failedOptionalStatuses.has(status)) {
+      } else if (failedOptionalStatuses.has(status) && !failureEvidenceDeferred) {
         noteFailure("optional-" + definition.id, definition.category);
         analysisFailureKnown = true;
       }
@@ -293,10 +342,10 @@
     if (!analysisStatuses.has(analysisStatus)) {
       unknown = true;
       diagnoseUnknown("analysis_status");
-    } else if (analysisStatus === "failed") {
+    } else if (analysisStatus === "failed" && !failureEvidenceDeferred) {
       noteFailure("analysis", failureCategory(record(result.analysis_error).error_code, "analysis"));
       analysisFailureKnown = true;
-    } else if (analysisStatus === "skipped") {
+    } else if (analysisStatus === "skipped" && !failureEvidenceDeferred) {
       noteFailure("analysis", "分析产物缺失");
       analysisFailureKnown = true;
     } else if (analysisKnownMissing) {
@@ -313,8 +362,23 @@
       unknown = true;
       diagnoseUnknown("case.status");
     }
-    if (caseStatus === "failed" || caseStatus === "missing") {
+    if ((caseStatus === "failed" || caseStatus === "missing") && !failureEvidenceDeferred) {
       noteFailure("material-package", "素材包未完整");
+    }
+
+    const projectedFailureHasEvidence = Boolean(
+      jobErrorKnown
+      || (["failed", "skipped"].includes(analysisStatus) && !failureEvidenceDeferred)
+      || artifactFailureKnown
+      || ((caseStatus === "failed" || caseStatus === "missing") && !failureEvidenceDeferred),
+    );
+    const ambiguousWorkbenchFailure = Boolean(
+      unconfirmedWorkbenchFailure
+      && !projectedFailureHasEvidence,
+    );
+    if (ambiguousWorkbenchFailure) {
+      unknown = true;
+      diagnoseUnknown("workbench.failed_without_evidence");
     }
 
     const hasUsableResult = availableResults.size > 0;
@@ -328,11 +392,23 @@
 
     if (flowStage !== "idle" && !jobStatus) {
       if (["received", "acquisition", "analysis", "complete"].includes(flowStage)) {
+        const unsupportedFlowTerminal = ["completed", "partial"].includes(flowStatus)
+          && !hasUsableResult;
+        if (unsupportedFlowTerminal) {
+          unknown = true;
+          diagnoseUnknown("flow.terminal_without_result");
+        }
         markPreviousCompleted(stages, flowStage);
         setStage(
           stages,
           flowStage,
-          ["completed", "partial", "failed"].includes(flowStatus) ? flowStatus : "active",
+          flowStatus === "failed"
+            ? "failed"
+            : unsupportedFlowTerminal
+              ? "active"
+              : ["completed", "partial"].includes(flowStatus)
+                ? flowStatus
+                : "active",
         );
       } else {
         unknown = true;
@@ -354,6 +430,11 @@
         setStage(stages, "complete", "completed");
       }
     }
+    if (caseAwaitingVerification) {
+      markPreviousCompleted(stages, "analysis");
+      setStage(stages, "analysis", "active");
+      setStage(stages, "complete", "pending");
+    }
 
     if (jobStatus === "pending" || jobStatus === "running") {
       if (downloadAvailable || caseAvailable || baseReady || analysisJobType || analysisStatus === "pending") {
@@ -368,15 +449,18 @@
         unknown = true;
         diagnoseUnknown("job.success_result");
       }
-      if (analysisAvailable && analysisStatus === "success") {
+      if (analysisAvailable && analysisStatus === "success" && !caseAwaitingVerification) {
         markPreviousCompleted(stages, "complete");
         setStage(stages, "analysis", "completed");
         setStage(stages, "complete", "completed");
-      } else if (["failed", "skipped"].includes(analysisStatus) || analysisKnownMissing) {
+      } else if (!failureEvidenceDeferred && (
+        ["failed", "skipped"].includes(analysisStatus)
+        || analysisKnownMissing
+      )) {
         setStage(stages, "analysis", hasUsableResult ? "partial" : "failed");
         setStage(stages, "complete", hasUsableResult ? "partial" : "failed");
       }
-    } else if (jobStatus === "failed") {
+    } else if (jobStatus === "failed" && !ambiguousWorkbenchFailure && !caseAwaitingVerification) {
       if (!failedCapabilities.size) {
         noteFailure(
           jobFailureStage === "analysis" ? "analysis" : "material-acquisition",
@@ -412,11 +496,8 @@
     }
 
     if (
-      missingArtifacts.length
-      || workflow.artifact_ready === false
-      || workflowAnalysisStatus === "artifact_incomplete"
-      || caseStatus === "failed"
-      || caseStatus === "missing"
+      artifactFailureKnown
+      || ((caseStatus === "failed" || caseStatus === "missing") && !failureEvidenceDeferred)
     ) {
       setStage(stages, "acquisition", hasUsableResult ? "partial" : "failed");
       if (!hasUsableResult) {
@@ -440,16 +521,13 @@
       setStage(stages, "complete", "partial");
     }
 
-    const explicitFailure = flowStatus === "failed"
-      || jobStatus === "failed"
-      || analysisStatus === "failed"
-      || analysisStatus === "skipped"
+    const explicitFailure = (!jobStatus && flowStatus === "failed")
+      || (jobStatus === "failed" && !ambiguousWorkbenchFailure && !caseAwaitingVerification)
+      || (["failed", "skipped"].includes(analysisStatus)
+        && !failureEvidenceDeferred)
       || analysisKnownMissing
-      || missingArtifacts.length > 0
-      || workflow.artifact_ready === false
-      || workflowAnalysisStatus === "artifact_incomplete"
-      || caseStatus === "failed"
-      || caseStatus === "missing";
+      || artifactFailureKnown
+      || ((caseStatus === "failed" || caseStatus === "missing") && !failureEvidenceDeferred);
     const completeFailure = Boolean(explicitFailure && !hasUsableResult);
     if (completeFailure && !failureCategories.size) {
       const flowFailureSource = flowStage === "analysis" ? "analysis" : "acquisition";
@@ -538,7 +616,7 @@
   function renderMarkup(viewModel) {
     const safeView = viewModel && Array.isArray(viewModel.stages) ? viewModel : derive();
     const summary = safeView.partialSummary
-      ? '<div class="single-item-partial-summary" role="status">' + partialMarkup(safeView.partialSummary) + "</div>"
+      ? '<div class="single-item-partial-summary">' + partialMarkup(safeView.partialSummary) + "</div>"
       : "";
     return [
       '<section class="single-item-status-card" aria-labelledby="single-item-status-title">',
@@ -599,9 +677,18 @@
       elements.partialSummary.innerHTML = partialMarkup(safeView.partialSummary);
     }
     if (elements.announcement) {
-      elements.announcement.textContent = safeView.partialSummary
-        ? safeView.overallLabel + "：" + safeView.partialSummary.successfulCount + " 项可用，" + safeView.partialSummary.failedCount + " 项未完成。"
-        : safeView.overallLabel;
+      const activeStage = safeView.stages.find((stage) => stage.state === "active");
+      const announcement = safeView.partialSummary
+        ? safeView.overallLabel
+          + "：" + safeView.partialSummary.successfulCount + " 项可用，"
+          + safeView.partialSummary.failedCount + " 项未完成；"
+          + safeView.partialSummary.categories.join("、") + "。"
+        : activeStage
+          ? safeView.overallLabel + "：" + activeStage.label + "，" + activeStage.statusLabel + "。"
+          : safeView.overallLabel;
+      if (elements.announcement.textContent !== announcement) {
+        elements.announcement.textContent = announcement;
+      }
     }
     return safeView;
   }
@@ -781,7 +868,10 @@ let selectedCandidate = null;
 let loadedHomeCase = null;
 let currentSingleJob = null;
 let singleItemFlow = {stage: "idle", status: "pending", error_code: ""};
+let singleItemObservationGeneration = 0;
+let singleItemActiveJobId = "";
 let currentJobCardScope = "profile";
+let activeHomeRoute = "";
 let runtimeSampleRows = [];
 let profileSelectedKeys = new Set();
 let profileScanPayload = null;
@@ -845,6 +935,33 @@ function renderSingleItemStatus({job = currentSingleJob, caseData = loadedHomeCa
   });
 }
 
+function startSingleItemObservation(jobId = "") {
+  singleItemObservationGeneration += 1;
+  singleItemActiveJobId = String(jobId || "").trim();
+  return singleItemObservationGeneration;
+}
+
+function isCurrentSingleItemObservation(jobId, generation) {
+  return generation === singleItemObservationGeneration
+    && String(jobId || "").trim() === singleItemActiveJobId;
+}
+
+function bindSingleItemObservation(jobId, generation) {
+  const nextJobId = String(jobId || "").trim();
+  if (!nextJobId || !isCurrentSingleItemObservation("", generation)) {
+    return false;
+  }
+  singleItemActiveJobId = nextJobId;
+  return true;
+}
+
+function stopSingleItemObservation() {
+  startSingleItemObservation();
+  singleButton.disabled = false;
+  singleButton.textContent = "解析";
+  buildCaseButton.disabled = false;
+}
+
 function setSingleItemFlow(stage, status = "active", errorCode = "") {
   singleItemFlow = {stage, status, error_code: errorCode};
   return renderSingleItemStatus();
@@ -874,6 +991,10 @@ renderSingleItemStatus();
 function setHomeRoute(route, updateHash = true) {
   const activeRoute = window.WorkbenchShell?.normalizeRoute(route)
     || (["workbench", "single", "profile"].includes(route) ? route : "workbench");
+  if (activeHomeRoute === "single" && activeRoute !== "single") {
+    stopSingleItemObservation();
+  }
+  activeHomeRoute = activeRoute;
   const visiblePanelRoute = activeRoute;
   homePanels.forEach((panel) => {
     panel.classList.toggle("hidden", panel.dataset.homePanel !== visiblePanelRoute);
@@ -1108,7 +1229,9 @@ async function restoreRecentProfileBuildJob(setId, options = {}) {
       jobId: job.id,
       selectedSampleIds: selectedCreatorSampleViewItems().map(sampleViewItemKey),
     });
-    placeJobCard("profile");
+    if (!placeJobCard("profile")) {
+      return false;
+    }
     renderJobStatus(job, "恢复素材包队列");
     if (job.result_json && Object.keys(job.result_json).length) {
       renderProfileQueue(job.result_json);
@@ -1420,17 +1543,24 @@ function renderDefinitionList(element, rows) {
 }
 
 function placeJobCard(scope = "profile") {
+  if (
+    (scope === "single" && activeHomeRoute !== "single")
+    || (scope === "profile" && activeHomeRoute !== "profile")
+  ) {
+    return false;
+  }
   currentJobCardScope = scope;
   if (!jobCard) {
-    return;
+    return true;
   }
   if (scope === "single" && resultCard) {
     resultCard.insertAdjacentElement("afterend", jobCard);
-    return;
+    return true;
   }
   if (creatorCloneNextBar) {
     creatorCloneNextBar.insertAdjacentElement("afterend", jobCard);
   }
+  return true;
 }
 
 function scrollProfileTaskPanel() {
@@ -1520,10 +1650,51 @@ function renderJobPhase(job) {
 
 function renderJobStatus(job, fallbackMessage = "") {
   if (!progressBar || !jobMessage || !job) {
-    return;
+    return false;
+  }
+  if (
+    (currentJobCardScope === "single" && activeHomeRoute !== "single")
+    || (currentJobCardScope === "profile" && activeHomeRoute !== "profile")
+  ) {
+    return false;
   }
   if (currentJobCardScope === "single") {
-    currentSingleJob = job;
+    const previousJobId = String(currentSingleJob?.id || currentSingleJob?.task_id || "");
+    const nextJobId = String(job.id || job.task_id || "");
+    if (nextJobId !== singleItemActiveJobId) {
+      return false;
+    }
+    const terminalRegression = Boolean(
+      previousJobId
+      && previousJobId === nextJobId
+      && ["success", "failed"].includes(currentSingleJob?.status)
+      && ["pending", "running", "stale"].includes(job.status),
+    );
+    if (terminalRegression) {
+      return false;
+    }
+    const switchedJob = Boolean(previousJobId && nextJobId && previousJobId !== nextJobId);
+    const reachedTerminal = Boolean(
+      previousJobId
+      && previousJobId === nextJobId
+      && ["pending", "running", "stale"].includes(currentSingleJob?.status)
+      && ["success", "failed"].includes(job.status),
+    );
+    if (switchedJob || reachedTerminal) {
+      loadedHomeCase = null;
+    }
+    const result = job.result_json || job.result || {};
+    const terminalCaseId = getCaseId(result);
+    const loadedCaseId = String(loadedHomeCase?.case_id || "");
+    const terminalCaseNeedsVerification = Boolean(
+      job.type === "download-build-analyze-case"
+      && ["success", "failed"].includes(job.status)
+      && terminalCaseId
+      && terminalCaseId !== loadedCaseId,
+    );
+    currentSingleJob = terminalCaseNeedsVerification
+      ? {...job, __singleItemCaseVerificationPending: true}
+      : job;
     renderSingleItemStatus();
   }
   progressBar.style.width = `${job.progress || 0}%`;
@@ -1533,6 +1704,7 @@ function renderJobStatus(job, fallbackMessage = "") {
     : job.message || fallbackMessage || "";
   jobMessage.textContent = `${job.status || "running"} · ${job.progress || 0}% · ${message}`;
   renderJobPhase(job);
+  return true;
 }
 
 function isProfileBuildJobActive() {
@@ -4514,6 +4686,9 @@ async function refreshProfilePoolFromPersistedSet(setId) {
 }
 
 async function pollProfileQueue(jobId, options = {}) {
+  if (activeHomeRoute !== "profile") {
+    return;
+  }
   let job = null;
   if (options.safeStatus) {
     job = await fetchWorkbenchJob(jobId);
@@ -4521,6 +4696,9 @@ async function pollProfileQueue(jobId, options = {}) {
     const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {cache: "no-store"});
     const payload = await readJsonResponse(response);
     job = payload.job;
+  }
+  if (activeHomeRoute !== "profile") {
+    return;
   }
   if (!job) {
     return;
@@ -4561,6 +4739,9 @@ async function pollProfileQueue(jobId, options = {}) {
       await refreshProfilePoolFromPersistedSet(persistedSetId);
     } else if (job.result_json?.set) {
       refreshProfilePoolFromSet(job.result_json.set);
+    }
+    if (activeHomeRoute !== "profile") {
+      return;
     }
     updateCreatorCloneSelectionStatus();
     if (options.allowAutoDistill !== false && profileAutoDistill?.checked) {
@@ -4614,7 +4795,9 @@ async function buildSelectedProfileQueue() {
   renderCreatorCloneNextAction();
   try {
     await syncCreatorCloneWorkflowSelection();
-    placeJobCard("profile");
+    if (!placeJobCard("profile")) {
+      return;
+    }
     resetJobCard(buildableCount
       ? `创建素材富化队列：视频 ${buildableCount} 条，参考样本 ${referenceOnlyCount} 条。`
       : `保存选样：${referenceOnlyCount} 条仅作为蒸馏参考，不执行视频下载。`);
@@ -4676,6 +4859,9 @@ async function buildSelectedProfileQueue() {
       : `已保存 ${payload.selected_count} 条参考样本；这些样本不下载视频，可直接进入大模型蒸馏。`;
     await pollProfileQueue(payload.job_id);
   } catch (error) {
+    if (activeHomeRoute !== "profile") {
+      return;
+    }
     clearActiveProfileBuildJob();
     jobMessage.className = "job-message failed";
     jobMessage.textContent = `${error.error_code || "ERROR"}：${error.message || "队列创建失败"}`;
@@ -5738,6 +5924,9 @@ function applyCreatorCloneDistillPayload(payload) {
 }
 
 async function pollCreatorCloneDistillJob(jobId, options = {}) {
+  if (activeHomeRoute !== "profile") {
+    return {completed: false, rendered: false, superseded: true};
+  }
   let job = null;
   if (options.safeStatus) {
     job = await fetchWorkbenchJob(jobId);
@@ -5745,6 +5934,9 @@ async function pollCreatorCloneDistillJob(jobId, options = {}) {
     const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {cache: "no-store"});
     const payload = await readJsonResponse(response);
     job = payload.job;
+  }
+  if (activeHomeRoute !== "profile") {
+    return {completed: false, rendered: false, superseded: true};
   }
   if (!job) {
     return {completed: false, rendered: false};
@@ -5961,7 +6153,9 @@ async function distillSelectedCreatorClone(options = {}) {
     const selectedIds = selected.map(sampleViewItemKey);
     await syncCreatorCloneWorkflowSelection();
     await markCreatorCloneDistillationStarted();
-    placeJobCard("profile");
+    if (!placeJobCard("profile")) {
+      return;
+    }
     resetJobCard("正在创建创作者蒸馏任务...");
     scrollProfileTaskPanel();
     const response = await fetch("/api/jobs/creator-clone-distill", {
@@ -5983,6 +6177,9 @@ async function distillSelectedCreatorClone(options = {}) {
     profileScanStatus.textContent = `已创建创作者蒸馏任务：${payload.selected_count || selected.length} 条样本。`;
     completion = await pollCreatorCloneDistillJob(payload.job_id);
   } catch (error) {
+    if (activeHomeRoute !== "profile") {
+      return;
+    }
     profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "蒸馏失败"}`;
     jobMessage.className = "job-message failed";
     jobMessage.textContent = profileScanStatus.textContent;
@@ -6018,7 +6215,9 @@ async function batchDistillSelectedCreatorClone(options = {}) {
   try {
     await syncCreatorCloneWorkflowSelection();
     await markCreatorCloneDistillationStarted();
-    placeJobCard("profile");
+    if (!placeJobCard("profile")) {
+      return;
+    }
     resetJobCard(options.triggeredByQueue ? "富化完成，正在创建分批蒸馏任务..." : "正在创建分批蒸馏任务...");
     scrollProfileTaskPanel();
     const response = await fetch("/api/jobs/creator-clone-batch-distill", {
@@ -6040,6 +6239,9 @@ async function batchDistillSelectedCreatorClone(options = {}) {
     profileScanStatus.textContent = `已创建分批蒸馏任务：${payload.selected_count || selected.length} 条样本，${payload.batch_count || 1} 个批次。`;
     completion = await pollCreatorCloneDistillJob(payload.job_id);
   } catch (error) {
+    if (activeHomeRoute !== "profile") {
+      return;
+    }
     profileScanStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "分批蒸馏失败"}`;
     jobMessage.className = "job-message failed";
     jobMessage.textContent = profileScanStatus.textContent;
@@ -6236,6 +6438,12 @@ async function showAnalysisInline(result, options = {}) {
     jobMessage.textContent = "素材包已生成，正在加载首页分析视图...";
   }
   const caseData = await loadCasePayload(caseId);
+  if (
+    Number.isInteger(options.observationGeneration)
+    && !isCurrentSingleItemObservation(options.jobId, options.observationGeneration)
+  ) {
+    return false;
+  }
   if (result.analysis_status) {
     caseData.analysis_job = {
       status: result.analysis_status,
@@ -6347,7 +6555,16 @@ function renderWorkbenchRestoredJobStatus(job, mode, fallbackMessage = "已恢�
   return staleView;
 }
 
-async function renderRecoveredSingleJob(job, {scroll = false} = {}) {
+async function renderRecoveredSingleJob(
+  job,
+  {scroll = false, observationGeneration = null, observationJobId = ""} = {},
+) {
+  if (
+    Number.isInteger(observationGeneration)
+    && !isCurrentSingleItemObservation(observationJobId, observationGeneration)
+  ) {
+    return false;
+  }
   const canRenderSingleItemStatus = typeof renderSingleItemStatus === "function";
   if (typeof currentSingleJob !== "undefined") {
     currentSingleJob = job || null;
@@ -6373,8 +6590,28 @@ async function renderRecoveredSingleJob(job, {scroll = false} = {}) {
   buildCaseButton.hidden = true;
   renderWorkflowResult(result);
   try {
-    await showAnalysisInline(result, {scroll, updateMessage: false});
+    const analysisShown = await showAnalysisInline(result, {
+      scroll,
+      updateMessage: false,
+      jobId: observationJobId,
+      observationGeneration,
+    });
+    if (
+      Number.isInteger(observationGeneration)
+      && !isCurrentSingleItemObservation(observationJobId, observationGeneration)
+    ) {
+      return false;
+    }
+    if (!analysisShown) {
+      return false;
+    }
   } catch (error) {
+    if (
+      Number.isInteger(observationGeneration)
+      && !isCurrentSingleItemObservation(observationJobId, observationGeneration)
+    ) {
+      return false;
+    }
     homeAiStatus.textContent = `${singleItemFailureCategory(error, "case")}。素材包视图暂时无法加载。`;
   }
   return true;
@@ -6388,6 +6625,17 @@ async function openWorkbenchSingleTarget(target, openUrl) {
     return true;
   }
   setHomeRoute("single");
+  const observationGeneration = startSingleItemObservation(jobId);
+  currentSingleJob = null;
+  loadedHomeCase = null;
+  singleItemFlow = {stage: "idle", status: "pending", error_code: ""};
+  currentLocalVideoId = "";
+  homeCaseView.classList.add("hidden");
+  resultCard.classList.add("hidden");
+  singleButton.disabled = false;
+  singleButton.textContent = "解析";
+  buildCaseButton.disabled = false;
+  renderSingleItemStatus();
   const resourceId = String(target?.resource_id || "");
   let restoredResource = false;
   if (/^\d{15,22}$/.test(resourceId) && singleForm?.elements?.value) {
@@ -6403,13 +6651,23 @@ async function openWorkbenchSingleTarget(target, openUrl) {
   }
   placeJobCard("single");
   const job = await fetchWorkbenchJob(jobId);
+  if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+    return false;
+  }
   if (!job) {
     return false;
   }
   renderWorkbenchRestoredJobStatus(job, mode);
-  const restoredCase = await renderRecoveredSingleJob(job, {scroll: false});
+  const restoredCase = await renderRecoveredSingleJob(job, {
+    scroll: false,
+    observationGeneration,
+    observationJobId: jobId,
+  });
+  if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+    return false;
+  }
   if (mode === "observe" && ["pending", "running"].includes(job.status)) {
-    await monitorWorkbenchSingleJob(jobId);
+    await monitorWorkbenchSingleJob(jobId, observationGeneration);
     return true;
   }
   if (mode === "observe" && job.status === "stale") {
@@ -6418,13 +6676,31 @@ async function openWorkbenchSingleTarget(target, openUrl) {
   return restoredCase || restoredResource;
 }
 
-async function monitorWorkbenchSingleJob(jobId) {
+async function monitorWorkbenchSingleJob(
+  jobId,
+  observationGeneration = singleItemObservationGeneration,
+) {
+  if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+    return false;
+  }
   const job = await fetchWorkbenchJob(jobId);
+  if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+    return false;
+  }
   if (!job) {
     return false;
   }
-  renderJobStatus(job);
-  await renderRecoveredSingleJob(job, {scroll: job.status === "success"});
+  if (renderJobStatus(job) === false) {
+    return true;
+  }
+  await renderRecoveredSingleJob(job, {
+    scroll: job.status === "success",
+    observationGeneration,
+    observationJobId: jobId,
+  });
+  if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+    return false;
+  }
   if (job.status === "stale") {
     renderWorkbenchRestoredJobStatus(job, "manual");
     return true;
@@ -6437,15 +6713,23 @@ async function monitorWorkbenchSingleJob(jobId) {
     return true;
   }
   await new Promise((resolve) => window.setTimeout(resolve, 900));
-  return monitorWorkbenchSingleJob(jobId);
+  return monitorWorkbenchSingleJob(jobId, observationGeneration);
 }
 
 async function monitorWorkbenchProfileScanJob(jobId) {
+  if (activeHomeRoute !== "profile") {
+    return false;
+  }
   const job = await fetchWorkbenchJob(jobId);
+  if (activeHomeRoute !== "profile") {
+    return false;
+  }
   if (!job) {
     return false;
   }
-  placeJobCard("profile");
+  if (!placeJobCard("profile")) {
+    return false;
+  }
   renderJobStatus(job, "已恢复主页扫描任务");
   if (job.status === "stale") {
     renderWorkbenchRestoredJobStatus(job, "manual");
@@ -6462,6 +6746,9 @@ async function monitorWorkbenchProfileScanJob(jobId) {
     );
     if (setId) {
       await refreshProfilePoolFromPersistedSet(setId);
+    }
+    if (activeHomeRoute !== "profile") {
+      return false;
     }
     profileScanStatus.textContent = "主页扫描任务已完成；请确认素材池后继续。";
     return true;
@@ -6495,7 +6782,9 @@ async function openWorkbenchProfileTarget(target) {
       }
       const job = await fetchWorkbenchJob(jobId);
       if (job) {
-        placeJobCard("profile");
+        if (!placeJobCard("profile")) {
+          return false;
+        }
         const staleView = renderWorkbenchRestoredJobStatus(job, mode);
         profileScanStatus.textContent = staleView
           ? "主页扫描任务可能已停止更新。已恢复导入步骤，但不会自动轮询、重试或修改任务状态。"
@@ -6537,8 +6826,13 @@ async function openWorkbenchProfileTarget(target) {
     setProfileStageView(stage, {scroll: false});
   }
   if (["creator-clone-distill", "creator-clone-batch-distill"].includes(taskType) && jobId) {
-    placeJobCard("profile");
+    if (!placeJobCard("profile")) {
+      return false;
+    }
     const job = await fetchWorkbenchJob(jobId);
+    if (activeHomeRoute !== "profile") {
+      return false;
+    }
     let staleView = false;
     if (job) {
       staleView = renderWorkbenchRestoredJobStatus(job, mode, "已恢复创作者蒸馏任务");
@@ -6596,10 +6890,24 @@ document.addEventListener("workbench:open-target", async (event) => {
   }
   if (route === "single") {
     const openUrl = safeWorkbenchInternalUrl(event.detail?.open_url || target?.open_url);
+    let observationGeneration = null;
+    let observationJobId = "";
     try {
-      const restored = await openWorkbenchSingleTarget(target, openUrl);
+      const restorePromise = openWorkbenchSingleTarget(target, openUrl);
+      observationGeneration = singleItemObservationGeneration;
+      observationJobId = singleItemActiveJobId;
+      const restored = await restorePromise;
+      if (!isCurrentSingleItemObservation(observationJobId, observationGeneration)) {
+        return;
+      }
       notifyWorkbenchTargetResult(restored, restored ? "" : "单作品任务状态无法恢复，请重新导入。" );
     } catch (error) {
+      if (
+        Number.isInteger(observationGeneration)
+        && !isCurrentSingleItemObservation(observationJobId, observationGeneration)
+      ) {
+        return;
+      }
       notifyWorkbenchTargetResult(
         false,
         `${singleItemFailureCategory(error, "case")}。单作品任务状态暂时无法恢复。`,
@@ -6740,6 +7048,7 @@ window.addEventListener("hashchange", () => {
 
 // Single Work
 async function runSingleValue(value) {
+  const observationGeneration = startSingleItemObservation();
   singleButton.disabled = true;
   singleButton.textContent = "解析中...";
   selectedCandidate = null;
@@ -6757,22 +7066,35 @@ async function runSingleValue(value) {
       body: JSON.stringify({value}),
     });
     const imported = await readJsonResponse(importResponse);
+    if (!isCurrentSingleItemObservation("", observationGeneration)) {
+      return;
+    }
     currentAwemeId = imported.video.aweme_id;
     setSingleItemFlow("acquisition", "active");
     singleResult.classList.remove("hidden");
     singleResult.textContent = `已导入作品：${currentAwemeId}，正在解析可用清晰度...`;
-    await resolveQualities([currentAwemeId]);
-    if (selectedCandidate) {
-      await downloadCandidate(selectedCandidate);
+    const qualitiesResolved = await resolveQualities([currentAwemeId], observationGeneration);
+    if (
+      qualitiesResolved
+      && selectedCandidate
+      && isCurrentSingleItemObservation("", observationGeneration)
+    ) {
+      await downloadCandidate(selectedCandidate, observationGeneration);
     }
   } catch (error) {
+    if (!isCurrentSingleItemObservation("", observationGeneration)) {
+      return;
+    }
     singleResult.classList.remove("hidden");
     singleResult.textContent = `${singleItemFailureCategory(error, "acquisition")}。请检查作品链接或稍后重试。`;
     setSingleItemFlow(currentAwemeId ? "acquisition" : "received", "failed", error.error_code);
     singleButton.disabled = false;
     singleButton.textContent = "解析";
   } finally {
-    if (!selectedCandidate) {
+    if (
+      !selectedCandidate
+      && isCurrentSingleItemObservation("", observationGeneration)
+    ) {
       singleButton.disabled = false;
       singleButton.textContent = "解析";
     }
@@ -6984,18 +7306,24 @@ copyDistillPromptButton.addEventListener("click", async () => {
   }, 1600);
 });
 
-async function resolveQualities(awemeIds) {
+async function resolveQualities(awemeIds, observationGeneration = null) {
   const response = await fetch("/api/videos/qualities", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({aweme_ids: awemeIds}),
   });
   const payload = await readJsonResponse(response);
+  if (
+    Number.isInteger(observationGeneration)
+    && !isCurrentSingleItemObservation("", observationGeneration)
+  ) {
+    return false;
+  }
   const candidates = payload.results[currentAwemeId] || [];
   if (!candidates.length) {
     singleResult.textContent = "没有解析到可用清晰度候选。";
     setSingleItemFlow("acquisition", "failed", "QUALITY_NO_CANDIDATE");
-    return;
+    return false;
   }
   selectedCandidate = chooseCandidate(candidates);
   const sizeMb = selectedCandidate.size_bytes
@@ -7006,6 +7334,7 @@ async function resolveQualities(awemeIds) {
     : "未知码率";
   singleResult.textContent = `已按设置选择：${selectedCandidate.quality_label || "网页候选"} · ${sizeMb} MB · ${bitrate}`;
   setSingleItemFlow("acquisition", "active");
+  return true;
 }
 
 function chooseCandidate(candidates) {
@@ -7019,8 +7348,15 @@ function chooseCandidate(candidates) {
   return candidates[0];
 }
 
-async function downloadCandidate(candidate) {
+async function downloadCandidate(
+  candidate,
+  observationGeneration = singleItemObservationGeneration,
+) {
+  if (!isCurrentSingleItemObservation("", observationGeneration)) {
+    return;
+  }
   let inlineCaseShown = false;
+  let observationJobId = "";
   setHomeRoute("single");
   placeJobCard("single");
   setSingleItemFlow("acquisition", "active");
@@ -7035,6 +7371,10 @@ async function downloadCandidate(candidate) {
       body: JSON.stringify({aweme_id: currentAwemeId, candidate_id: candidate.candidate_id}),
     });
     const payload = await readJsonResponse(response);
+    if (!bindSingleItemObservation(payload.job_id, observationGeneration)) {
+      return;
+    }
+    observationJobId = payload.job_id;
     const renderIntermediateCase = async (job, {scroll = false} = {}) => {
       const result = job.result_json || {};
       const caseId = getCaseId(result);
@@ -7046,9 +7386,20 @@ async function downloadCandidate(candidate) {
       buildCaseButton.hidden = true;
       renderWorkflowResult(result);
       try {
-        await showAnalysisInline(result, {scroll, updateMessage: false});
-        inlineCaseShown = true;
+        const analysisShown = await showAnalysisInline(result, {
+          scroll,
+          updateMessage: false,
+          jobId: payload.job_id,
+          observationGeneration,
+        });
+        if (!isCurrentSingleItemObservation(payload.job_id, observationGeneration)) {
+          return;
+        }
+        inlineCaseShown = analysisShown;
       } catch (error) {
+        if (!isCurrentSingleItemObservation(payload.job_id, observationGeneration)) {
+          return;
+        }
         homeAiStatus.textContent = `${singleItemFailureCategory(error, "case")}。本地拆解视图暂时无法加载，任务仍在继续。`;
       }
     };
@@ -7058,15 +7409,23 @@ async function downloadCandidate(candidate) {
         resultCard.classList.remove("hidden");
         buildCaseButton.hidden = true;
         renderWorkflowResult(job.result_json);
-        if (await showAnalysisInline(job.result_json, {scroll: !inlineCaseShown, updateMessage: false})) {
+        if (await showAnalysisInline(job.result_json, {
+          scroll: !inlineCaseShown,
+          updateMessage: false,
+          jobId: payload.job_id,
+          observationGeneration,
+        })) {
           jobMessage.textContent = "success · 100% · 任务处理完成";
           return;
         }
       }
     }, async (job) => {
       await renderIntermediateCase(job, {scroll: true});
-    });
+    }, observationGeneration);
   } catch (error) {
+    if (!isCurrentSingleItemObservation(observationJobId, observationGeneration)) {
+      return;
+    }
     jobMessage.className = "job-message failed";
     jobMessage.textContent = singleItemFailureCategory(error, "acquisition");
     setSingleItemFlow("acquisition", "failed", error.error_code);
@@ -7083,6 +7442,8 @@ buildCaseButton.addEventListener("click", async () => {
   placeJobCard("single");
   setSingleItemFlow("acquisition", "active");
   resetJobCard("创建任务...");
+  const observationGeneration = startSingleItemObservation();
+  let observationJobId = "";
   try {
     const response = await fetch("/api/jobs/build-case", {
       method: "POST",
@@ -7090,8 +7451,15 @@ buildCaseButton.addEventListener("click", async () => {
       body: JSON.stringify({local_video_id: currentLocalVideoId}),
     });
     const payload = await readJsonResponse(response);
-    pollJob(payload.job_id);
+    if (!bindSingleItemObservation(payload.job_id, observationGeneration)) {
+      return;
+    }
+    observationJobId = payload.job_id;
+    pollJob(payload.job_id, null, null, observationGeneration);
   } catch (error) {
+    if (!isCurrentSingleItemObservation(observationJobId, observationGeneration)) {
+      return;
+    }
     jobMessage.className = "job-message failed";
     jobMessage.textContent = singleItemFailureCategory(error, "case");
     setSingleItemFlow("acquisition", "failed", error.error_code);
@@ -7099,18 +7467,34 @@ buildCaseButton.addEventListener("click", async () => {
   }
 });
 
-async function pollJob(jobId, onSuccess, onProgress) {
+async function pollJob(
+  jobId,
+  onSuccess,
+  onProgress,
+  observationGeneration = singleItemObservationGeneration,
+) {
+  if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+    return;
+  }
   try {
     const response = await fetch(`/api/jobs/${jobId}`, {cache: "no-store"});
     const payload = await readJsonResponse(response);
+    if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+      return;
+    }
     const job = payload.job;
-    renderJobStatus(job);
+    if (renderJobStatus(job) === false) {
+      return;
+    }
     if (job.status === "success") {
       renderJobStatus(job);
       if (onSuccess) {
         await onSuccess(job);
       } else if (jobResult) {
         showJson(jobResult, job.result_json);
+      }
+      if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+        return;
       }
       buildCaseButton.disabled = false;
       singleButton.disabled = false;
@@ -7145,15 +7529,26 @@ async function pollJob(jobId, onSuccess, onProgress) {
     if (onProgress) {
       await onProgress(job);
     }
+    if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+      return;
+    }
     await new Promise((resolve) => {
       window.setTimeout(resolve, 700);
     });
-    return pollJob(jobId, onSuccess, onProgress);
+    return pollJob(jobId, onSuccess, onProgress, observationGeneration);
   } catch (error) {
-    currentSingleJob = {...(currentSingleJob || {}), status: "stale"};
-    renderSingleItemStatus();
+    if (!isCurrentSingleItemObservation(jobId, observationGeneration)) {
+      return;
+    }
+    const terminalStatusKnown = ["success", "failed"].includes(currentSingleJob?.status);
+    if (!terminalStatusKnown) {
+      currentSingleJob = {...(currentSingleJob || {}), status: "stale"};
+      renderSingleItemStatus();
+    }
     jobMessage.className = "job-message failed";
-    jobMessage.textContent = "任务状态暂时无法确认，请稍后重新进入工作台查看。";
+    jobMessage.textContent = terminalStatusKnown
+      ? "任务已结束，但结果视图暂时无法加载。请稍后重新进入工作台查看。"
+      : "任务状态暂时无法确认，请稍后重新进入工作台查看。";
     buildCaseButton.disabled = false;
     singleButton.disabled = false;
     singleButton.textContent = "解析";

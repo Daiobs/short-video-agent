@@ -77,7 +77,7 @@
 
 - ASR：`success`、`no_speech`、`pending`、`missing`、`provider_missing`、`not_configured`、`failed`；
 - OCR：`success`、`no_text`、`pending`、`missing`、`provider_missing`、`disabled`、`not_configured`、`failed`；
-- manifest 中的评论、指标和索引：`pending`、`success`；读取到已知的 `failed`、`missing`、`provider_missing` 时可作为补充失败证据；
+- manifest 中的评论、指标和索引：`pending`、`success`；只有已知的 `failed`，以及明确尝试 Provider 后得到的 `provider_missing`，可作为补充失败证据；可选项的 `missing`、`disabled`、`not_configured`、`skipped` 和 `not_required` 保持中性；
 - 其他未识别值：统一作为 `unknown` 处理，不直接显示原值。
 
 ### 4.3 前端瞬时状态
@@ -127,12 +127,12 @@
 | Job 为 `running`，尚无下载/Case 证据 | 已接收；获取素材；生成分析；完成 | `completed`；`active`；`pending`；`pending` | 组合任务正在运行，最早未证实阶段为素材获取 |
 | Job 为 `running`，结果中已有明确素材成功证据、无 Case | 已接收；获取素材；生成分析；完成 | `completed`；`completed`；`active`；`pending` | 已有素材证据，下一阶段为 Case/分析生成 |
 | Job 为 `running`，已有 `case_id`，Case 尚未加载或分析为 `pending`/`not_analyzed` | 已接收；获取素材；生成分析；完成 | `completed`；`completed`；`active`；`pending` | Case 关联证明素材阶段已过；最终结果尚未完成 |
-| Job 为 `success` 且 AI `success`，或 Case 为 `artifact_ready=true` 且 `analysis_status=completed` | 四阶段 | 全部 `completed` | 素材包与分析结果均有明确成功证据 |
+| Job 为 `success` 且响应中有实际分析 payload/report，或 Case 为 `artifact_ready=true` 且 `analysis_status=completed` | 四阶段 | 全部 `completed` | 素材包与分析结果均有明确成功证据；只有 `analysis_status=success` 字符串但没有结果载荷时仍需等待 Case 复核 |
 | Job 为 `success`，Case 可用，但 AI 为 `failed`、`skipped` 或 `not_configured` | 已接收；获取素材；生成分析；完成 | `completed`；`completed`；`partial`；`partial` | 基础结果可用，AI 子结果失败、跳过或未配置；不能宣称完全成功 |
 | Job 为 `success`，Case 可用，AI 为 `not_analyzed` | 已接收；获取素材；生成分析；完成 | `completed`；`completed`；`partial`；`partial` | 任务已经终止但分析未生成；保留基础产物并明确缺口，不在本轮自动补跑 |
 | Job 为 `failed`，无素材、Case 或其他可用结果证据 | 已接收；获取素材；生成分析；完成 | `completed`；`failed`；`pending`；`failed` | 最早失败发生在素材阶段；最终失败，后续阶段未执行 |
 | Job 为 `failed`，已有素材成功证据但无可用 Case | 已接收；获取素材；生成分析；完成 | `completed`；`completed`；`failed`；`failed` | 素材已取得，Case/分析阶段失败且无可用结果 |
-| Job 为 `failed` 或 `recoverable`，但成功加载的 Case 中已有可用产物 | 已接收；获取素材；生成分析；完成 | 依已证实阶段为 `completed`；发生中断的阶段为 `partial`；完成为 `partial` | 已保留产物不得被粗粒度 Job 失败覆盖；也不得把中断标为完全成功 |
+| Job 为 `failed` 或 `recoverable`，但成功加载的同一 Case 中已有可用产物 | 已接收；获取素材；生成分析；完成 | 依已证实阶段为 `completed`；发生中断的阶段为 `partial`；完成为 `partial` | 已保留产物不得被粗粒度 Job 失败覆盖；Job 的 Case 尚未复核、Case ID 不一致或只有 `available_results` 提示时先显示未知，不提前宣称部分完成 |
 | Workbench 为 `stale`，但已有阶段证据或可用产物 | 已证实阶段；最早未确认阶段；完成 | 已证实阶段保持 `completed`；最早未确认阶段为 `active`；完成保持 `pending`，完整结果只把“完成”标为待确认 | `stale` 只证明状态需要确认，不证明某项结果失败；整体文案为“状态更新中” |
 | Workbench 为 `stale`，无 Case 或可用结果 | 已接收；获取素材；生成分析；完成 | `completed`；`active`；`pending`；`pending` | Job 已存在，但最早未确认的素材阶段只能保守显示进行中；不显示部分成功，不触发自动重试 |
 | 仅恢复到 Case，`artifact_ready=true` 且有分析报告 | 四阶段 | 全部 `completed` | Case 自身提供完整证据，无需依赖已丢失的活跃 Job |
@@ -174,7 +174,7 @@
 
 - Case 已保留，但 AI `failed`、`skipped`、`not_configured` 或 `not_analyzed`；
 - Case 的 `missing_artifacts` 非空，但仍有允许展示的产物；
-- Job `failed`、`recoverable` 或 `stale`，但成功加载的 Case 中已有结果；
+- Job `failed` 或 `recoverable`，且成功加载并核对为同一任务的 Case 中已有结果；`stale` 仍表示状态待确认，不单独触发 `partial`；
 - ASR/OCR 等非关键富化失败，而基础 Case 与核心结果仍可使用。
 
 若没有可用结果，则终态失败必须显示 `failed`，不能显示 `partial`。
@@ -188,6 +188,7 @@
 - 同一能力的状态码、错误码和缺失字段同时出现时，只计一次；
 - `missing_artifacts` 只能映射到预定义的安全中文类别，不能直接显示后端标签、文件名或路径；
 - 计数只覆盖当前响应中可以证明的项目，不把“未知”算作失败；
+- 可选产物的普通 `missing`/未配置状态不计失败；只有显式执行失败，或已尝试但 Provider 不可用，才进入失败计数；
 - 摘要应使用“已保留 X 项结果，Y 项未完成”一类事实性文案，不宣称任务全部成功。
 
 ## 8. 未知状态降级
@@ -201,6 +202,12 @@
 - 没有可用结果时，后续阶段保持 `pending`；
 - 不因未知状态自动刷新页面、加快轮询、重新提交或重跑；
 - 如需开发日志，只记录经过长度限制的状态名/任务类型等非敏感标量，不记录完整对象、ID、消息、Header 或响应正文。
+
+Workbench 投影会把无法识别的旧状态净化为 `failed`，且不会保留原始值。因此，恢复入口中的 `failed` 只有在同时存在可稳定分类的错误码或结构化失败证据时才按失败展示；错误码为空或属于未来未知分类时，前端保守显示“状态更新中”。原始 `/api/jobs/{job_id}` 返回的 `failed` 不受这条兼容规则影响。
+
+轮询中的短暂冲突同样按未知处理：运行中或 `stale` 的 Case 快照即使暂时缺文件，也不提前显示终态失败；Workbench 终态投影只有状态字符串、而同一 Case 仍待现有请求复核时，也不先显示完成或部分失败。组合 Job 即使已经带回分析载荷，也会等待主流程本来就会执行的 Case 读取完成后再宣布终态，避免“完成 → 部分完成”的闪烁；这不会新增 Case 请求。新 Case 到达后再依据实际产物收敛到 `completed`、`partial` 或 `failed`。切换任务时必须清空上一任务的瞬时 Flow 和 Case；Job 与 Case ID 不一致时不得合并两者证据。
+
+700 ms 主流程与 900 ms Workbench 观察器共享一个只存在于前端内存的观察代次和活动 Job ID。开始新任务或打开新的恢复目标时递增代次；旧请求返回后若代次或 Job ID 已不匹配，结果会被忽略且不再递归。相同 Job 已到 `success`/`failed` 后也拒绝回退到 `pending`/`running`/`stale`。这只是阻止过期响应覆盖当前界面，不改变后端 Job/Case 状态机，也不增加轮询、取消请求或自动重试。
 
 ## 9. 错误脱敏规则
 
@@ -329,8 +336,10 @@ EchoLens 对本任务的价值仅在于验证“长任务阶段化”和“部�
 本轮实现后的验证结果：
 
 - 状态映射、冲突证据优先级、错误脱敏、可访问结构和网络静态门禁测试通过；
-- 仓库全量测试为 `409 passed`，仅保留既有 Starlette/httpx2 弃用警告；
+- 仓库全量测试为 `421 passed`，仅保留既有 Starlette/httpx2 弃用警告；
 - 本地页面冷启动实测仍为 11 个代码确定同源请求：文档、CSS、5 个 JavaScript 与 4 个既有 API；
 - 390 × 844 移动视口为单列四阶段，1280 px 桌面视口为四列，均无文档级或状态项横向溢出；
+- 状态变化只通过一个原子 live region 播报；阶段名称或安全失败类别发生变化时更新，相同轮询文案不会重复播报；
+- 700 ms 单作品轮询与 900 ms Workbench/Profile 观察均受页面与任务代次约束；迟到响应不能倒退终态、抢占共用任务卡或跨任务写入错误文案；
 - 部分失败夹具输出 `completed / completed / partial / partial`，只显示有限中文类别，不包含原始 Cookie、Authorization、Token 或本地路径；
 - 验证未提交作品、未创建 Job、未调用 Provider，也未保存页面截图到仓库。
