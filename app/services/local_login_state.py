@@ -16,7 +16,7 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 
 from app.errors import AppError, ErrorCode
-from app.services.runtime_settings import load_local_settings, update_local_section
+from app.services.runtime_settings import load_local_settings, replace_local_section, update_local_section
 
 
 SCHEMA_VERSION = 1
@@ -35,6 +35,7 @@ SIGNATURE_RE = re.compile(r"^[a-f0-9]{64}$")
 EXTENSION_VERSION_RE = re.compile(r"^1\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$")
 CREDENTIALS_PATH = Path.home() / ".short-video-agent" / "credentials.json"
 LOCAL_METADATA_SECTION = "douyin_extension"
+MANUAL_METADATA_SECTION = "douyin"
 
 _LOCK = Lock()
 _PENDING_PAIR: dict[str, Any] = {}
@@ -461,6 +462,81 @@ def clear_douyin_login_state(credentials: dict[str, Any]) -> dict[str, Any]:
         },
     )
     return login_state_status_payload()
+
+
+def store_manual_douyin_credentials(values: Mapping[str, Any]) -> dict[str, str]:
+    updated_at = _iso_now()
+    with _LOCK:
+        credentials = _read_credentials_unlocked()
+        existing = credentials.get("manual_douyin")
+        manual = dict(existing) if isinstance(existing, dict) else {}
+
+        if "cookie" in values:
+            cookie_header = str(values.get("cookie") or "").strip()
+            if cookie_header:
+                diagnostics = _parse_cookie_header(cookie_header)
+                manual.update(
+                    {
+                        "cookie_header": cookie_header,
+                        "pair_count": diagnostics["pair_count"],
+                        "login_key_count": diagnostics["login_key_count"],
+                    }
+                )
+            else:
+                manual = {}
+
+        if manual.get("cookie_header"):
+            if "user_agent" in values:
+                user_agent = str(values.get("user_agent") or "").strip()
+                if len(user_agent) > 1024 or "\r" in user_agent or "\n" in user_agent:
+                    raise AppError(ErrorCode.LOCAL_LOGIN_STATE_INVALID)
+                manual["user_agent"] = user_agent
+            if "referer" in values:
+                manual["referer"] = _validate_referer(str(values.get("referer") or ""))
+            manual.setdefault("user_agent", "")
+            manual.setdefault("referer", "https://www.douyin.com/")
+            manual["updated_at"] = updated_at
+            credentials["manual_douyin"] = manual
+        else:
+            credentials.pop("manual_douyin", None)
+
+        _write_credentials_unlocked(credentials)
+
+    cookie_header = str(manual.get("cookie_header") or "")
+    replace_local_section(
+        MANUAL_METADATA_SECTION,
+        {
+            "configured": bool(cookie_header),
+            "source": "manual_secure" if cookie_header else "",
+            "credential_fingerprint": (
+                hashlib.sha256(cookie_header.encode("utf-8")).hexdigest()
+                if cookie_header
+                else ""
+            ),
+            "updated_at": str(manual.get("updated_at") or "") if cookie_header else "",
+        },
+    )
+    return manual_douyin_credentials()
+
+
+def manual_douyin_credentials() -> dict[str, str]:
+    credentials = _safe_credentials()
+    manual = credentials.get("manual_douyin")
+    if not isinstance(manual, dict):
+        return {}
+    cookie_header = str(manual.get("cookie_header") or "")
+    if not cookie_header:
+        return {}
+    return {
+        "cookie": cookie_header,
+        "user_agent": str(manual.get("user_agent") or ""),
+        "referer": str(manual.get("referer") or "https://www.douyin.com/"),
+        "updated_at": str(manual.get("updated_at") or ""),
+        "last_synced_at": "",
+        "pair_count": str(manual.get("pair_count") or 0),
+        "login_key_count": str(manual.get("login_key_count") or 0),
+        "extension_version": "",
+    }
 
 
 def extension_douyin_credentials() -> dict[str, str]:

@@ -92,6 +92,8 @@
 
 `.local_settings.json` 只记录凭据指纹、字段数量、扩展版本和最近同步时间，不包含 Cookie 或共享密钥。
 
+设置页的手工 Cookie 兼容入口也使用同一个安全凭据文件。旧版本曾写入 `.local_settings.json` 的手工 Cookie 会在首次读取时迁移到 `credentials.json`，成功后原位置只保留状态、指纹和更新时间。
+
 ## 过期与切换账号
 
 Cookie 过期时：

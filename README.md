@@ -48,7 +48,7 @@
 - JSON / CSV 导入：支持 `items`、`samples`、`aweme_list`、`awemeList`，兼容 `aweme_id / awemeId / id`、`title / desc`、`author / nickname`、`cover_url / cover`、`statistics.digg_count` 等字段。
 - 已有 Case 导入：轻量版支持粘贴 `case_id`，把已有素材包作为更高理解度样本参与蒸馏。
 
-大模型 API 和手工 Cookie 兼容配置可以在右上角设置弹窗中修改，保存到本机 `.local_settings.json`。扩展同步的 Cookie 不写入项目目录，而是保存到用户目录下权限为 `0600` 的 `~/.short-video-agent/credentials.json`；`.local_settings.json` 只记录其指纹、字段数量和最近同步时间。两个文件都不会进入数据库、素材包、Prompt 或 Git，接口响应只显示是否配置和脱敏状态。
+大模型 API 和手工 Cookie 兼容配置都可以在右上角设置弹窗中修改。大模型配置保存在 `.local_settings.json`；扩展同步及手工输入的 Douyin Cookie、User-Agent、Referer 统一保存在用户目录下权限为 `0600` 的 `~/.short-video-agent/credentials.json`。`.local_settings.json` 对 Douyin 只记录状态、凭据指纹和更新时间，不保存 Cookie。旧版本遗留的手工 Cookie 会在首次读取时安全迁移并从该文件移除。凭据不会进入数据库、素材包、Prompt 或 Git，接口响应只显示是否配置和脱敏状态。
 
 推荐使用 `extensions/douyin-login-state-extractor/`：首次在设置页生成配对码并完成一次配对，之后登录抖音后点击扩展即可同步，扫描其他主页不需要重新授权。安装、配对、安全协议和威胁模型见 [`docs/douyin-login-state-extractor.md`](docs/douyin-login-state-extractor.md)。
 

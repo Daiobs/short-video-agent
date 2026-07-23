@@ -2612,6 +2612,8 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
 
 
 def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypatch, tmp_path) -> None:
+    from app.services import local_login_state
+
     runtime_path = tmp_path / ".local_settings.json"
     monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
     secret = "sessionid=local-douyin-cookie-secret; sid_guard=guard; uid_tt=uid; sid_tt=sid"
@@ -2632,8 +2634,15 @@ def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypat
     assert status["user_agent"] == "Browser UA"
     assert secret not in json.dumps(payload, ensure_ascii=False)
     stored = json.loads(runtime_path.read_text(encoding="utf-8"))
-    assert stored["douyin"]["cookie"] == secret
-    assert not stored["douyin"]["cookie"].lower().startswith("cookie:")
+    assert stored["douyin"]["configured"] is True
+    assert stored["douyin"]["source"] == "manual_secure"
+    assert "cookie" not in stored["douyin"]
+    assert "user_agent" not in stored["douyin"]
+    assert "referer" not in stored["douyin"]
+    assert secret not in runtime_path.read_text(encoding="utf-8")
+    credentials = local_login_state.read_credentials()
+    assert credentials["manual_douyin"]["cookie_header"] == secret
+    assert not credentials["manual_douyin"]["cookie_header"].lower().startswith("cookie:")
 
 
 def test_douyin_cookie_api_test_reports_safe_config_diagnostics(monkeypatch, tmp_path) -> None:

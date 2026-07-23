@@ -173,7 +173,7 @@ def data_source_status_payload() -> dict:
             else "未配置个人账号 Cookie；请使用作品链接、JSON/CSV 或已有 Case 作为安全兜底。"
         ),
         "safety_notes": [
-            "扩展同步 Cookie 仅保存在用户目录的 0600 凭据文件，不进入数据库、Job、Case、Prompt、报告、日志或扩展存储。",
+            "扩展同步或手工输入的 Cookie 仅保存在用户目录的 0600 凭据文件，不进入数据库、Job、Case、Prompt、报告、日志或扩展存储。",
             "扩展仅在用户点击后读取 Douyin Cookie，不读取其他域名、localStorage 或 Network。",
             "Cookie 主路径失败时，请人工更新 Cookie，或使用作品链接、JSON/CSV、已有 Case。",
         ],

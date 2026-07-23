@@ -45,6 +45,17 @@ def update_local_section(section: str, values: dict[str, Any]) -> dict[str, Any]
         return payload
 
 
+def replace_local_section(section: str, values: dict[str, Any]) -> dict[str, Any]:
+    with _LOCK:
+        payload = load_local_settings()
+        payload[section] = dict(values)
+        LOCAL_SETTINGS_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return payload
+
+
 def _local_value(section: str, key: str, fallback):
     payload = load_local_settings()
     section_payload = payload.get(section)
@@ -125,7 +136,59 @@ def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
 def effective_douyin_settings() -> dict[str, Any]:
     # Imported lazily so the secure credential service can reuse the local
     # settings metadata helpers without creating an import cycle.
-    from app.services.local_login_state import extension_douyin_credentials
+    from app.errors import AppError
+    from app.services.local_login_state import (
+        extension_douyin_credentials,
+        manual_douyin_credentials,
+        store_manual_douyin_credentials,
+    )
+
+    payload = load_local_settings()
+    legacy_douyin = payload.get("douyin")
+    legacy_douyin = legacy_douyin if isinstance(legacy_douyin, dict) else {}
+    legacy_cookie = str(legacy_douyin.get("cookie") or "")
+    if legacy_cookie:
+        try:
+            if not manual_douyin_credentials().get("cookie"):
+                store_manual_douyin_credentials(
+                    {
+                        "cookie": legacy_cookie,
+                        "user_agent": str(legacy_douyin.get("user_agent") or settings.douyin_user_agent or ""),
+                        "referer": str(
+                            legacy_douyin.get("referer")
+                            or settings.douyin_referer
+                            or "https://www.douyin.com/"
+                        ),
+                    }
+                )
+            else:
+                manual = manual_douyin_credentials()
+                replace_local_section(
+                    "douyin",
+                    {
+                        "configured": True,
+                        "source": "manual_secure",
+                        "credential_fingerprint": _credential_fingerprint(str(manual.get("cookie") or "")),
+                        "updated_at": str(manual.get("updated_at") or ""),
+                    },
+                )
+        except AppError:
+            # Preserve read compatibility if the secure credential file cannot
+            # be migrated yet; never delete the only remaining credential.
+            return {
+                "cookie": legacy_cookie,
+                "user_agent": str(legacy_douyin.get("user_agent") or settings.douyin_user_agent or "").strip(),
+                "referer": str(
+                    legacy_douyin.get("referer")
+                    or settings.douyin_referer
+                    or "https://www.douyin.com/"
+                ).strip(),
+                "source": "manual_legacy",
+                "last_synced_at": "",
+                "pair_count": 0,
+                "login_key_count": 0,
+                "extension_version": "",
+            }
 
     extension = extension_douyin_credentials()
     if extension.get("cookie"):
@@ -134,31 +197,20 @@ def effective_douyin_settings() -> dict[str, Any]:
             "source": "chrome_extension",
         }
 
-    payload = load_local_settings()
-    local_douyin = payload.get("douyin")
-    local_douyin = local_douyin if isinstance(local_douyin, dict) else {}
-    local_cookie = str(local_douyin.get("cookie") or "")
+    manual = manual_douyin_credentials()
+    manual_cookie = str(manual.get("cookie") or "")
+    if manual_cookie:
+        return {
+            **manual,
+            "source": "manual_local",
+        }
+
     environment_cookie = str(settings.douyin_cookie or "")
-    source = "manual_local" if local_cookie else "environment" if environment_cookie else ""
     return {
-        "cookie": local_cookie or environment_cookie,
-        "user_agent": str(
-            (
-                local_douyin.get("user_agent")
-                if "user_agent" in local_douyin
-                else settings.douyin_user_agent
-            )
-            or ""
-        ).strip(),
-        "referer": str(
-            (
-                local_douyin.get("referer")
-                if "referer" in local_douyin
-                else settings.douyin_referer
-            )
-            or "https://www.douyin.com/"
-        ).strip(),
-        "source": source,
+        "cookie": environment_cookie,
+        "user_agent": str(settings.douyin_user_agent or "").strip(),
+        "referer": str(settings.douyin_referer or "https://www.douyin.com/").strip(),
+        "source": "environment" if environment_cookie else "",
         "last_synced_at": "",
         "pair_count": 0,
         "login_key_count": 0,
@@ -167,6 +219,8 @@ def effective_douyin_settings() -> dict[str, Any]:
 
 
 def update_douyin_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
+    from app.services.local_login_state import store_manual_douyin_credentials
+
     cleaned: dict[str, str] = {}
     for source_key, target_key in (
         ("cookie", "cookie"),
@@ -176,5 +230,11 @@ def update_douyin_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
     ):
         if source_key in values:
             cleaned[target_key] = str(values.get(source_key) or "").strip()
-    update_local_section("douyin", cleaned)
+    store_manual_douyin_credentials(cleaned)
     return effective_douyin_settings()
+
+
+def _credential_fingerprint(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest() if value else ""

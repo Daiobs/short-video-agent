@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import stat
@@ -337,6 +338,33 @@ def test_extension_credentials_override_manual_and_fall_back_after_clear(monkeyp
     assert effective_after_clear["cookie"] == manual_cookie
 
 
+def test_legacy_manual_cookie_is_migrated_out_of_local_settings() -> None:
+    runtime_settings.LOCAL_SETTINGS_PATH.write_text(
+        json.dumps(
+            {
+                "douyin": {
+                    "cookie": COOKIE_HEADER,
+                    "user_agent": "legacy-agent",
+                    "referer": "https://www.douyin.com/legacy",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    effective = runtime_settings.effective_douyin_settings()
+
+    assert effective["source"] == "manual_local"
+    assert effective["cookie"] == COOKIE_HEADER
+    assert effective["user_agent"] == "legacy-agent"
+    local_payload = json.loads(runtime_settings.LOCAL_SETTINGS_PATH.read_text(encoding="utf-8"))
+    assert local_payload["douyin"]["configured"] is True
+    assert local_payload["douyin"]["source"] == "manual_secure"
+    assert "cookie" not in local_payload["douyin"]
+    assert COOKIE_HEADER not in runtime_settings.LOCAL_SETTINGS_PATH.read_text(encoding="utf-8")
+    assert local_login_state.read_credentials()["manual_douyin"]["cookie_header"] == COOKIE_HEADER
+
+
 def test_local_login_state_rejects_non_loopback_client(monkeypatch) -> None:
     monkeypatch.setattr("app.main.is_loopback_client", lambda _host: False)
     response = client.get("/api/local-login-state/status")
@@ -362,7 +390,10 @@ def test_data_source_status_matches_extension_without_exposing_cookie() -> None:
     assert "shared_key" not in response.text
 
 
-def test_profile_provider_uses_extension_credentials_without_creating_job(monkeypatch) -> None:
+def test_profile_provider_uses_extension_credentials_without_leaking_or_creating_job(
+    monkeypatch,
+    caplog,
+) -> None:
     calls: list[dict] = []
 
     class FakeResponse:
@@ -408,20 +439,42 @@ def test_profile_provider_uses_extension_credentials_without_creating_job(monkey
 
     with SessionLocal() as session:
         jobs_before = session.query(Job).count()
-    response = client.post(
-        "/api/profile/scan",
-        json={
-            "profile_url": "https://www.douyin.com/user/MS4wLjABAAAAabc12345",
-            "count": 5,
-            "max_pages": 1,
-        },
-    )
+    with caplog.at_level(logging.INFO, logger="app.services.profile_scan"):
+        response = client.post(
+            "/api/profile/scan",
+            json={
+                "profile_url": "https://www.douyin.com/user/MS4wLjABAAAAabc12345",
+                "count": 5,
+                "max_pages": 1,
+            },
+        )
+        creator_response = client.post(
+            "/api/creator-clone/import",
+            json={
+                "title": "扩展登录态素材池",
+                "profile_url": "https://www.douyin.com/user/MS4wLjABAAAAabc12345",
+                "count": 5,
+                "max_pages": 1,
+            },
+        )
     with SessionLocal() as session:
         jobs_after = session.query(Job).count()
 
     assert response.status_code == 200
     assert response.json()["provider"] == "cookie_api"
     assert len(response.json()["items"]) == 1
-    assert calls[0]["headers"]["Cookie"] == COOKIE_HEADER
+    assert creator_response.status_code == 200
+    assert calls
+    assert all(call["headers"]["Cookie"] == COOKIE_HEADER for call in calls)
     assert COOKIE_HEADER not in response.text
+    assert COOKIE_HEADER not in creator_response.text
+    serialized_logs = json.dumps(
+        [record.__dict__ for record in caplog.records],
+        ensure_ascii=False,
+        default=str,
+    )
+    assert COOKIE_HEADER not in serialized_logs
+    for path in settings.creator_clones_dir.rglob("*"):
+        if path.is_file() and path.stat().st_size <= 2_000_000:
+            assert COOKIE_HEADER not in path.read_text(encoding="utf-8", errors="ignore")
     assert jobs_after == jobs_before
