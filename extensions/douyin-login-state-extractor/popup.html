@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Douyin Login State Extractor</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header class="popup-header">
+        <img src="icons/douyin-shield.svg" alt="" width="36" height="36">
+        <div>
+          <p class="eyebrow">LOCAL ONLY</p>
+          <h1>Douyin Login State Extractor</h1>
+        </div>
+      </header>
+
+      <section class="status-grid" aria-label="连接状态">
+        <div>
+          <span>连接状态</span>
+          <strong id="connection-status">检查中</strong>
+        </div>
+        <div>
+          <span>抖音登录状态</span>
+          <strong id="login-status">待获取</strong>
+        </div>
+        <div>
+          <span>最近同步时间</span>
+          <strong id="last-sync-status">尚未同步</strong>
+        </div>
+      </section>
+
+      <section id="pairing-panel" class="pairing-panel" hidden>
+        <div class="section-heading">
+          <span class="step-number">0</span>
+          <div>
+            <h2>一次配对</h2>
+            <p>输入 short-video-agent 设置页生成的临时配对码。</p>
+          </div>
+        </div>
+        <label for="pairing-code">配对码</label>
+        <div class="pairing-row">
+          <input
+            id="pairing-code"
+            type="password"
+            inputmode="text"
+            autocomplete="off"
+            maxlength="128"
+            placeholder="输入配对码"
+          >
+          <button id="pair-button" type="button" class="secondary-button">
+            配对
+          </button>
+        </div>
+      </section>
+
+      <section class="workflow-section">
+        <div class="section-heading">
+          <span class="step-number">1</span>
+          <div>
+            <h2>获取环境 + 登录状态</h2>
+            <p>只读取 douyin.com Cookie，不修改 Chrome 登录状态。</p>
+          </div>
+        </div>
+        <button id="capture-button" type="button" class="primary-button">
+          获取环境 + 登录状态
+        </button>
+
+        <div id="preview-panel" class="preview-panel" hidden>
+          <h3>安全预览</h3>
+          <dl>
+            <div>
+              <dt>Cookie</dt>
+              <dd id="preview-cookie">********</dd>
+            </div>
+            <div>
+              <dt>字段数量</dt>
+              <dd id="preview-pairs">0</dd>
+            </div>
+            <div>
+              <dt>登录态字段数量</dt>
+              <dd id="preview-login-keys">0</dd>
+            </div>
+            <div>
+              <dt>User-Agent</dt>
+              <dd id="preview-user-agent">未读取</dd>
+            </div>
+            <div>
+              <dt>目标域名</dt>
+              <dd id="preview-domain">douyin.com</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="workflow-section">
+        <div class="section-heading">
+          <span class="step-number">2</span>
+          <div>
+            <h2>同步到 short-video-agent</h2>
+            <p>请求使用 HMAC-SHA256、时间戳和一次性 nonce 签名。</p>
+          </div>
+        </div>
+        <button id="sync-button" type="button" class="primary-button" disabled>
+          同步到 short-video-agent
+        </button>
+      </section>
+
+      <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+
+      <footer class="popup-actions">
+        <button id="re-pair-button" type="button" class="text-button">
+          重新配对
+        </button>
+        <button id="clear-button" type="button" class="danger-button">
+          清除本机登录状态
+        </button>
+      </footer>
+      <p class="privacy-note">
+        清除操作只删除 short-video-agent 保存的登录状态，不会退出 Chrome
+        中的抖音账号。
+      </p>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

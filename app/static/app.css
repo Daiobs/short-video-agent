@@ -947,6 +947,52 @@ p {
     padding-left: 20px;
 }
 
+.login-state-pairing-card {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid rgba(37, 99, 235, .18);
+    border-radius: 8px;
+    background: #f8fbff;
+}
+
+.login-state-pairing-card h4 {
+    margin: 0;
+    font-size: 15px;
+}
+
+.pairing-code-result {
+    display: grid;
+    gap: 5px;
+    padding: 12px 14px;
+    border: 1px dashed rgba(37, 99, 235, .35);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.pairing-code-result code {
+    color: #1d4ed8;
+    font-size: 22px;
+    font-weight: 900;
+    letter-spacing: 2px;
+}
+
+.manual-cookie-fallback {
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+}
+
+.manual-cookie-fallback > summary {
+    cursor: pointer;
+    color: #475569;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.manual-cookie-fallback[open] > summary {
+    margin-bottom: 12px;
+}
+
 .ai-assistant-toggle {
     position: fixed;
     right: 24px;
@@ -1328,6 +1374,20 @@ button:disabled {
     color: var(--text);
     font-size: 15px;
     line-height: 1.5;
+}
+
+.creator-clone-next-bar.is-loading {
+    border-color: rgba(37, 99, 235, .34);
+    background: #f8fbff;
+}
+
+.creator-clone-next-bar.is-error {
+    border-color: rgba(220, 38, 38, .28);
+    background: #fff7f7;
+}
+
+.creator-clone-next-bar.is-error strong {
+    color: #b42318;
 }
 
 .creator-clone-next-actions {

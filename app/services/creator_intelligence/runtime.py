@@ -491,6 +491,14 @@ class CreatorRuntimeEngine:
 
         if workflow_action == WorkflowAction.SELECT_SAMPLES:
             selected = normalize_sample_set_selected_ids(sample_set, selected_sample_ids or [])
+            if selected == list(sample_set.selected_sample_ids or []):
+                if engine.workflow_engine.state == WorkflowState.EVIDENCE_READY and engine.behavior_model is None:
+                    engine.behavior_model = engine.execution_layer.extract_behavior_model(
+                        engine.project,
+                        intent=WorkflowIntent.from_action(WorkflowAction.MARK_EVIDENCE_READY),
+                    )
+                    engine.workflow_engine.has_behavior_model = True
+                return CreatorRuntimeDispatchResult(sample_set=sample_set, state=engine.state)
             engine.dispatch(workflow_action, {"selected_sample_ids": selected})
             sample_set = update_sample_set_selection(set_id, selected)
             engine = cls.from_sample_set(sample_set, strategy_output={}, job_state=job_state)

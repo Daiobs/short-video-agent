@@ -103,6 +103,24 @@
                     </ul>
                 </div>
                 <div id="data-source-status-list" class="compact-dl"></div>
+                <section class="login-state-pairing-card" aria-labelledby="login-state-pairing-title">
+                    <div class="settings-panel-header">
+                        <div>
+                            <h4 id="login-state-pairing-title">Chrome 登录状态同步</h4>
+                            <p class="muted compact-copy">首次生成配对码并在扩展中完成一次配对。之后只需在登录抖音后点击扩展同步，不必为每个主页重新授权。</p>
+                        </div>
+                        <span id="login-state-status-badge" class="status-badge muted-badge">读取中</span>
+                    </div>
+                    <div id="login-state-status-list" class="compact-dl"></div>
+                    <div id="login-state-pairing-result" class="pairing-code-result hidden" aria-live="polite"></div>
+                    <div class="settings-actions">
+                        <button type="button" id="start-login-state-pairing-button">生成配对码</button>
+                        <button type="button" id="refresh-login-state-button" class="ghost-button">刷新同步状态</button>
+                    </div>
+                    <p class="muted compact-copy">扩展只保存共享密钥和最近同步时间，不保存 Cookie；Cookie 原文不会显示在页面或接口响应中。</p>
+                </section>
+                <details class="manual-cookie-fallback">
+                    <summary>手工 Cookie 兼容 / 备用配置</summary>
                 <form id="douyin-settings-form" class="settings-form">
                     <label>Douyin Cookie
                         <textarea name="douyin_cookie" id="douyin-cookie-input" rows="3" autocomplete="off" placeholder="留空表示保留当前 Cookie"></textarea>
@@ -124,6 +142,7 @@
                     </div>
                     <div id="douyin-cookie-test-result" class="settings-test-result muted"></div>
                 </form>
+                </details>
             </div>
             <div class="settings-panel" id="llm-capability-settings">
                 <div class="settings-panel-header">

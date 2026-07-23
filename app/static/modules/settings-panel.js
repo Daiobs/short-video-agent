@@ -36,9 +36,11 @@
       close: returnsFalse,
       renderLlmStatus: returnsFalse,
       renderDataSourceStatus: returnsFalse,
+      renderLoginStateStatus: returnsFalse,
       renderCookieTestResult: returnsFalse,
       loadLlmStatus: resolvesFalse,
       loadDataSourceStatus: resolvesFalse,
+      loadLoginStateStatus: resolvesFalse,
     });
   }
 
@@ -70,6 +72,8 @@
         }
         callbacks.onPreflightFailure?.();
       });
+      Promise.resolve(loadLoginStateStatus()).catch(() => {});
+      Promise.resolve(loadDataSourceStatus()).catch(() => {});
       return true;
     }
 
@@ -141,6 +145,7 @@
         elements.dataSourceStatusList.innerHTML = `
           <dl>
             <dt>Cookie API</dt><dd>${configured ? "已配置可用" : hasCookie ? "已保存但不可用" : "未配置"}</dd>
+            <dt>凭据来源</dt><dd>${status.source === "chrome_extension" ? "Chrome 扩展同步" : status.source === "manual_local" ? "本机手工配置" : status.source === "environment" ? "环境变量" : "未配置"}</dd>
             <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
             <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
             ${cookieDiagnosticsRows(status.cookie_diagnostics || {})}
@@ -157,6 +162,28 @@
       if (elements.douyinUserAgentInput) elements.douyinUserAgentInput.value = status.user_agent || "";
       if (elements.douyinRefererInput) elements.douyinRefererInput.value = status.referer || "https://www.douyin.com/";
       if (elements.douyinClearCookieInput) elements.douyinClearCookieInput.checked = false;
+      return true;
+    }
+
+    function renderLoginStateStatus(rawState = {}) {
+      const state = rawState && typeof rawState === "object" ? rawState : {};
+      const configured = Boolean(state.configured);
+      const paired = Boolean(state.paired);
+      if (elements.loginStateStatusBadge) {
+        elements.loginStateStatusBadge.textContent = configured ? "已同步" : paired ? "已配对" : "未配对";
+        elements.loginStateStatusBadge.className = `status-badge ${configured ? "success" : paired ? "warning" : "muted-badge"}`;
+      }
+      if (elements.loginStateStatusList) {
+        elements.loginStateStatusList.innerHTML = `
+          <dl>
+            <dt>连接状态</dt><dd>${paired ? "已完成一次配对" : "等待配对"}</dd>
+            <dt>抖音登录状态</dt><dd>${configured ? "已安全同步" : "尚未同步"}</dd>
+            <dt>最近同步</dt><dd>${escapeHtml(state.last_synced_at || "暂无")}</dd>
+            <dt>Cookie 安全预览</dt><dd>${configured ? "********" : "未保存"}</dd>
+            <dt>字段数量</dt><dd>${numberText(state.pair_count)} 个；登录态字段 ${numberText(state.login_key_count)} 个</dd>
+          </dl>
+        `;
+      }
       return true;
     }
 
@@ -226,6 +253,23 @@
       }
     }
 
+    async function loadLoginStateStatus() {
+      if (elements.loginStateStatusList) {
+        elements.loginStateStatusList.textContent = "正在读取扩展同步状态...";
+      }
+      try {
+        const payload = await requestJson("/api/local-login-state/status", {cache: "no-store"});
+        renderLoginStateStatus(payload.login_state || {});
+        return true;
+      } catch (error) {
+        if (elements.loginStateStatusBadge) elements.loginStateStatusBadge.textContent = "读取失败";
+        if (elements.loginStateStatusList) {
+          elements.loginStateStatusList.textContent = errorText(error, "无法读取扩展同步状态");
+        }
+        return false;
+      }
+    }
+
     elements.toggle?.addEventListener("click", open);
     elements.close?.addEventListener("click", close);
     elements.modal?.addEventListener("click", (event) => {
@@ -288,6 +332,41 @@
       }
     });
 
+    elements.startLoginStatePairingButton?.addEventListener("click", async () => {
+      elements.startLoginStatePairingButton.disabled = true;
+      if (elements.loginStatePairingResult) {
+        elements.loginStatePairingResult.classList.remove("hidden");
+        elements.loginStatePairingResult.textContent = "正在生成一次性配对码...";
+      }
+      try {
+        const result = await requestJson("/api/local-login-state/pair/start", {method: "POST"});
+        const pairing = result.pairing || {};
+        if (elements.loginStatePairingResult) {
+          elements.loginStatePairingResult.innerHTML = `
+            <span class="muted">在 Douyin Login State Extractor 扩展中输入：</span>
+            <code>${escapeHtml(pairing.pairing_code || "")}</code>
+            <span class="muted">配对码将在 ${numberText(pairing.expires_in_seconds || 600)} 秒内失效。</span>
+          `;
+        }
+      } catch (error) {
+        if (elements.loginStatePairingResult) {
+          elements.loginStatePairingResult.textContent = errorText(error, "配对码生成失败");
+        }
+      } finally {
+        elements.startLoginStatePairingButton.disabled = false;
+      }
+    });
+
+    elements.refreshLoginStateButton?.addEventListener("click", async () => {
+      elements.refreshLoginStateButton.disabled = true;
+      try {
+        await loadLoginStateStatus();
+        await loadDataSourceStatus();
+      } finally {
+        elements.refreshLoginStateButton.disabled = false;
+      }
+    });
+
     elements.testDouyinButton?.addEventListener("click", async () => {
       elements.testDouyinButton.disabled = true;
       if (elements.douyinCookieTestResult) elements.douyinCookieTestResult.textContent = "正在自检 Cookie 结构和 Cookie API...";
@@ -299,6 +378,7 @@
           body: JSON.stringify(payload),
         });
         renderCookieTestResult(result.test || {});
+        await loadLoginStateStatus();
         await loadDataSourceStatus();
       } catch (error) {
         if (elements.douyinCookieTestResult) elements.douyinCookieTestResult.textContent = errorText(error, "Cookie API 自检失败");
@@ -353,9 +433,11 @@
       close,
       renderLlmStatus,
       renderDataSourceStatus,
+      renderLoginStateStatus,
       renderCookieTestResult,
       loadLlmStatus,
       loadDataSourceStatus,
+      loadLoginStateStatus,
     });
     instances.set(root, controller);
     return controller;

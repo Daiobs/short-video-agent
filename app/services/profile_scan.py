@@ -600,9 +600,15 @@ def test_douyin_cookie_api(profile_url: str = "", sec_user_id: str = "", count: 
 
 
 def normalize_profile_scan_request(request: ProfileScanRequest) -> ProfileScanRequest:
+    profile_url = (request.profile_url or "").strip() or None
+    sec_user_id = (request.sec_user_id or "").strip() or None
+    raw_target = profile_url or sec_user_id or ""
+    if re.match(r"^(?:(?:www\.)?douyin\.com/user/|v\.douyin\.com/)", raw_target, re.I):
+        profile_url = f"https://{raw_target}"
+        sec_user_id = None
     return ProfileScanRequest(
-        profile_url=(request.profile_url or "").strip() or None,
-        sec_user_id=(request.sec_user_id or "").strip() or None,
+        profile_url=profile_url,
+        sec_user_id=sec_user_id,
         manual_links=(request.manual_links or "").strip() or None,
         structured_items=(request.structured_items or "").strip() or None,
         count=_safe_count(request.count),

@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Douyin Login State Extractor",
+  "version": "1.0.0",
+  "description": "Safely syncs the current Douyin login state to a local short-video-agent instance.",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "cookies",
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://www.douyin.com/*",
+    "https://*.douyin.com/*",
+    "http://127.0.0.1:8765/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Douyin Login State Extractor",
+    "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
+}

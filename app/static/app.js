@@ -30,6 +30,11 @@ const preflightSummary = document.getElementById("preflight-summary");
 const preflightList = document.getElementById("preflight-list");
 const dataSourceStatusBadge = document.getElementById("data-source-status-badge");
 const dataSourceStatusList = document.getElementById("data-source-status-list");
+const loginStateStatusBadge = document.getElementById("login-state-status-badge");
+const loginStateStatusList = document.getElementById("login-state-status-list");
+const loginStatePairingResult = document.getElementById("login-state-pairing-result");
+const startLoginStatePairingButton = document.getElementById("start-login-state-pairing-button");
+const refreshLoginStateButton = document.getElementById("refresh-login-state-button");
 const douyinSettingsForm = document.getElementById("douyin-settings-form");
 const douyinCookieInput = document.getElementById("douyin-cookie-input");
 const douyinUserAgentInput = document.getElementById("douyin-user-agent-input");
@@ -183,11 +188,16 @@ let profileChromeAvailable = false;
 let creatorCloneEnrichmentRunning = false;
 let creatorCloneDistillRunning = false;
 let creatorCloneNextActionRunning = false;
+let creatorCloneActionFeedback = null;
 let activeProfileBuildJobId = "";
 let activeProfileBuildJobStatus = "";
 let activeProfileBuildJobUpdatedAt = "";
 let activeProfileBuildLastResult = null;
 let creatorCloneSelectionSyncTimer = 0;
+let creatorCloneSelectionSyncInFlight = null;
+let creatorCloneSelectionSyncPending = false;
+let creatorCloneLastSyncedSelectionSignature = "";
+let creatorCloneSelectionSyncGeneration = 0;
 let profileStageView = "import";
 let currentCloneProfileFingerprint = "";
 let profileQuickInputRestoredValue = "";
@@ -408,7 +418,9 @@ async function restoreRecentCreatorCloneSet(options = {}) {
     }
     return true;
   } catch {
-    forgetRecentCreatorCloneSetId();
+    resetCreatorClonePoolForNewProfile();
+    setProfileStageView("import", {scroll: false});
+    renderCreatorCloneNextAction();
     if (profileScanStatus) {
       profileScanStatus.textContent = "上次素材池无法恢复，请重新导入或扫描。";
     }
@@ -426,7 +438,10 @@ async function restoreRecentProfileBuildJob(setId, options = {}) {
     });
   }
   if (selectedKeys.size) {
-    setProfileSelection(activeCreatorSampleViewItems().filter((item) => sampleViewItemMatchesKeySet(item, selectedKeys)));
+    setProfileSelection(
+      activeCreatorSampleViewItems().filter((item) => sampleViewItemMatchesKeySet(item, selectedKeys)),
+      {sync: false},
+    );
   }
   try {
     if (options.safeStatus && !shouldUseStoredJob) {
@@ -451,7 +466,10 @@ async function restoreRecentProfileBuildJob(setId, options = {}) {
     const resultItems = normalizeItems(job.result_json?.items);
     if (!selectedKeys.size && resultItems.length) {
       const queueKeys = new Set(resultItems.map(sampleViewItemKey).filter(Boolean));
-      setProfileSelection(activeCreatorSampleViewItems().filter((item) => sampleViewItemMatchesKeySet(item, queueKeys)));
+      setProfileSelection(
+        activeCreatorSampleViewItems().filter((item) => sampleViewItemMatchesKeySet(item, queueKeys)),
+        {sync: false},
+      );
     }
     rememberRecentProfileBuildState({
       setId,
@@ -536,6 +554,18 @@ function firstUrlFromText(value) {
   return match ? match[0] : "";
 }
 
+function normalizeDouyinProfileInput(value) {
+  const raw = String(value || "").trim();
+  const explicitUrl = firstUrlFromText(raw);
+  if (explicitUrl) {
+    return explicitUrl;
+  }
+  const schemelessUrl = raw.match(
+    /(?:^|\s)((?:www\.)?douyin\.com\/user\/[^\s]+|v\.douyin\.com\/[^\s]+)/i,
+  )?.[1];
+  return schemelessUrl ? `https://${schemelessUrl}` : raw;
+}
+
 function urlsFromText(value) {
   return String(value || "").match(/https?:\/\/[^\s]+/gi) || [];
 }
@@ -544,6 +574,10 @@ function firstDouyinProfileTargetFromText(value) {
   const raw = String(value || "").trim();
   if (!raw) {
     return "";
+  }
+  const normalized = normalizeDouyinProfileInput(raw);
+  if (/^https?:\/\/(?:www\.)?douyin\.com\/user\//i.test(normalized)) {
+    return normalized;
   }
   const urls = urlsFromText(raw);
   const profileUrl = urls.find((url) => /douyin\.com\/user\//i.test(url));
@@ -566,7 +600,7 @@ function douyinProfileFingerprint(value) {
   if (!raw) {
     return "";
   }
-  const firstUrl = firstUrlFromText(raw) || raw;
+  const firstUrl = normalizeDouyinProfileInput(raw);
   const secMatch = firstUrl.match(/MS4w[A-Za-z0-9_.-]+/);
   if (secMatch) {
     return `sec:${secMatch[0]}`;
@@ -669,6 +703,12 @@ function clearCreatorCloneRenderedReport({clearPrompt = true} = {}) {
 }
 
 function resetCreatorClonePoolForNewProfile({clearInput = true} = {}) {
+  window.clearTimeout(creatorCloneSelectionSyncTimer);
+  creatorCloneSelectionSyncTimer = 0;
+  creatorCloneSelectionSyncInFlight = null;
+  creatorCloneSelectionSyncPending = false;
+  creatorCloneLastSyncedSelectionSignature = "";
+  creatorCloneSelectionSyncGeneration += 1;
   currentCloneSetId = "";
   currentCloneProfileFingerprint = "";
   runtimeSampleRows = [];
@@ -1677,8 +1717,7 @@ function hasCreatorCloneImportInput() {
 function inferCreatorCloneImportMode() {
   const quick = creatorCloneUnifiedInputValue();
   if (quick) {
-    const firstUrl = firstUrlFromText(quick);
-    const target = firstUrl || quick;
+    const target = normalizeDouyinProfileInput(quick);
     if (/^\s*[\[{]/.test(quick) || /^aweme_id\s*,/im.test(quick)) return "structured";
     if (/^case_[A-Za-z0-9_,-\s]+$/.test(quick)) return "case";
     if (/douyin\.com\/user\//i.test(target) || /^MS4w[A-Za-z0-9_.-]+/.test(target)) return "browser";
@@ -1697,7 +1736,7 @@ function syncUnifiedInputToImportFields(mode) {
   const quick = creatorCloneUnifiedInputValue();
   if (!quick || !profileForm) return;
   if (mode === "browser") {
-    profileForm.elements.profile_url.value = firstUrlFromText(quick) || quick;
+    profileForm.elements.profile_url.value = normalizeDouyinProfileInput(quick);
     return;
   }
   if (mode === "manual" && profileManualLinks) {
@@ -2150,6 +2189,7 @@ function renderWizardPrimaryAction(state = creatorCloneActionStateForCurrentView
     creatorCloneNextButton.textContent = creatorCloneNextActionRunning ? "处理中..." : meta.button;
     creatorCloneNextButton.dataset.creatorCloneAction = command;
     creatorCloneNextButton.disabled = creatorCloneNextActionRunning || command === "wait" || Boolean(meta.disabled);
+    creatorCloneNextButton.setAttribute("aria-busy", creatorCloneNextActionRunning ? "true" : "false");
   }
 }
 
@@ -2158,6 +2198,7 @@ function renderCreatorCloneStageChrome() {
   const meta = creatorCloneStateMeta(state);
   const activeStage = creatorWorkflowProgressStage();
   const viewedStage = activeProfileStage();
+  const actionFeedback = viewedStage === "import" ? creatorCloneActionFeedback : null;
   const activeStageIndex = stageIndexFromName(activeStage);
   creatorCloneFlowSteps.forEach((step) => {
     const stage = normalizeProfileStage(step.dataset.profileStageNav || "");
@@ -2175,8 +2216,11 @@ function renderCreatorCloneStageChrome() {
     creatorCloneCurrentStep.textContent = meta.step;
   }
   if (creatorCloneNextSummary) {
-    creatorCloneNextSummary.textContent = meta.summary;
+    creatorCloneNextSummary.textContent = actionFeedback?.message || meta.summary;
   }
+  creatorCloneNextBar?.classList.toggle("is-loading", actionFeedback?.tone === "loading");
+  creatorCloneNextBar?.classList.toggle("is-error", actionFeedback?.tone === "error");
+  creatorCloneNextBar?.setAttribute("aria-busy", actionFeedback?.tone === "loading" ? "true" : "false");
   if (profileNextAction) {
     profileNextAction.textContent = meta.step;
   }
@@ -3059,7 +3103,7 @@ async function copyTextToClipboard(value) {
 function currentProfileTargetValue() {
   const formData = new FormData(profileForm);
   const rawProfileValue = String(formData.get("profile_url") || "").trim();
-  return firstUrlFromText(rawProfileValue) || rawProfileValue || profileLastChromeProfileValue;
+  return rawProfileValue ? normalizeDouyinProfileInput(rawProfileValue) : profileLastChromeProfileValue;
 }
 
 // Creator Clone: sample table
@@ -3200,8 +3244,25 @@ function profileScanMaxPagesForCount(count) {
 
 async function scanProfile(sourceMode = "public") {
   let activeSource = "public";
+  let slowRequestTimer = 0;
   profileScanButton.disabled = true;
   profileScanStatus.textContent = "正在扫描主页并生成账号素材清单...";
+  creatorCloneActionFeedback = {
+    tone: "loading",
+    message: "正在导入主页并读取作品列表，请稍候...",
+  };
+  renderCreatorCloneStageChrome();
+  slowRequestTimer = window.setTimeout(() => {
+    if (!creatorCloneNextActionRunning || creatorCloneActionFeedback?.tone !== "loading") {
+      return;
+    }
+    creatorCloneActionFeedback = {
+      tone: "loading",
+      message: "请求已发出，正在等待抖音 Cookie Web API 或安全回退返回；无需重复点击。",
+    };
+    profileScanStatus.textContent = "主页请求仍在处理中。完成后会自动显示素材池；如果登录态失效，将返回明确错误。";
+    renderCreatorCloneStageChrome();
+  }, 3000);
   profileResultsCard.classList.add("hidden");
   profileFallbackHint.classList.add("hidden");
   profileLastChromeProfileValue = "";
@@ -3209,7 +3270,7 @@ async function scanProfile(sourceMode = "public") {
   try {
     const formData = new FormData(profileForm);
     const rawProfileValue = String(formData.get("profile_url") || "").trim();
-    const profileValue = firstUrlFromText(rawProfileValue) || rawProfileValue;
+    const profileValue = normalizeDouyinProfileInput(rawProfileValue);
     const isUrl = /^https?:\/\//i.test(profileValue);
     activeSource = ["public", "manual", "structured", "handoff", "case"].includes(sourceMode) ? sourceMode : "public";
     if (activeSource === "public" && resetCreatorClonePoolIfProfileChanged(profileValue)) {
@@ -3268,9 +3329,26 @@ async function scanProfile(sourceMode = "public") {
     const statsText = stats.input_count
       ? ` 成功识别 ${stats.recognized_count || 0} 条，去重 ${stats.duplicate_count || 0} 条，忽略 ${stats.invalid_count || 0} 条。`
       : "";
+    creatorCloneActionFeedback = null;
     profileScanStatus.textContent = `账号素材清单已生成：${itemCount} 条素材。${statsText}`;
     renderProfileResults(result);
   } catch (error) {
+    const errorCode = String(error?.error_code || "PROFILE_SCAN_FAILED");
+    let actionMessage = `${errorCode}：${error?.message || "主页导入失败，请检查输入和数据源设置后重试。"}`;
+    if (errorCode === "DOUYIN_COOKIE_NOT_CONFIGURED") {
+      actionMessage = "主页导入失败：当前没有配置 Douyin Cookie。请点击右上角设置完成配置和自检，或改用作品链接导入。";
+    } else if (["DOUYIN_COOKIE_INVALID", "DOUYIN_LOGIN_REQUIRED", "DOUYIN_AUTH_EXPIRED"].includes(errorCode)) {
+      actionMessage = "主页导入失败：Douyin Cookie 无效或已过期。请在右上角设置中更新 Cookie 并运行自检。";
+    } else if (["DOUYIN_UPSTREAM_TIMEOUT", "DOUYIN_UPSTREAM_RATE_LIMITED", "DOUYIN_UPSTREAM_UNAVAILABLE"].includes(errorCode)) {
+      actionMessage = "主页导入失败：请求已经发出，但抖音 Web API 超时、限流或暂时不可用。这不是按钮故障；请稍后重试，或改用作品链接导入。";
+    } else if (["DOUYIN_UPSTREAM_FORBIDDEN", "DOUYIN_RISK_CONTROL"].includes(errorCode)) {
+      actionMessage = "主页导入失败：抖音 Web API 拒绝了当前请求或触发风控。请重新同步登录状态后自检，仍失败时改用作品链接导入。";
+    } else if (["DOUYIN_UPSTREAM_NON_JSON", "DOUYIN_RESPONSE_INVALID", "PROFILE_SCAN_STRUCTURE_CHANGED"].includes(errorCode)) {
+      actionMessage = "主页导入失败：接口已返回，但响应不是可识别的作品数据。可能是校验页或接口结构变化，请先运行 Cookie 自检。";
+    } else if (errorCode === "INVALID_PROFILE_URL") {
+      actionMessage = "主页导入失败：主页地址无效。请粘贴完整抖音主页 URL 或有效 sec_user_id。";
+    }
+    creatorCloneActionFeedback = {tone: "error", message: actionMessage};
     if (activeSource === "public" && isProfileFallbackError(error)) {
       await prepareChromeProfileFallback(error);
     } else {
@@ -3280,6 +3358,7 @@ async function scanProfile(sourceMode = "public") {
       }
     }
   } finally {
+    window.clearTimeout(slowRequestTimer);
     profileScanButton.disabled = false;
     renderCreatorCloneNextAction();
   }
@@ -3444,6 +3523,10 @@ async function readHandoffManifestFile(file) {
 async function runCreatorCloneImportStep() {
   const mode = inferCreatorCloneImportMode();
   if (!hasCreatorCloneImportInput()) {
+    creatorCloneActionFeedback = {
+      tone: "error",
+      message: "请先粘贴抖音主页 URL、作品链接或 aweme_id，再开始导入素材。",
+    };
     profileScanStatus.textContent = "请先输入主页 URL、作品链接、aweme_id，或展开“换一种导入方式”导入 JSON / CSV / Case。";
     profileQuickInput?.focus();
     return;
@@ -3469,22 +3552,72 @@ async function runCreatorCloneImportStep() {
   await scanProfile(sourceMode);
 }
 
-async function syncCreatorCloneWorkflowSelection() {
-  if (!currentCloneSetId) {
+function creatorCloneSelectionSignature(setId = currentCloneSetId, selectedIds = null) {
+  const values = Array.isArray(selectedIds)
+    ? selectedIds
+    : selectedCreatorSampleViewItems().map(sampleViewItemKey);
+  const normalizedIds = [...new Set(values.map((value) => String(value || "")).filter(Boolean))].sort();
+  return setId && normalizedIds.length ? `${setId}:${normalizedIds.join("|")}` : "";
+}
+
+async function syncCreatorCloneWorkflowSelection({force = false} = {}) {
+  const setId = currentCloneSetId;
+  if (!setId) {
     return null;
   }
   const selectedIds = selectedCreatorSampleViewItems().map(sampleViewItemKey).filter(Boolean);
-  if (!selectedIds.length) {
+  const signature = creatorCloneSelectionSignature(setId, selectedIds);
+  if (!signature || (!force && signature === creatorCloneLastSyncedSelectionSignature)) {
     return null;
   }
-  return dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES", {selected_sample_ids: selectedIds});
+  if (creatorCloneSelectionSyncInFlight) {
+    creatorCloneSelectionSyncPending = true;
+    return creatorCloneSelectionSyncInFlight;
+  }
+
+  const generation = creatorCloneSelectionSyncGeneration;
+  creatorCloneSelectionSyncPending = false;
+  const request = dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES", {
+    selected_sample_ids: selectedIds,
+  });
+  const trackedRequest = request
+    .then((payload) => {
+      if (
+        generation === creatorCloneSelectionSyncGeneration
+        && setId === currentCloneSetId
+        && signature === creatorCloneSelectionSignature()
+      ) {
+        creatorCloneLastSyncedSelectionSignature = signature;
+      }
+      return payload;
+    })
+    .finally(() => {
+      if (creatorCloneSelectionSyncInFlight !== trackedRequest) {
+        return;
+      }
+      creatorCloneSelectionSyncInFlight = null;
+      const currentSignature = creatorCloneSelectionSignature();
+      const shouldResync = (
+        creatorCloneSelectionSyncPending
+        && generation === creatorCloneSelectionSyncGeneration
+        && currentSignature
+        && currentSignature !== creatorCloneLastSyncedSelectionSignature
+      );
+      creatorCloneSelectionSyncPending = false;
+      if (shouldResync) {
+        scheduleCreatorCloneSelectionSync();
+      }
+    });
+  creatorCloneSelectionSyncInFlight = trackedRequest;
+  return trackedRequest;
 }
 
 async function dispatchCreatorIntelligenceWorkflowAction(action, requestPayload = {}) {
-  if (!currentCloneSetId) {
+  const requestSetId = currentCloneSetId;
+  if (!requestSetId) {
     return null;
   }
-  const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(currentCloneSetId)}/workflow`, {
+  const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(requestSetId)}/workflow`, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
@@ -3493,6 +3626,9 @@ async function dispatchCreatorIntelligenceWorkflowAction(action, requestPayload 
     }),
   });
   const responsePayload = await readJsonResponse(response);
+  if (requestSetId !== currentCloneSetId) {
+    return responsePayload;
+  }
   const profilePayload = profilePayloadFromCreatorIntelligenceProject(responsePayload);
   applyCreatorIntelligencePayload(profilePayload);
   if (profilePayload.set) {
@@ -3530,7 +3666,7 @@ async function useRecommendedProfileSamples() {
     profileScanStatus.textContent = "当前素材池还没有可推荐样本，请展开“手动调整样本”自行选择。";
     return;
   }
-  setProfileSelection(recommended);
+  setProfileSelection(recommended, {sync: false});
   try {
     await syncCreatorCloneWorkflowSelection();
   } catch (error) {
@@ -3632,7 +3768,7 @@ function profileSelectionSetsEqual(left, right) {
   return [...left].every((key) => right.has(key));
 }
 
-function setProfileSelection(items) {
+function setProfileSelection(items, {sync = true} = {}) {
   const selectedIds = new Set(items.map(sampleViewItemKey));
   const selectionChanged = !profileSelectionSetsEqual(profileSelectedKeys, selectedIds);
   profileSelectedKeys = selectedIds;
@@ -3643,7 +3779,9 @@ function setProfileSelection(items) {
     input.checked = selectedIds.has(input.value) && !input.disabled;
   });
   updateCreatorCloneSelectionStatus();
-  scheduleCreatorCloneSelectionSync();
+  if (selectionChanged && sync) {
+    scheduleCreatorCloneSelectionSync();
+  }
 }
 
 function selectedBuildableSampleViewItems() {
@@ -3834,7 +3972,11 @@ function refreshProfilePoolFromSet(set) {
   renderProfileSummary(cloneSummaryFromSet(set) || {});
   renderProfileDecisionBoard({set});
   renderProfileTable();
-  setProfileSelection(activeCreatorSampleViewItems().filter((item) => selectedIds.has(sampleViewItemKey(item))));
+  setProfileSelection(
+    activeCreatorSampleViewItems().filter((item) => selectedIds.has(sampleViewItemKey(item))),
+    {sync: false},
+  );
+  creatorCloneLastSyncedSelectionSignature = creatorCloneSelectionSignature();
   updateCreatorCloneSelectionStatus();
   const warnings = normalizeItems(set.warnings);
   profileWarnings.classList.toggle("hidden", !warnings.length);
@@ -6152,6 +6294,7 @@ creatorCloneFlowSteps.forEach((button) => {
 });
 
 profileQuickInput?.addEventListener("input", () => {
+  creatorCloneActionFeedback = null;
   if (currentCloneSetId || activeCreatorSampleViewItems().length || currentCreatorRuntimeState) {
     setProfileStageView("import", {scroll: false});
   }
@@ -6220,7 +6363,11 @@ profileResultsBody.addEventListener("click", (event) => {
   if (!key) {
     return;
   }
+  const selectionChanged = !profileSelectedKeys.has(key);
   profileSelectedKeys.add(key);
+  if (!selectionChanged) {
+    return;
+  }
   invalidateCreatorRuntimeReportForSelectionChange();
   document.querySelectorAll("[data-profile-select]").forEach((input) => {
     if (input.value === key) {
@@ -6539,6 +6686,11 @@ const settingsPanelController = window.SettingsPanel?.init({
     llmTestResult,
     dataSourceStatusBadge,
     dataSourceStatusList,
+    loginStateStatusBadge,
+    loginStateStatusList,
+    loginStatePairingResult,
+    startLoginStatePairingButton,
+    refreshLoginStateButton,
     douyinForm: douyinSettingsForm,
     douyinCookieInput,
     douyinUserAgentInput,
@@ -6563,7 +6715,7 @@ const settingsPanelController = window.SettingsPanel?.init({
       if (/^MS4w[A-Za-z0-9_.-]+$/.test(profileValue)) {
         return {count: 5, sec_user_id: profileValue};
       }
-      return {count: 5, profile_url: firstUrlFromText(profileValue) || profileValue};
+      return {count: 5, profile_url: normalizeDouyinProfileInput(profileValue)};
     },
     copyPreflightSnippet: (index) => {
       const snippet = Number.isInteger(index) ? preflightCopySnippets[index] : "";
@@ -6574,6 +6726,7 @@ const settingsPanelController = window.SettingsPanel?.init({
 
 settingsPanelController?.loadLlmStatus();
 settingsPanelController?.loadDataSourceStatus();
+settingsPanelController?.loadLoginStateStatus();
 loadPreflightStatus().catch(() => {
   markWorkbenchPreflightFailed();
 });

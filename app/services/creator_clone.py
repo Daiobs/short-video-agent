@@ -219,11 +219,15 @@ class CloneSampleSet:
         }
 
 
-def creator_clone_dir(set_id: str) -> Path:
+def creator_clone_path(set_id: str) -> Path:
     safe_id = re.sub(r"[^A-Za-z0-9_\-]", "", set_id)
     if not safe_id:
         raise AppError(ErrorCode.PROFILE_SCAN_FAILED, "素材池 ID 无效。")
-    path = settings.creator_clones_dir / safe_id
+    return settings.creator_clones_dir / safe_id
+
+
+def creator_clone_dir(set_id: str) -> Path:
+    path = creator_clone_path(set_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -726,7 +730,12 @@ def save_sample_set(sample_set: CloneSampleSet) -> None:
 
 
 def load_sample_set(set_id: str) -> CloneSampleSet:
-    payload = _read_json(creator_clone_dir(set_id) / "samples.json")
+    sample_path = creator_clone_path(set_id) / "samples.json"
+    if not sample_path.is_file():
+        raise AppError(ErrorCode.CREATOR_SET_NOT_FOUND)
+    payload = _read_json(sample_path)
+    if not payload:
+        raise AppError(ErrorCode.CREATOR_SET_NOT_FOUND)
     samples = [sample_from_dict(item) for item in payload.get("samples", []) if isinstance(item, dict)]
     return CloneSampleSet(
         set_id=str(payload.get("set_id") or set_id),

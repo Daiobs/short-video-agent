@@ -101,6 +101,7 @@ def mask_cookie(value: str) -> str:
 
 def data_source_status_payload() -> dict:
     effective = effective_douyin_settings()
+    credential_source = str(effective.get("source") or "")
     has_cookie = bool((effective["cookie"] or "").strip())
     cookie_diagnostics = inspect_douyin_cookie(effective["cookie"])
     cookie_ready = bool(cookie_diagnostics.get("looks_complete"))
@@ -129,7 +130,11 @@ def data_source_status_payload() -> dict:
             "role": "main",
             "enabled": cookie_ready,
             "status": "configured" if cookie_ready else "invalid" if has_cookie else "not_configured",
-            "message": "主页作品扫描正式主路径；仅使用用户主动配置的本机 Cookie。",
+            "message": (
+                "主页作品扫描正式主路径；当前优先使用 Chrome 扩展主动同步的本机登录状态。"
+                if credential_source == "chrome_extension"
+                else "主页作品扫描正式主路径；仅使用用户主动配置的本机 Cookie。"
+            ),
         },
         {
             "id": "external_api",
@@ -142,25 +147,34 @@ def data_source_status_payload() -> dict:
     ]
     return {
         "configured": cookie_ready,
+        "source": credential_source,
         "provider": "cookie_api",
         "has_cookie": has_cookie,
         "masked_cookie": mask_cookie(effective["cookie"]),
         "cookie_diagnostics": public_cookie_diagnostics(cookie_diagnostics),
+        "pair_count": int(effective.get("pair_count") or cookie_diagnostics.get("pair_count") or 0),
+        "login_key_count": int(
+            effective.get("login_key_count") or cookie_diagnostics.get("login_key_count") or 0
+        ),
+        "last_synced_at": str(effective.get("last_synced_at") or ""),
+        "extension_version": str(effective.get("extension_version") or ""),
         "user_agent_configured": has_user_agent,
         "user_agent": effective["user_agent"],
         "referer": referer,
         "profile_scan_provider": settings.profile_scan_provider,
         "sources": sources,
         "status_message": (
-            "个人账号 Cookie Web API 已配置并作为主页扫描主路径。"
+            "Chrome 扩展登录状态已同步，并作为主页扫描主路径。"
+            if cookie_ready and credential_source == "chrome_extension"
+            else "个人账号 Cookie Web API 已配置并作为主页扫描主路径。"
             if cookie_ready
             else "已保存 Cookie，但登录态字段不足；远端自检不会发起请求。"
             if has_cookie
             else "未配置个人账号 Cookie；请使用作品链接、JSON/CSV 或已有 Case 作为安全兜底。"
         ),
         "safety_notes": [
-            "Cookie 仅保存在本机运行时配置，不进入数据库、Job、Case、Prompt、报告、日志或浏览器存储。",
-            "系统不会自动读取浏览器 Cookie，也不用于绕验证码、绕风控或破解签名。",
+            "扩展同步 Cookie 仅保存在用户目录的 0600 凭据文件，不进入数据库、Job、Case、Prompt、报告、日志或扩展存储。",
+            "扩展仅在用户点击后读取 Douyin Cookie，不读取其他域名、localStorage 或 Network。",
             "Cookie 主路径失败时，请人工更新 Cookie，或使用作品链接、JSON/CSV、已有 Case。",
         ],
         "health": douyin_source_health_payload(),

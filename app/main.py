@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+import re
+
+from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from urllib.parse import urlparse
@@ -15,6 +17,7 @@ from app.routes import (
     jobs,
     library,
     local_helper,
+    local_login_state,
     pages,
     profile,
     settings as settings_routes,
@@ -26,6 +29,8 @@ from app.services.local_chrome import is_loopback_client
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 LOCAL_TEST_HOSTS = {"testserver"}
+LOCAL_LOGIN_STATE_PREFIX = "/api/local-login-state/"
+CHROME_EXTENSION_ORIGIN_RE = re.compile(r"^chrome-extension://[a-p]{32}/?$")
 
 
 def _host_without_port(value: str) -> str:
@@ -52,6 +57,23 @@ def _is_allowed_local_url(value: str) -> bool:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return False
     return _is_allowed_local_host(parsed.hostname)
+
+
+def _is_allowed_extension_origin(value: str) -> bool:
+    return bool(CHROME_EXTENSION_ORIGIN_RE.fullmatch((value or "").strip().lower()))
+
+
+def _extension_cors_headers(origin: str) -> dict[str, str]:
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": (
+            "Content-Type, X-SVA-Timestamp, X-SVA-Nonce, X-SVA-Signature, "
+            "X-SVA-Schema-Version, X-SVA-Extension-Version"
+        ),
+        "Access-Control-Max-Age": "600",
+        "Vary": "Origin",
+    }
 
 
 def _forwarded_for_hosts(value: str) -> list[str]:
@@ -116,14 +138,29 @@ def create_app() -> FastAPI:
             return _local_forbidden_response("short-video-agent 自用版拒绝经公网代理转发的访问。")
         if not _is_allowed_local_host(request.headers.get("host", "")):
             return _local_forbidden_response("short-video-agent 自用版只接受 127.0.0.1 / localhost Host。")
+        origin = request.headers.get("origin", "")
+        referer = request.headers.get("referer", "")
+        is_login_state_api = request.url.path.startswith(LOCAL_LOGIN_STATE_PREFIX)
+        is_extension_request = is_login_state_api and _is_allowed_extension_origin(origin)
+        if is_extension_request and referer and not _is_allowed_extension_origin(referer):
+            return _local_forbidden_response("本机登录状态接口拒绝非扩展 Referer。")
+        if request.method.upper() == "OPTIONS" and is_extension_request:
+            return Response(
+                status_code=204,
+                headers={**_extension_cors_headers(origin), "Cache-Control": "no-store"},
+            )
         if request.method.upper() not in SAFE_METHODS:
-            origin = request.headers.get("origin", "")
-            referer = request.headers.get("referer", "")
-            if origin and not _is_allowed_local_url(origin):
+            if origin and not _is_allowed_local_url(origin) and not is_extension_request:
                 return _local_forbidden_response("本地网页拒绝非本机 Origin 发起的写操作。")
-            if referer and not _is_allowed_local_url(referer):
+            if referer and not _is_allowed_local_url(referer) and not is_extension_request:
                 return _local_forbidden_response("本地网页拒绝非本机 Referer 发起的写操作。")
-        return await call_next(request)
+        response = await call_next(request)
+        if is_login_state_api:
+            response.headers["Cache-Control"] = "no-store"
+        if is_extension_request:
+            for key, value in _extension_cors_headers(origin).items():
+                response.headers[key] = value
+        return response
 
     app.mount("/static", StaticFiles(directory="app/static"), name="static")
     app.include_router(pages.router)
@@ -134,6 +171,7 @@ def create_app() -> FastAPI:
     app.include_router(creator_clone.router)
     app.include_router(creator_intelligence.router)
     app.include_router(local_helper.router)
+    app.include_router(local_login_state.router)
     app.include_router(downloads.router)
     app.include_router(settings_routes.router)
     app.include_router(workbench.router)

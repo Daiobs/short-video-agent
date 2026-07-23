@@ -31,6 +31,8 @@ from app.services.creator_intelligence import (
     validate_creator_strategy_plan,
 )
 from app.services.creator_intelligence.dispatch import dispatch_creator_workflow
+from app.services.creator_intelligence.memory import CreatorMemoryGraph
+from app.services.creator_intelligence.state_store import CreatorStateStore
 
 client = TestClient(app)
 
@@ -624,6 +626,18 @@ def test_creator_intelligence_project_api_exposes_v2_contract() -> None:
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 
+def test_missing_creator_set_is_not_recreated_as_an_empty_pool() -> None:
+    set_id = "clone_00000000000000000000000000000000"
+    output_dir = settings.creator_clones_dir / set_id
+    shutil.rmtree(output_dir, ignore_errors=True)
+
+    response = client.get(f"/api/creator-clone/sets/{set_id}")
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == ErrorCode.CREATOR_SET_NOT_FOUND
+    assert not output_dir.exists()
+
+
 def test_cookie_runtime_settings_do_not_change_creator_workflow(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", tmp_path / "local_settings.json")
     sample_set = sample_set_for_v2()
@@ -670,6 +684,42 @@ def test_creator_intelligence_workflow_api_dispatches_selection() -> None:
 
     reloaded = client.get(f"/api/creator-intelligence/projects/{sample_set.set_id}").json()
     assert reloaded["project"]["selected_sample_ids"] == ["sample_ready"]
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+
+
+def test_repeated_creator_selection_is_idempotent() -> None:
+    sample_set = sample_set_for_v2()
+    sample_set.selected_sample_ids = []
+    for sample in sample_set.samples:
+        sample.selected = False
+    shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
+    save_sample_set(sample_set)
+
+    first = client.post(
+        f"/api/creator-intelligence/projects/{sample_set.set_id}/workflow",
+        json={"action": WorkflowAction.SELECT_SAMPLES.value, "selected_sample_ids": ["sample_ready"]},
+    )
+    assert first.status_code == 200
+
+    state_store = CreatorStateStore()
+    session_before = state_store.load_session(sample_set.set_id)
+    memory_before = CreatorMemoryGraph().load("MS4wLjABAAAA_v2")
+    assert session_before is not None
+    action_count = len(session_before.actions)
+    sample_set_count = len(memory_before.get("sample_sets") or [])
+
+    second = client.post(
+        f"/api/creator-intelligence/projects/{sample_set.set_id}/workflow",
+        json={"action": WorkflowAction.SELECT_SAMPLES.value, "selected_sample_ids": ["sample_ready"]},
+    )
+
+    assert second.status_code == 200
+    assert second.json()["workflow"]["state"] == WorkflowState.EVIDENCE_READY
+    session_after = state_store.load_session(sample_set.set_id)
+    memory_after = CreatorMemoryGraph().load("MS4wLjABAAAA_v2")
+    assert session_after is not None
+    assert len(session_after.actions) == action_count
+    assert len(memory_after.get("sample_sets") or []) == sample_set_count
     shutil.rmtree(settings.creator_clones_dir / sample_set.set_id, ignore_errors=True)
 
 

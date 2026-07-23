@@ -32,6 +32,13 @@ def isolate_application_runtime(monkeypatch, tmp_path: Path):
         "app.services.runtime_settings.LOCAL_SETTINGS_PATH",
         runtime_root / ".local_settings.json",
     )
+    monkeypatch.setattr(
+        "app.services.local_login_state.CREDENTIALS_PATH",
+        runtime_root / ".short-video-agent" / "credentials.json",
+    )
+    from app.services.local_login_state import reset_ephemeral_state_for_tests
+
+    reset_ephemeral_state_for_tests()
     settings.ensure_directories()
 
     test_engine = create_engine(
@@ -45,6 +52,7 @@ def isolate_application_runtime(monkeypatch, tmp_path: Path):
     try:
         yield
     finally:
+        reset_ephemeral_state_for_tests()
         close_all_sessions()
         SessionLocal.configure(bind=application_engine)
         test_engine.dispose()

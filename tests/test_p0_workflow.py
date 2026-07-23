@@ -33,6 +33,7 @@ from app.services.profile_scan import (
     inspect_douyin_cookie,
     extract_sec_user_id,
     extract_profile_items_from_html,
+    normalize_profile_scan_request,
     normalize_profile_url,
     scan_profile,
 )
@@ -770,7 +771,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'dispatchCreatorIntelligenceWorkflowAction("MARK_EVIDENCE_READY")' in script
     assert 'dispatchCreatorIntelligenceWorkflowAction("START_DISTILLATION")' in script
     assert "await markCreatorCloneDistillationStarted();" in script
-    assert "/api/creator-intelligence/projects/${encodeURIComponent(currentCloneSetId)}/workflow" in script
+    assert "/api/creator-intelligence/projects/${encodeURIComponent(requestSetId)}/workflow" in script
     assert "/api/creator-clone/sets/${encodeURIComponent(currentCloneSetId)}/workflow" not in script
     assert 'dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES"' in script
     assert "creator_intelligence" in script
@@ -2058,7 +2059,7 @@ def test_creator_clone_distill_finalizes_report_after_unlock_in_javascript() -> 
     }
 
 
-def test_profile_selection_refresh_only_invalidates_report_when_selection_changes() -> None:
+def test_profile_selection_refresh_only_syncs_changed_local_selection() -> None:
     candidates = [
         shutil.which("node"),
         Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
@@ -2085,6 +2086,7 @@ def test_profile_selection_refresh_only_invalidates_report_when_selection_change
         + "setProfileSelection([{sample_id: 'sample_b'}, {sample_id: 'sample_a'}]);\n"
         + "const unchangedInvalidations = invalidations;\n"
         + "setProfileSelection([{sample_id: 'sample_a'}, {sample_id: 'sample_c'}]);\n"
+        + "setProfileSelection([{sample_id: 'sample_a'}, {sample_id: 'sample_d'}], {sync: false});\n"
         + "process.stdout.write(JSON.stringify({unchangedInvalidations, invalidations, syncCalls, selected: [...profileSelectedKeys].sort()}));\n"
     )
     completed = subprocess.run(
@@ -2098,9 +2100,66 @@ def test_profile_selection_refresh_only_invalidates_report_when_selection_change
 
     assert result == {
         "unchangedInvalidations": 0,
-        "invalidations": 1,
-        "syncCalls": 2,
-        "selected": ["sample_a", "sample_c"],
+        "invalidations": 2,
+        "syncCalls": 1,
+        "selected": ["sample_a", "sample_d"],
+    }
+
+
+def test_creator_selection_response_does_not_overwrite_a_new_sample_set() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; stale selection response behavior is covered by manual smoke testing.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    dispatch_function = source[
+        source.index("async function dispatchCreatorIntelligenceWorkflowAction")
+        : source.index("function scheduleCreatorCloneSelectionSync")
+    ]
+    runner = (
+        'var currentCloneSetId = "clone_old";\n'
+        "var switchSetDuringFetch = true;\n"
+        "var applied = 0;\n"
+        "var refreshed = 0;\n"
+        "var requested = [];\n"
+        "async function fetch(url) {\n"
+        "  requested.push(url);\n"
+        '  if (switchSetDuringFetch) currentCloneSetId = "clone_new";\n'
+        "  return {};\n"
+        "}\n"
+        "async function readJsonResponse() { return {project: {project_id: currentCloneSetId}}; }\n"
+        "function profilePayloadFromCreatorIntelligenceProject(payload) { return {set: {set_id: payload.project.project_id}}; }\n"
+        "function applyCreatorIntelligencePayload() { applied += 1; }\n"
+        "function refreshProfilePoolFromSet() { refreshed += 1; }\n"
+        + dispatch_function
+        + "\n"
+        + "(async () => {\n"
+        + '  await dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES", {selected_sample_ids: ["sample_a"]});\n'
+        + "  switchSetDuringFetch = false;\n"
+        + '  await dispatchCreatorIntelligenceWorkflowAction("SELECT_SAMPLES", {selected_sample_ids: ["sample_b"]});\n'
+        + "  process.stdout.write(JSON.stringify({applied, refreshed, requested}));\n"
+        + "})().catch((error) => { console.error(error); process.exit(1); });\n"
+    )
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result == {
+        "applied": 1,
+        "refreshed": 1,
+        "requested": [
+            "/api/creator-intelligence/projects/clone_old/workflow",
+            "/api/creator-intelligence/projects/clone_new/workflow",
+        ],
     }
 
 
@@ -10307,6 +10366,18 @@ def test_external_profile_provider_requires_api_base(monkeypatch) -> None:
     assert raised.value.code == "PROFILE_SCAN_API_NOT_CONFIGURED"
 
 
+def test_profile_scan_request_normalizes_schemeless_douyin_profile_url() -> None:
+    normalized = normalize_profile_scan_request(
+        ProfileScanRequest(
+            sec_user_id="douyin.com/user/MS4wLjABAAAAabc12345?from_tab_name=main",
+            count=20,
+        )
+    )
+
+    assert normalized.profile_url == "https://douyin.com/user/MS4wLjABAAAAabc12345?from_tab_name=main"
+    assert normalized.sec_user_id is None
+
+
 def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     response = client.get("/")
     assert response.status_code == 200
@@ -10342,6 +10413,12 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "复制规则" in response.text
     assert "打开网页报告" in response.text
     script = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert "function normalizeDouyinProfileInput" in script
+    assert "主页导入失败：当前没有配置 Douyin Cookie" in script
+    assert "请求已发出，正在等待抖音 Cookie Web API 或安全回退返回；无需重复点击。" in script
+    assert "这不是按钮故障" in script
+    assert 'creatorCloneNextButton.setAttribute("aria-busy"' in script
+    assert 'creatorCloneNextBar?.classList.toggle("is-error"' in script
     assert "/api/local-helper/chrome/status" in script
     assert "/api/local-helper/chrome/scan-token" in script
     assert "/api/local-helper/chrome/open-profile" in script

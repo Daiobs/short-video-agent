@@ -122,15 +122,51 @@ def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
     return effective_llm_settings()
 
 
-def effective_douyin_settings() -> dict[str, str]:
+def effective_douyin_settings() -> dict[str, Any]:
+    # Imported lazily so the secure credential service can reuse the local
+    # settings metadata helpers without creating an import cycle.
+    from app.services.local_login_state import extension_douyin_credentials
+
+    extension = extension_douyin_credentials()
+    if extension.get("cookie"):
+        return {
+            **extension,
+            "source": "chrome_extension",
+        }
+
+    payload = load_local_settings()
+    local_douyin = payload.get("douyin")
+    local_douyin = local_douyin if isinstance(local_douyin, dict) else {}
+    local_cookie = str(local_douyin.get("cookie") or "")
+    environment_cookie = str(settings.douyin_cookie or "")
+    source = "manual_local" if local_cookie else "environment" if environment_cookie else ""
     return {
-        "cookie": str(_local_value("douyin", "cookie", settings.douyin_cookie) or ""),
-        "user_agent": str(_local_value("douyin", "user_agent", settings.douyin_user_agent) or "").strip(),
-        "referer": str(_local_value("douyin", "referer", settings.douyin_referer) or "https://www.douyin.com/").strip(),
+        "cookie": local_cookie or environment_cookie,
+        "user_agent": str(
+            (
+                local_douyin.get("user_agent")
+                if "user_agent" in local_douyin
+                else settings.douyin_user_agent
+            )
+            or ""
+        ).strip(),
+        "referer": str(
+            (
+                local_douyin.get("referer")
+                if "referer" in local_douyin
+                else settings.douyin_referer
+            )
+            or "https://www.douyin.com/"
+        ).strip(),
+        "source": source,
+        "last_synced_at": "",
+        "pair_count": 0,
+        "login_key_count": 0,
+        "extension_version": "",
     }
 
 
-def update_douyin_runtime_settings(values: dict[str, Any]) -> dict[str, str]:
+def update_douyin_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
     cleaned: dict[str, str] = {}
     for source_key, target_key in (
         ("cookie", "cookie"),

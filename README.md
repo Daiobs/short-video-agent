@@ -41,21 +41,23 @@
 
 数据源由 `DataSourceManager` 统一调度：
 
-- `cookie_api`：主页扫描正式主路径。用户主动配置 `DOUYIN_COOKIE`、`DOUYIN_USER_AGENT` 和 `DOUYIN_REFERER` 后，系统使用有界分页访问内置 Douyin HTTPS Web API；失败后只进入明确记录的安全回退。
+- `cookie_api`：主页扫描正式主路径。优先使用用户通过 Douyin Login State Extractor 主动同步的本机登录状态，也兼容手工 `DOUYIN_COOKIE`、`DOUYIN_USER_AGENT` 和 `DOUYIN_REFERER`；系统使用有界分页访问内置 Douyin HTTPS Web API，失败后只进入明确记录的安全回退。
 - `manual_links`：稳定回退。支持一行一个链接、整段分享文案、纯 aweme_id 和混合输入，会自动去重。
 - `browser_dom`：高级备用采集。只读取本机 Chrome 当前页面可见作品列表和元数据，不读取 Cookie 或登录 token。
 - `external_api`：预留授权数据源，不作为默认路径。
 - JSON / CSV 导入：支持 `items`、`samples`、`aweme_list`、`awemeList`，兼容 `aweme_id / awemeId / id`、`title / desc`、`author / nickname`、`cover_url / cover`、`statistics.digg_count` 等字段。
 - 已有 Case 导入：轻量版支持粘贴 `case_id`，把已有素材包作为更高理解度样本参与蒸馏。
 
-Cookie 和大模型 API 可以在右上角设置弹窗中修改，保存到本机 `.local_settings.json`。该文件已加入 `.gitignore`，不会进入数据库、素材包、Prompt 或 Git；接口响应只显示是否配置和脱敏状态。`.env` 仍可作为默认配置，页面保存的本机运行时配置优先级更高。
+大模型 API 和手工 Cookie 兼容配置可以在右上角设置弹窗中修改，保存到本机 `.local_settings.json`。扩展同步的 Cookie 不写入项目目录，而是保存到用户目录下权限为 `0600` 的 `~/.short-video-agent/credentials.json`；`.local_settings.json` 只记录其指纹、字段数量和最近同步时间。两个文件都不会进入数据库、素材包、Prompt 或 Git，接口响应只显示是否配置和脱敏状态。
+
+推荐使用 `extensions/douyin-login-state-extractor/`：首次在设置页生成配对码并完成一次配对，之后登录抖音后点击扩展即可同步，扫描其他主页不需要重新授权。安装、配对、安全协议和威胁模型见 [`docs/douyin-login-state-extractor.md`](docs/douyin-login-state-extractor.md)。
 
 Cookie 设置用于主页 Web API 扫描，不作为绕过平台验证的手段。安全边界固定为：
 
-- Douyin Cookie 由用户主动配置，仅保存在本机。
+- Douyin Cookie 只在用户点击扩展同步或手工保存时进入本机。
 - 已保存 Cookie 不回显原文。
 - Cookie 不进入数据库、素材包、Prompt 或日志。
-- 本机 Chrome 辅助不读取 Cookie。
+- Douyin Login State Extractor 只读取 `douyin.com` Cookie；本机 Chrome DOM 辅助仍不读取 Cookie。
 - Cookie Provider 的错误分类、分页/重试硬上限和人工更新流程见 `docs/douyin-cookie-provider.md`。
 
 环境变量示例：
@@ -102,7 +104,7 @@ DOUYIN_REFERER=https://www.douyin.com/
 - 当前项目边界是不绕验证码、不绕风控、不做签名破解；Cookie API 是主页扫描正式主路径，但遇到结构不可解析或 Cookie 失效时，推荐改用“多作品链接粘贴”“JSON / CSV 导入”或“已有 Case 导入”继续整理素材池。浏览器辅助仅由用户显式触发，不会在失败后自动启动。
 - 多作品粘贴是当前账号级分析的稳定入口；支持一行一个作品链接、整段分享文案、纯 aweme_id 和混合输入，并会显示识别、去重、忽略无效内容的统计。
 - 作品池富化队列默认一次最多处理 150 条可下载视频，可通过 `PROFILE_BUILD_MAX_ITEMS` 调整。每条作品会逐条复用单作品解析、下载、素材包生成、enrichment 归档、可选 ASR/OCR 和可选 AI 拆解流程；某条失败不影响后续条目。大模型蒸馏仍默认最多选择 20 条代表样本，避免上下文过长。
-- Stage E 已取消；不开发本地连接器、浏览器 Cookie 自动读取、A_Bogus / X_Bogus、验证码绕过或隐式登录态依赖。
+- Stage E 已取消并仍保持取消：不开发读取作品 DOM 的本地连接器、A_Bogus / X_Bogus、验证码绕过或隐式登录态依赖。Douyin Login State Extractor 是独立的用户点击式登录状态同步工具，不读取作品 DOM、Network、localStorage 或其他域 Cookie。
 - 后续再继续做更多平台适配器、浏览器辅助的本地版采集、评论导入联动和更完整的案例库策略层。
 
 核心功能：

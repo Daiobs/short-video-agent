@@ -177,7 +177,9 @@ const e = {{
   llmProviderInput: element(), llmApiBaseInput: element(), llmModelInput: element(), llmApiKeyInput: element(),
   llmTimeoutInput: element(), llmTemperatureInput: element(), llmClearKeyInput: element(), saveLlmButton: element(),
   llmSaveResult: element(), testLlmButton: element(), llmTestResult: element(), dataSourceStatusBadge: element(),
-  dataSourceStatusList: element(), douyinForm: element(), douyinCookieInput: element(), douyinUserAgentInput: element(),
+  dataSourceStatusList: element(), loginStateStatusBadge: element(), loginStateStatusList: element(),
+  loginStatePairingResult: element(["hidden"]), startLoginStatePairingButton: element(), refreshLoginStateButton: element(),
+  douyinForm: element(), douyinCookieInput: element(), douyinUserAgentInput: element(),
   douyinRefererInput: element(), douyinClearCookieInput: element(), saveDouyinButton: element(), douyinSaveResult: element(),
   testDouyinButton: element(), douyinCookieTestResult: element(), refreshPreflightButton: element(),
   preflightSummary: element(), preflightList: element(),
@@ -190,6 +192,8 @@ async function requestJson(url, options = {{}}) {{
   if (url === "/api/settings/data-sources/douyin/test") return {{test: {{status: "ok", message: "通过", cookie_diagnostics: {{has_cookie: true, pair_count: 5, login_key_count: 2}}, api_checked: true, status_code: 200, is_json: true, aweme_count: 3}}}};
   if (url === "/api/settings/data-sources/douyin") return {{data_sources: {{configured: true, has_cookie: true, masked_cookie: "********", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
   if (url === "/api/settings/data-sources") return {{data_sources: {{configured: true, has_cookie: true, masked_cookie: "********", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
+  if (url === "/api/local-login-state/status") return {{login_state: {{paired: true, configured: true, masked_cookie: "********", pair_count: 5, login_key_count: 2, last_synced_at: "2026-07-24T01:00:00Z"}}}};
+  if (url === "/api/local-login-state/pair/start") return {{pairing: {{pairing_code: "ABCD2345", expires_in_seconds: 600}}}};
   throw {{error_code: "UNEXPECTED", message: url}};
 }}
 let preflightCalls = 0;
@@ -222,6 +226,8 @@ e.llmApiKeyInput.value = "sk-live-secret-never-render";
 await emit(e.llmForm, "submit");
 e.douyinCookieInput.value = "sessionid=raw-cookie-never-render";
 await emit(e.douyinForm, "submit");
+await emit(e.startLoginStatePairingButton, "click");
+await emit(e.refreshLoginStateButton, "click");
 await emit(e.testLlmButton, "click");
 await emit(e.testDouyinButton, "click");
 first.renderLlmStatus(null);
@@ -229,6 +235,7 @@ first.renderDataSourceStatus("bad");
 first.renderCookieTestResult([]);
 const visible = [e.llmStatusList.innerHTML, e.llmStatusList.textContent, e.llmApiKeyInput.value, e.llmApiKeyInput.placeholder,
   e.dataSourceStatusList.innerHTML, e.douyinCookieInput.value, e.douyinCookieInput.placeholder,
+  e.loginStateStatusList.innerHTML, e.loginStatePairingResult.innerHTML,
   e.llmSaveResult.textContent, e.douyinSaveResult.textContent, e.llmTestResult.textContent, e.douyinCookieTestResult.innerHTML].join("|");
 const noDom = context.SettingsPanel.init({{elements: {{}}, requestJson}});
 process.stdout.write(JSON.stringify({{
@@ -267,6 +274,8 @@ process.stdout.write(JSON.stringify({{
     assert ["/api/settings/llm/test", "POST"] in result["requestPairs"]
     assert ["/api/settings/data-sources/douyin", "PUT"] in result["requestPairs"]
     assert ["/api/settings/data-sources/douyin/test", "POST"] in result["requestPairs"]
+    assert ["/api/local-login-state/status", "GET"] in result["requestPairs"]
+    assert ["/api/local-login-state/pair/start", "POST"] in result["requestPairs"]
     assert result["leakedKey"] is False
     assert result["leakedCookie"] is False
     assert result["noDomOpen"] is False
@@ -274,8 +283,10 @@ process.stdout.write(JSON.stringify({{
         "close",
         "loadDataSourceStatus",
         "loadLlmStatus",
+        "loadLoginStateStatus",
         "open",
         "renderCookieTestResult",
         "renderDataSourceStatus",
         "renderLlmStatus",
+        "renderLoginStateStatus",
     ]
