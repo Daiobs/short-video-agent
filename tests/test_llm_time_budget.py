@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
+from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.routes.jobs import _distill_fallback_message, _distill_phase_payload
 from app.services.creator_clone import (
@@ -14,7 +15,7 @@ from app.services.creator_clone import (
     distill_creator_clone,
 )
 from app.services.llm_budget import DistillDeadline
-from app.services.llm_provider import OpenAICompatibleProvider
+from app.services.llm_provider import OpenAICompatibleProvider, get_llm_provider
 
 
 class FakeClock:
@@ -53,12 +54,49 @@ def success_response() -> FakeResponse:
 
 def test_gateway_timeout_fallback_message_is_actionable() -> None:
     message = _distill_fallback_message(
-        AppError(ErrorCode.LLM_GATEWAY_TIMEOUT, "大模型网关请求超时。")
+        AppError(ErrorCode.LLM_GATEWAY_TIMEOUT, "大模型网关请求超时。"),
+        distill_mode="quick",
     )
 
     assert "网关请求超时" in message
-    assert "增加等待时间" in message
+    assert "Quick" in message
+    assert "Deep" in message
     assert "暂不可用" not in message
+
+
+def test_deep_gateway_timeout_fallback_message_does_not_claim_another_retry() -> None:
+    message = _distill_fallback_message(
+        AppError(ErrorCode.LLM_GATEWAY_TIMEOUT, "大模型网关请求超时。"),
+        distill_mode="deep",
+    )
+
+    assert "Deep" in message
+    assert "仍然超时" in message
+    assert "重试" not in message
+
+
+def test_global_and_creator_request_timeout_defaults_are_separate() -> None:
+    assert settings.llm_timeout_seconds == 90
+    assert settings.llm_creator_distill_request_timeout_seconds == 180
+
+
+def test_default_provider_uses_global_request_timeout(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.llm_provider.effective_llm_settings",
+        lambda: {
+            "provider": "openai_compatible",
+            "api_base": "https://gateway.example/v1",
+            "api_key": "sk-test",
+            "model": "test-model",
+            "timeout_seconds": 90,
+            "temperature": 0.2,
+            "max_output_tokens": 1200,
+        },
+    )
+
+    provider = get_llm_provider()
+
+    assert provider.timeout_seconds == 90
 
 
 def install_http_sequence(monkeypatch, responses, *, clock: FakeClock | None = None, advance: float = 0):
@@ -272,6 +310,104 @@ def test_invalid_response_can_use_one_compact_retry(monkeypatch) -> None:
     assert result["execution_plan"]["timeout_policy"]["max_external_attempts"] == 2
     assert result["execution_plan"]["timeout_policy"]["max_http_attempts_per_logical_request"] == 2
     assert result["execution_plan"]["timeout_policy"]["max_total_external_http_requests"] == 4
+    assert result["execution_plan"]["timeout_policy"]["distill_mode"] == "quick"
+    assert result["execution_plan"]["timeout_policy"]["timeout_retry_enabled"] is False
+
+
+def test_quick_timeout_makes_one_logical_request(monkeypatch) -> None:
+    calls: list[int] = []
+    provider_timeouts: list[int] = []
+    progress_events: list[dict] = []
+
+    class Provider:
+        def analyze(self, prompt, image_paths):
+            calls.append(1)
+            raise AppError(ErrorCode.LLM_GATEWAY_TIMEOUT, details={"retryable": True})
+
+    def provider_factory(**kwargs):
+        provider_timeouts.append(int(kwargs["timeout_seconds"]))
+        return Provider()
+
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", provider_factory)
+    sample_set = _sample_set("clone_quick_timeout")
+
+    with pytest.raises(AppError) as raised:
+        distill_creator_clone(
+            sample_set,
+            [sample.sample_id for sample in sample_set.samples],
+            distill_mode="quick",
+            progress=lambda value, message, phase=None: progress_events.append(phase or {}),
+        )
+
+    assert raised.value.code == ErrorCode.LLM_GATEWAY_TIMEOUT
+    assert calls == [1]
+    assert provider_timeouts == [180]
+    failed = next(item for item in progress_events if item.get("current_phase") == "llm_failed")
+    assert failed["retryable"] is False
+    assert failed["execution_plan"]["timeout_policy"]["total_request_budget_seconds"] == 240
+    assert failed["execution_plan"]["timeout_policy"]["timeout_retry_enabled"] is False
+
+
+def test_deep_timeout_can_use_one_compact_retry(monkeypatch) -> None:
+    calls: list[int] = []
+    provider_timeouts: list[int] = []
+
+    class Provider:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        def analyze(self, prompt, image_paths):
+            calls.append(self.index)
+            if self.index == 1:
+                raise AppError(ErrorCode.LLM_GATEWAY_TIMEOUT, details={"retryable": True})
+            return _strategy_result("Deep timeout 重试成功")
+
+    def provider_factory(**kwargs):
+        provider_timeouts.append(int(kwargs["timeout_seconds"]))
+        return Provider(len(provider_timeouts))
+
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", provider_factory)
+    sample_set = _sample_set("clone_deep_timeout")
+
+    result = distill_creator_clone(
+        sample_set,
+        [sample.sample_id for sample in sample_set.samples],
+        distill_mode="deep",
+    )
+
+    assert result["result"]["summary"] == "Deep timeout 重试成功"
+    assert calls == [1, 2]
+    assert provider_timeouts == [180, 180]
+    policy = result["execution_plan"]["timeout_policy"]
+    assert policy["total_request_budget_seconds"] == 600
+    assert policy["timeout_retry_enabled"] is True
+
+
+def test_creator_distill_uses_creator_request_timeout(monkeypatch) -> None:
+    provider_timeouts: list[int] = []
+
+    class Provider:
+        def analyze(self, prompt, image_paths):
+            return _strategy_result("Creator timeout 已隔离")
+
+    def provider_factory(**kwargs):
+        provider_timeouts.append(int(kwargs["timeout_seconds"]))
+        return Provider()
+
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", provider_factory)
+    sample_set = _sample_set("clone_creator_timeout")
+
+    result = distill_creator_clone(
+        sample_set,
+        [sample.sample_id for sample in sample_set.samples],
+    )
+
+    assert result["result"]["summary"] == "Creator timeout 已隔离"
+    assert provider_timeouts == [180]
+    assert result["execution_plan"]["timeout_policy"]["configured_batch_timeout_seconds"] == 180
 
 
 def test_timeout_without_minimum_remaining_budget_does_not_retry(monkeypatch) -> None:

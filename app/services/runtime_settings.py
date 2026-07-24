@@ -74,6 +74,14 @@ def effective_llm_settings() -> dict[str, Any]:
         "api_key": str(_local_value("llm", "api_key", settings.llm_api_key) or ""),
         "model": str(_local_value("llm", "model", settings.llm_model) or "").strip(),
         "timeout_seconds": _safe_float(_local_value("llm", "timeout_seconds", settings.llm_timeout_seconds), settings.llm_timeout_seconds),
+        "creator_distill_request_timeout_seconds": _safe_float(
+            _local_value(
+                "llm",
+                "creator_distill_request_timeout_seconds",
+                settings.llm_creator_distill_request_timeout_seconds,
+            ),
+            settings.llm_creator_distill_request_timeout_seconds,
+        ),
         "final_reduce_timeout_seconds": _safe_float(
             _local_value("llm", "final_reduce_timeout_seconds", settings.llm_final_reduce_timeout_seconds),
             settings.llm_final_reduce_timeout_seconds,
@@ -125,6 +133,7 @@ def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
         "api_key",
         "model",
         "timeout_seconds",
+        "creator_distill_request_timeout_seconds",
         "final_reduce_timeout_seconds",
         "quick_distill_budget_seconds",
         "deep_distill_budget_seconds",
@@ -147,6 +156,7 @@ def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
         cleaned["model"] = str(cleaned["model"] or "").strip()
     for key in (
         "timeout_seconds",
+        "creator_distill_request_timeout_seconds",
         "final_reduce_timeout_seconds",
         "quick_distill_budget_seconds",
         "deep_distill_budget_seconds",

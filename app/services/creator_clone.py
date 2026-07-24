@@ -26,7 +26,7 @@ from urllib.parse import urlparse, urlunparse
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.errors import AppError, ErrorCode, is_retryable_llm_error
+from app.errors import AppError, ErrorCode
 from app.models import CaseArtifact
 from app.providers.profile_base import ProfileScanResult, ProfileVideoItem, profile_engagement_score
 from app.services.douyin_url_parser import extract_aweme_id, extract_first_url
@@ -81,6 +81,19 @@ CONTENT_PROFILE_GUIDANCE = {
 }
 MAX_DISTILL_SAMPLES = 20
 BATCH_DISTILL_MAX_SAMPLES = 150
+QUICK_DISTILL_RETRYABLE_ERRORS = frozenset(
+    {
+        ErrorCode.LLM_RESPONSE_INVALID,
+        ErrorCode.LLM_UPSTREAM_UNAVAILABLE,
+    }
+)
+DEEP_DISTILL_RETRYABLE_ERRORS = frozenset(
+    {
+        ErrorCode.LLM_GATEWAY_TIMEOUT,
+        ErrorCode.LLM_RESPONSE_INVALID,
+        ErrorCode.LLM_UPSTREAM_UNAVAILABLE,
+    }
+)
 HANDOFF_SENSITIVE_RE = re.compile(
     r"(cookie|sessionid|sid_guard|passport|token|authorization|x-bogus|mstoken|odin_tt)(\s*[:=]\s*(?:bearer\s+)?[^&;\"'<>]+)?",
     re.IGNORECASE,
@@ -93,6 +106,21 @@ HANDOFF_DISALLOWED_KEY_RE = re.compile(
 )
 HANDOFF_SIGNED_MEDIA_HOST_SUFFIXES = ("365yg.com", "douyinvod.com")
 HANDOFF_CONTRACT_SECTIONS = {"safety", "security_contract", "handoff_scope"}
+
+
+def normalize_distill_mode(value: str) -> str:
+    return "deep" if str(value or "").strip().lower() == "deep" else "quick"
+
+
+def distill_error_is_retryable(code: str, distill_mode: str) -> bool:
+    retryable = (
+        DEEP_DISTILL_RETRYABLE_ERRORS
+        if normalize_distill_mode(distill_mode) == "deep"
+        else QUICK_DISTILL_RETRYABLE_ERRORS
+    )
+    return str(code or "") in retryable
+
+
 HANDOFF_FREE_TEXT_KEYS = {"title", "creator_name", "nickname", "bio", "desc", "author", "notes", "create_time"}
 HANDOFF_TOP_LEVEL_SENSITIVE_FIELDS = ("title", "creator_name", "source_url")
 HANDOFF_SAMPLE_SENSITIVE_FIELDS = (
@@ -1755,6 +1783,7 @@ def distill_creator_clone(
         except TypeError:
             progress(value, message, None)
 
+    distill_mode = normalize_distill_mode(distill_mode)
     selected_samples, warnings = validate_selected_samples(sample_set.samples, selected_sample_ids, max_samples=max_samples)
     sample_set.selected_sample_ids = [sample.sample_id for sample in selected_samples]
     for sample in sample_set.samples:
@@ -1792,13 +1821,16 @@ def distill_creator_clone(
     execution_plan = build_distill_execution_plan(
         selected_samples,
         batch_size=max_samples,
-        single_timeout_seconds=float(effective_llm.get("timeout_seconds") or settings.llm_timeout_seconds),
+        single_timeout_seconds=float(
+            effective_llm.get("creator_distill_request_timeout_seconds")
+            or settings.llm_creator_distill_request_timeout_seconds
+        ),
         final_timeout_seconds=float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
         prompt_chars=len(prompt),
     )
     configured_mode_budget = (
         effective_llm.get("deep_distill_budget_seconds")
-        if str(distill_mode).strip().lower() == "deep"
+        if distill_mode == "deep"
         else effective_llm.get("quick_distill_budget_seconds")
     )
     total_budget_seconds = max(1, int(configured_mode_budget or settings.llm_quick_distill_budget_seconds))
@@ -1806,7 +1838,10 @@ def distill_creator_clone(
     total_budget_seconds = max(1, int(total_deadline.total_budget_seconds))
     configured_request_timeout = max(
         1,
-        int(effective_llm.get("timeout_seconds") or settings.llm_timeout_seconds),
+        int(
+            effective_llm.get("creator_distill_request_timeout_seconds")
+            or settings.llm_creator_distill_request_timeout_seconds
+        ),
     )
     compact_retry_minimum = max(
         5,
@@ -1824,12 +1859,23 @@ def distill_creator_clone(
     )
     execution_plan["timeout_policy"].update(
         {
+            "distill_mode": distill_mode,
             "total_request_budget_seconds": total_budget_seconds,
             "max_external_attempts": attempt_count,
             "max_http_attempts_per_logical_request": 2,
             "max_total_external_http_requests": attempt_count * 2,
             "compact_retry_min_remaining_seconds": compact_retry_minimum,
-            "retry_policy": "一次主请求；仅在可恢复错误时使用剩余总预算进行一次精简重试。",
+            "retryable_error_codes": sorted(
+                DEEP_DISTILL_RETRYABLE_ERRORS
+                if distill_mode == "deep"
+                else QUICK_DISTILL_RETRYABLE_ERRORS
+            ),
+            "timeout_retry_enabled": distill_mode == "deep",
+            "retry_policy": (
+                "Deep：timeout、无效 JSON、502/503 可在剩余预算充足时精简重试一次。"
+                if distill_mode == "deep"
+                else "Quick：timeout 不重试；无效 JSON、502/503 可在剩余预算充足时精简重试一次。"
+            ),
         }
     )
     report_progress(
@@ -1895,8 +1941,9 @@ def distill_creator_clone(
         ).to_dict()
     except AppError as error:
         retry_kind = "micro" if use_map_reduce else "compact"
+        error_retryable = distill_error_is_retryable(error.code, distill_mode)
         can_retry = (
-            is_retryable_llm_error(error.code)
+            error_retryable
             and retry_available
             and total_deadline.remaining_seconds() >= compact_retry_minimum
         )
@@ -1913,10 +1960,12 @@ def distill_creator_clone(
                     current_phase_label="大模型请求已停止",
                     status="failed",
                     failure_class=error.code,
-                    retryable=is_retryable_llm_error(error.code),
+                    retryable=error_retryable,
                     diagnostic=(
                         "网关限流，任务已停止；没有继续重试。"
                         if error.code == ErrorCode.LLM_RATE_LIMITED
+                        else "Quick 模式不自动重试 timeout；已保留 Prompt，可切换 Deep 模式容忍慢网关。"
+                        if error.code == ErrorCode.LLM_GATEWAY_TIMEOUT and distill_mode == "quick"
                         else "当前错误不可重试，或剩余总预算不足；已保留 Prompt 和安全诊断。"
                     ),
                 ),
@@ -1957,14 +2006,15 @@ def distill_creator_clone(
             retry_prompt = compact_prompt
             success_warning = "首次蒸馏失败，已使用精简证据包重试成功。"
         remaining_seconds = max(1, int(total_deadline.remaining_seconds()))
-        retry_deadline = total_deadline.child(remaining_seconds)
+        retry_timeout_seconds = max(1, min(configured_request_timeout, remaining_seconds))
+        retry_deadline = total_deadline.child(retry_timeout_seconds)
         active_attempt_index = 2
         report_progress(
             78,
-            f"第 2/{attempt_count} 次请求：使用精简 Prompt，剩余预算 {remaining_seconds} 秒",
+            f"第 2/{attempt_count} 次请求：使用精简 Prompt，本次最多等待 {retry_timeout_seconds} 秒",
             budget_phase(
                 2,
-                remaining_seconds,
+                retry_timeout_seconds,
                 current_phase="llm_retry",
                 current_phase_label="精简重试",
                 retry_reason=error.code,
@@ -1973,7 +2023,7 @@ def distill_creator_clone(
             ),
         )
         retry_provider = get_llm_provider(
-            timeout_seconds=remaining_seconds,
+            timeout_seconds=retry_timeout_seconds,
             deadline=retry_deadline,
         )
         try:
@@ -2121,7 +2171,9 @@ def build_distill_execution_plan(
         strategy = "hierarchical_reduce"
         strategy_label = "大样本：分层汇总，保留批次中间结果"
 
-    configured_single_timeout = float(single_timeout_seconds or settings.llm_timeout_seconds)
+    configured_single_timeout = float(
+        single_timeout_seconds or settings.llm_creator_distill_request_timeout_seconds
+    )
     configured_final_timeout = float(final_timeout_seconds or settings.llm_final_reduce_timeout_seconds)
     known_duration_minutes = total_duration / 60.0 if durations else 0.0
     prompt_k = max(0.0, float(prompt_chars or 0) / 1000.0)
@@ -3003,7 +3055,10 @@ def batch_distill_creator_clone(
     if not llm_configured:
         warnings.append("大模型未配置，已生成分批蒸馏 Prompt 和最终汇总 Prompt。")
     effective_llm = effective_llm_settings()
-    configured_batch_timeout = float(effective_llm.get("timeout_seconds") or settings.llm_timeout_seconds)
+    configured_batch_timeout = float(
+        effective_llm.get("creator_distill_request_timeout_seconds")
+        or settings.llm_creator_distill_request_timeout_seconds
+    )
     configured_final_timeout = float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds)
     total_job_budget = max(
         1,

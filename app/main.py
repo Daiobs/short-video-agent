@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import math
+
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from urllib.parse import urlparse
@@ -98,6 +101,16 @@ def _local_forbidden_response(message: str) -> JSONResponse:
     )
 
 
+def _json_safe_validation_value(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        return "non-finite number"
+    if isinstance(value, dict):
+        return {str(key): _json_safe_validation_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_validation_value(item) for item in value]
+    return value
+
+
 def create_app() -> FastAPI:
     settings.ensure_directories()
     init_db()
@@ -106,6 +119,13 @@ def create_app() -> FastAPI:
         description="本地短视频爆款分析素材包生成器",
         version="0.1.0",
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(_request, error: RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": _json_safe_validation_value(error.errors())},
+        )
 
     @app.middleware("http")
     async def local_only_guard(request, call_next):

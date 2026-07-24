@@ -36,6 +36,7 @@ class ErrorCode:
     LLM_UPSTREAM_UNAVAILABLE = "LLM_UPSTREAM_UNAVAILABLE"
     LLM_GATEWAY_TIMEOUT = "LLM_GATEWAY_TIMEOUT"
     LLM_RESPONSE_INVALID = "LLM_RESPONSE_INVALID"
+    LLM_SETTINGS_INVALID = "LLM_SETTINGS_INVALID"
     AUTO_ANALYSIS_FAILED = "AUTO_ANALYSIS_FAILED"
     ENRICHMENT_FAILED = "ENRICHMENT_FAILED"
     COMMENTS_IMPORT_FAILED = "COMMENTS_IMPORT_FAILED"
@@ -94,6 +95,7 @@ ERROR_MESSAGES = {
     ErrorCode.LLM_UPSTREAM_UNAVAILABLE: "大模型上游暂时不可用。已停止当前请求，可稍后人工重试。",
     ErrorCode.LLM_GATEWAY_TIMEOUT: "大模型网关请求超时。已停止当前请求，可稍后人工重试。",
     ErrorCode.LLM_RESPONSE_INVALID: "大模型没有返回合法 JSON。可以降低 LLM_TEMPERATURE，或换用更稳定的多模态模型。",
+    ErrorCode.LLM_SETTINGS_INVALID: "大模型时间配置无效。请检查各项范围和总预算约束。",
     ErrorCode.AUTO_ANALYSIS_FAILED: "自动拆解失败。请检查 contact_sheet.jpg 和 keyframes/ 是否已经生成。",
     ErrorCode.ENRICHMENT_FAILED: "素材富化归档失败。请检查素材包文件是否完整。",
     ErrorCode.COMMENTS_IMPORT_FAILED: "评论导入失败。请检查评论文本或 JSON 格式。",

@@ -175,7 +175,10 @@ const e = {{
   toggle: element(), modal: element(["hidden"]), close: element(),
   llmStatusBadge: element(), llmStatusList: element(), llmConfigHint: element(), llmForm: element(),
   llmProviderInput: element(), llmApiBaseInput: element(), llmModelInput: element(), llmApiKeyInput: element(),
-  llmTimeoutInput: element(), llmTemperatureInput: element(), llmClearKeyInput: element(), saveLlmButton: element(),
+  llmTimeoutInput: element(), llmCreatorDistillTimeoutInput: element(), llmFinalReduceTimeoutInput: element(),
+  llmQuickDistillBudgetInput: element(), llmDeepDistillBudgetInput: element(), llmBatchJobBudgetInput: element(),
+  llmFinalReduceReserveInput: element(), llmCompactRetryMinInput: element(),
+  llmTemperatureInput: element(), llmClearKeyInput: element(), saveLlmButton: element(),
   llmSaveResult: element(), testLlmButton: element(), llmTestResult: element(), dataSourceStatusBadge: element(),
   dataSourceStatusList: element(), douyinForm: element(), douyinCookieInput: element(), douyinUserAgentInput: element(),
   douyinRefererInput: element(), douyinClearCookieInput: element(), saveDouyinButton: element(), douyinSaveResult: element(),
@@ -186,7 +189,14 @@ const requests = [];
 async function requestJson(url, options = {{}}) {{
   requests.push([url, options.method || "GET", options.body || ""]);
   if (url === "/api/settings/llm/test") return {{test: {{message: "pong"}}}};
-  if (url === "/api/settings/llm") return {{llm: {{configured: true, provider: "openai_compatible", api_base: "https://api.example.test/v1", model: "vision", has_api_key: true, masked_api_key: "sk-****abcd", temperature: 0.2}}}};
+  if (url === "/api/settings/llm") return {{llm: {{
+    configured: true, provider: "openai_compatible", api_base: "https://api.example.test/v1",
+    model: "vision", has_api_key: true, masked_api_key: "sk-****abcd", temperature: 0.2,
+    timeout_seconds: 90, creator_distill_request_timeout_seconds: 180,
+    final_reduce_timeout_seconds: 600, quick_distill_budget_seconds: 240,
+    deep_distill_budget_seconds: 600, batch_job_budget_seconds: 600,
+    final_reduce_min_reserve_seconds: 120, compact_retry_min_remaining_seconds: 60,
+  }}}};
   if (url === "/api/settings/data-sources/douyin/test") return {{test: {{status: "ok", message: "通过", cookie_diagnostics: {{has_cookie: true, pair_count: 5, login_key_count: 2}}, api_checked: true, status_code: 200, is_json: true, aweme_count: 3}}}};
   if (url === "/api/settings/data-sources/douyin") return {{data_sources: {{has_cookie: true, masked_cookie: "sessionid=****abcd", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
   if (url === "/api/settings/data-sources") return {{data_sources: {{has_cookie: true, masked_cookie: "sessionid=****abcd", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
@@ -226,6 +236,7 @@ const visible = [e.llmStatusList.innerHTML, e.llmStatusList.textContent, e.llmAp
   e.dataSourceStatusList.innerHTML, e.douyinCookieInput.value, e.douyinCookieInput.placeholder,
   e.llmSaveResult.textContent, e.douyinSaveResult.textContent, e.llmTestResult.textContent, e.douyinCookieTestResult.innerHTML].join("|");
 const noDom = context.SettingsPanel.init({{elements: {{}}, requestJson}});
+const llmPutRequest = requests.find((item) => item[0] === "/api/settings/llm" && item[1] === "PUT");
 process.stdout.write(JSON.stringify({{
   added,
   namespaceFrozen: Object.isFrozen(context.SettingsPanel),
@@ -235,6 +246,7 @@ process.stdout.write(JSON.stringify({{
   llmSubmitListeners: e.llmForm.listeners.submit.length,
   opened, closed, preflightCalls, llmStatusCalls,
   requestPairs: requests.map((item) => item.slice(0, 2)),
+  llmPutBody: JSON.parse(llmPutRequest[2]),
   leakedKey: visible.includes("sk-live-secret-never-render"),
   leakedCookie: visible.includes("raw-cookie-never-render"),
   noDomOpen: noDom.open(),
@@ -258,6 +270,14 @@ process.stdout.write(JSON.stringify({{
     assert ["/api/settings/llm/test", "POST"] in result["requestPairs"]
     assert ["/api/settings/data-sources/douyin", "PUT"] in result["requestPairs"]
     assert ["/api/settings/data-sources/douyin/test", "POST"] in result["requestPairs"]
+    assert result["llmPutBody"]["timeout_seconds"] == 90
+    assert result["llmPutBody"]["creator_distill_request_timeout_seconds"] == 180
+    assert result["llmPutBody"]["quick_distill_budget_seconds"] == 240
+    assert result["llmPutBody"]["deep_distill_budget_seconds"] == 600
+    assert result["llmPutBody"]["batch_job_budget_seconds"] == 600
+    assert result["llmPutBody"]["final_reduce_timeout_seconds"] == 600
+    assert result["llmPutBody"]["final_reduce_min_reserve_seconds"] == 120
+    assert result["llmPutBody"]["compact_retry_min_remaining_seconds"] == 60
     assert result["leakedKey"] is False
     assert result["leakedCookie"] is False
     assert result["noDomOpen"] is False

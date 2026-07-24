@@ -39,6 +39,7 @@ from app.services.profile_scan import (
 from app.services.quality_resolver import resolve_quality_candidates
 from app.services.ffmpeg_service import extract_keyframes, plan_keyframe_timestamps
 from app.services.llm_provider import AnthropicCompatibleProvider, OpenAICompatibleProvider, OpenAIResponsesProvider, parse_json_text
+from app.services.llm_settings import validate_llm_timing_settings
 from app.services.ocr import run_case_ocr
 from app.services.video_importer import engagement_score
 from app.services import auto_analyzer, candidate_probe
@@ -1156,6 +1157,10 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "进入大模型蒸馏准备阶段" in Path("app/routes/jobs.py").read_text(encoding="utf-8")
     assert "正在生成样本摘要和蒸馏 Prompt" in Path("app/services/creator_clone.py").read_text(encoding="utf-8")
     assert ".job-phase" in stylesheet
+    assert "id=\"profile-distill-mode\"" in response.text
+    assert "Quick · 超时即返回" in response.text
+    assert "Deep · 允许精简重试" in response.text
+    assert "distill_mode: profileDistillMode?.value || \"quick\"" in script
     assert "id=\"profile-content-profile\"" in response.text
     assert "账号类型 / 分析模板" in response.text
     assert "美拍 / COS / 颜值" in response.text
@@ -2556,8 +2561,12 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
             "api_key": "sk-local-runtime-secret",
             "model": "vision-model",
             "timeout_seconds": 42,
-            "quick_distill_budget_seconds": 360,
+            "creator_distill_request_timeout_seconds": 180,
+            "final_reduce_timeout_seconds": 300,
+            "quick_distill_budget_seconds": 240,
             "deep_distill_budget_seconds": 600,
+            "batch_job_budget_seconds": 600,
+            "final_reduce_min_reserve_seconds": 120,
             "compact_retry_min_remaining_seconds": 60,
             "temperature": 0.1,
         },
@@ -2570,12 +2579,116 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
     assert "sk-local-runtime-secret" not in json.dumps(payload, ensure_ascii=False)
     stored = json.loads(runtime_path.read_text(encoding="utf-8"))
     assert stored["llm"]["api_key"] == "sk-local-runtime-secret"
-    assert stored["llm"]["quick_distill_budget_seconds"] == 360
+    assert stored["llm"]["timeout_seconds"] == 42
+    assert stored["llm"]["creator_distill_request_timeout_seconds"] == 180
+    assert stored["llm"]["final_reduce_timeout_seconds"] == 300
+    assert stored["llm"]["quick_distill_budget_seconds"] == 240
     assert stored["llm"]["deep_distill_budget_seconds"] == 600
+    assert stored["llm"]["batch_job_budget_seconds"] == 600
+    assert stored["llm"]["final_reduce_min_reserve_seconds"] == 120
     assert stored["llm"]["compact_retry_min_remaining_seconds"] == 60
-    assert payload["llm"]["quick_distill_budget_seconds"] == 360
+    assert payload["llm"]["timeout_seconds"] == 42
+    assert payload["llm"]["creator_distill_request_timeout_seconds"] == 180
+    assert payload["llm"]["final_reduce_timeout_seconds"] == 300
+    assert payload["llm"]["quick_distill_budget_seconds"] == 240
     assert payload["llm"]["deep_distill_budget_seconds"] == 600
+    assert payload["llm"]["batch_job_budget_seconds"] == 600
+    assert payload["llm"]["final_reduce_min_reserve_seconds"] == 120
     assert payload["llm"]["compact_retry_min_remaining_seconds"] == 60
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("timeout_seconds", 4),
+        ("timeout_seconds", 301),
+        ("creator_distill_request_timeout_seconds", 29),
+        ("creator_distill_request_timeout_seconds", 301),
+        ("quick_distill_budget_seconds", 59),
+        ("quick_distill_budget_seconds", 601),
+        ("deep_distill_budget_seconds", 119),
+        ("deep_distill_budget_seconds", 1201),
+        ("batch_job_budget_seconds", 179),
+        ("batch_job_budget_seconds", 1801),
+        ("final_reduce_timeout_seconds", 29),
+        ("final_reduce_timeout_seconds", 901),
+        ("final_reduce_min_reserve_seconds", 29),
+        ("final_reduce_min_reserve_seconds", 601),
+        ("compact_retry_min_remaining_seconds", 9),
+        ("compact_retry_min_remaining_seconds", 301),
+    ],
+)
+def test_llm_settings_reject_out_of_range_timing_values(field: str, value: float) -> None:
+    response = client.put("/api/settings/llm", json={field: value})
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_llm_settings_reject_nonfinite_json_numbers(literal: str) -> None:
+    response = client.put(
+        "/api/settings/llm",
+        content=f'{{"timeout_seconds": {literal}}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "invalid_update",
+    [
+        {"quick_distill_budget_seconds": 120},
+        {"deep_distill_budget_seconds": 120},
+        {"compact_retry_min_remaining_seconds": 240},
+        {"final_reduce_min_reserve_seconds": 600},
+        {"final_reduce_timeout_seconds": 900},
+    ],
+)
+def test_llm_settings_reject_cross_field_constraints_without_writing(
+    monkeypatch,
+    tmp_path,
+    invalid_update: dict,
+) -> None:
+    runtime_path = tmp_path / ".local_settings.json"
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
+    valid = {
+        "timeout_seconds": 90,
+        "creator_distill_request_timeout_seconds": 180,
+        "quick_distill_budget_seconds": 240,
+        "deep_distill_budget_seconds": 600,
+        "batch_job_budget_seconds": 600,
+        "final_reduce_timeout_seconds": 600,
+        "final_reduce_min_reserve_seconds": 120,
+        "compact_retry_min_remaining_seconds": 60,
+    }
+    assert client.put("/api/settings/llm", json=valid).status_code == 200
+    before = runtime_path.read_text(encoding="utf-8")
+
+    response = client.put("/api/settings/llm", json=invalid_update)
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == ErrorCode.LLM_SETTINGS_INVALID
+    assert runtime_path.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_llm_timing_service_rejects_nonfinite_values(value: float) -> None:
+    values = {
+        "timeout_seconds": value,
+        "creator_distill_request_timeout_seconds": 180,
+        "quick_distill_budget_seconds": 240,
+        "deep_distill_budget_seconds": 600,
+        "batch_job_budget_seconds": 600,
+        "final_reduce_timeout_seconds": 600,
+        "final_reduce_min_reserve_seconds": 120,
+        "compact_retry_min_remaining_seconds": 60,
+    }
+
+    with pytest.raises(AppError) as raised:
+        validate_llm_timing_settings(values)
+
+    assert raised.value.code == ErrorCode.LLM_SETTINGS_INVALID
 
 
 def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypatch, tmp_path) -> None:
@@ -11961,6 +12074,7 @@ def test_creator_clone_distill_caps_external_attempts_and_shares_total_budget(mo
     result = distill_creator_clone(
         sample_set,
         ["sample_budget_a", "sample_budget_b"],
+        distill_mode="deep",
         progress=lambda value, message, phase=None: progress_events.append(
             {"value": value, "message": message, "phase": phase or {}}
         ),

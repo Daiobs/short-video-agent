@@ -157,14 +157,42 @@ LLM_MODEL=支持图片输入的模型</pre>
                         <input name="api_key" id="llm-api-key-input" type="password" autocomplete="off" placeholder="留空表示保留当前 Key">
                     </label>
                     <div class="settings-inline-grid">
-                        <label>Timeout
-                            <input name="timeout_seconds" id="llm-timeout-input" type="number" min="5" step="1">
-                            <span class="settings-field-help">单次请求上限；上方总预算控制完整蒸馏任务的墙钟时间。</span>
+                        <label>普通分析单请求上限
+                            <input name="timeout_seconds" id="llm-timeout-input" type="number" min="5" max="300" step="1">
+                            <span class="settings-field-help">用于单作品自动拆解与连接测试，范围 5–300 秒。</span>
                         </label>
                         <label>Temperature
                             <input name="temperature" id="llm-temperature-input" type="number" min="0" max="2" step="0.1">
                         </label>
                     </div>
+                    <div class="settings-inline-grid">
+                        <label>Creator 单请求上限
+                            <input name="creator_distill_request_timeout_seconds" id="llm-creator-distill-timeout-input" type="number" min="30" max="300" step="1">
+                        </label>
+                        <label>Final Reduce 请求上限
+                            <input name="final_reduce_timeout_seconds" id="llm-final-reduce-timeout-input" type="number" min="30" max="900" step="1">
+                        </label>
+                    </div>
+                    <div class="settings-inline-grid">
+                        <label>Quick 总预算
+                            <input name="quick_distill_budget_seconds" id="llm-quick-distill-budget-input" type="number" min="60" max="600" step="1">
+                        </label>
+                        <label>Deep 总预算
+                            <input name="deep_distill_budget_seconds" id="llm-deep-distill-budget-input" type="number" min="120" max="1200" step="1">
+                        </label>
+                    </div>
+                    <div class="settings-inline-grid">
+                        <label>Batch 总预算
+                            <input name="batch_job_budget_seconds" id="llm-batch-job-budget-input" type="number" min="180" max="1800" step="1">
+                        </label>
+                        <label>Final Reduce 预留
+                            <input name="final_reduce_min_reserve_seconds" id="llm-final-reduce-reserve-input" type="number" min="30" max="600" step="1">
+                        </label>
+                    </div>
+                    <label>Compact Retry 最低剩余时间
+                        <input name="compact_retry_min_remaining_seconds" id="llm-compact-retry-min-input" type="number" min="10" max="300" step="1">
+                        <span class="settings-field-help">总预算是整个任务的墙钟上限，不代表每次必定等待到上限。</span>
+                    </label>
                     <label class="settings-checkbox">
                         <input type="checkbox" id="llm-clear-key-input">
                         清空本机保存的 API Key
@@ -626,6 +654,13 @@ https://v.douyin.com/xxxxxx/
                         <h3>大模型蒸馏</h3>
                     </div>
                     <div class="profile-panel-actions">
+                        <label class="profile-template-select">
+                            <span>响应模式</span>
+                            <select id="profile-distill-mode" aria-label="创作者蒸馏响应模式">
+                                <option value="quick">Quick · 超时即返回</option>
+                                <option value="deep">Deep · 允许精简重试</option>
+                            </select>
+                        </label>
                         <label class="profile-template-select">
                             <span>分析模板</span>
                             <select id="profile-content-profile" aria-label="账号类型 / 分析模板">

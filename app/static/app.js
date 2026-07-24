@@ -719,6 +719,13 @@ const llmApiBaseInput = document.getElementById("llm-api-base-input");
 const llmModelInput = document.getElementById("llm-model-input");
 const llmApiKeyInput = document.getElementById("llm-api-key-input");
 const llmTimeoutInput = document.getElementById("llm-timeout-input");
+const llmCreatorDistillTimeoutInput = document.getElementById("llm-creator-distill-timeout-input");
+const llmFinalReduceTimeoutInput = document.getElementById("llm-final-reduce-timeout-input");
+const llmQuickDistillBudgetInput = document.getElementById("llm-quick-distill-budget-input");
+const llmDeepDistillBudgetInput = document.getElementById("llm-deep-distill-budget-input");
+const llmBatchJobBudgetInput = document.getElementById("llm-batch-job-budget-input");
+const llmFinalReduceReserveInput = document.getElementById("llm-final-reduce-reserve-input");
+const llmCompactRetryMinInput = document.getElementById("llm-compact-retry-min-input");
 const llmTemperatureInput = document.getElementById("llm-temperature-input");
 const llmClearKeyInput = document.getElementById("llm-clear-key-input");
 const saveLlmSettingsButton = document.getElementById("save-llm-settings-button");
@@ -820,6 +827,7 @@ const profileQueueItems = document.getElementById("profile-queue-items");
 const creatorCloneDistillButton = document.getElementById("creator-clone-distill-button");
 const creatorCloneBatchDistillButton = document.getElementById("creator-clone-batch-distill-button");
 const profileContentProfile = document.getElementById("profile-content-profile");
+const profileDistillMode = document.getElementById("profile-distill-mode");
 const creatorCloneSelectionStatus = document.getElementById("creator-clone-selection-status");
 const profileEvidenceStatus = document.getElementById("profile-evidence-status");
 const profileDistillReadinessStatus = document.getElementById("profile-distill-readiness");
@@ -6199,7 +6207,7 @@ async function distillSelectedCreatorClone(options = {}) {
         sample_set_id: currentCloneSetId,
         samples: currentCloneSetId ? [] : activeCreatorSampleViewItems().map(creatorCloneSamplePayload),
         selected_sample_ids: selectedIds,
-        distill_mode: "quick",
+        distill_mode: profileDistillMode?.value || "quick",
         include_case_reports: true,
         max_samples: CREATOR_CLONE_MAX_DISTILL_SAMPLES,
         title: "创作者蒸馏素材池",
@@ -6261,7 +6269,7 @@ async function batchDistillSelectedCreatorClone(options = {}) {
         sample_set_id: currentCloneSetId,
         samples: currentCloneSetId ? [] : activeCreatorSampleViewItems().map(creatorCloneSamplePayload),
         selected_sample_ids: selectedIds,
-        distill_mode: "quick",
+        distill_mode: profileDistillMode?.value || "quick",
         batch_size: CREATOR_CLONE_MAX_DISTILL_SAMPLES,
         max_samples: PROFILE_BUILD_MAX_ITEMS,
         title: "创作者蒸馏素材池",
@@ -7629,6 +7637,13 @@ const settingsPanelController = window.SettingsPanel?.init({
     llmModelInput,
     llmApiKeyInput,
     llmTimeoutInput,
+    llmCreatorDistillTimeoutInput,
+    llmFinalReduceTimeoutInput,
+    llmQuickDistillBudgetInput,
+    llmDeepDistillBudgetInput,
+    llmBatchJobBudgetInput,
+    llmFinalReduceReserveInput,
+    llmCompactRetryMinInput,
     llmTemperatureInput,
     llmClearKeyInput,
     saveLlmButton: saveLlmSettingsButton,

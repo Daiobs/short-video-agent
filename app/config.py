@@ -71,9 +71,13 @@ class Settings:
     llm_api_base: str = os.getenv("LLM_API_BASE", "https://api.openai.com/v1").rstrip("/")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_model: str = os.getenv("LLM_MODEL", "")
-    llm_timeout_seconds: float = _float_env("LLM_TIMEOUT_SECONDS", 180.0)
+    llm_timeout_seconds: float = _float_env("LLM_TIMEOUT_SECONDS", 90.0)
+    llm_creator_distill_request_timeout_seconds: float = _float_env(
+        "LLM_CREATOR_DISTILL_REQUEST_TIMEOUT_SECONDS",
+        180.0,
+    )
     llm_final_reduce_timeout_seconds: float = _float_env("LLM_FINAL_REDUCE_TIMEOUT_SECONDS", 600.0)
-    llm_quick_distill_budget_seconds: float = _float_env("LLM_QUICK_DISTILL_BUDGET_SECONDS", 360.0)
+    llm_quick_distill_budget_seconds: float = _float_env("LLM_QUICK_DISTILL_BUDGET_SECONDS", 240.0)
     llm_deep_distill_budget_seconds: float = _float_env("LLM_DEEP_DISTILL_BUDGET_SECONDS", 600.0)
     llm_batch_job_budget_seconds: float = _float_env("LLM_BATCH_JOB_BUDGET_SECONDS", 600.0)
     llm_final_reduce_min_reserve_seconds: float = _float_env("LLM_FINAL_REDUCE_MIN_RESERVE_SECONDS", 120.0)

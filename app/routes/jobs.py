@@ -1339,7 +1339,7 @@ def _distill_phase_payload(phase: dict | None, *, execution_plan: dict | None = 
     }
 
 
-def _distill_fallback_message(error: AppError) -> str:
+def _distill_fallback_message(error: AppError, *, distill_mode: str = "quick") -> str:
     if error.code == ErrorCode.LLM_RATE_LIMITED:
         return "网关限流，任务已停止；没有继续重试。已保留蒸馏 Prompt。"
     if error.code == ErrorCode.LLM_AUTH_FAILED:
@@ -1347,7 +1347,9 @@ def _distill_fallback_message(error: AppError) -> str:
     if error.code == ErrorCode.LLM_QUOTA_EXCEEDED:
         return "大模型额度不足，任务已停止；没有继续重试。已保留蒸馏 Prompt。"
     if error.code == ErrorCode.LLM_GATEWAY_TIMEOUT:
-        return "大模型网关请求超时，已生成蒸馏 Prompt；可稍后重试，或在设置中增加等待时间。"
+        if str(distill_mode or "").strip().lower() == "deep":
+            return "Deep 模式下大模型网关仍然超时，任务已停止；已保留蒸馏 Prompt。"
+        return "Quick 模式下大模型网关请求超时，任务已停止；可切换 Deep 模式后重试。"
     return "大模型暂不可用，已生成蒸馏 Prompt"
 
 
@@ -1376,7 +1378,10 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
         execution_plan = build_distill_execution_plan(
             selected_samples,
             batch_size=max_samples,
-            single_timeout_seconds=float(llm_settings.get("timeout_seconds") or settings.llm_timeout_seconds),
+            single_timeout_seconds=float(
+                llm_settings.get("creator_distill_request_timeout_seconds")
+                or settings.llm_creator_distill_request_timeout_seconds
+            ),
             final_timeout_seconds=float(llm_settings.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
         )
 
@@ -1448,7 +1453,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                                 "phase_count": 6,
                                 "timeout_seconds": int(
                                     (execution_plan.get("timeout_policy") or {}).get("recommended_batch_timeout_seconds")
-                                    or settings.llm_timeout_seconds
+                                    or settings.llm_creator_distill_request_timeout_seconds
                                 ),
                                 "execution_plan": execution_plan,
                                 "diagnostic": "接下来会生成 Prompt、调用大模型、解析结果并写入报告。",
@@ -1514,7 +1519,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
             )
             job = db.get(Job, job_id)
             if job:
-                fallback_message = _distill_fallback_message(error)
+                fallback_message = _distill_fallback_message(error, distill_mode=distill_mode)
                 runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
                     sample_set.set_id,
                     WorkflowAction.MARK_EVIDENCE_READY,
@@ -1619,7 +1624,10 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         execution_plan = build_distill_execution_plan(
             selected_samples,
             batch_size=batch_size,
-            single_timeout_seconds=float(llm_settings.get("timeout_seconds") or settings.llm_timeout_seconds),
+            single_timeout_seconds=float(
+                llm_settings.get("creator_distill_request_timeout_seconds")
+                or settings.llm_creator_distill_request_timeout_seconds
+            ),
             final_timeout_seconds=float(llm_settings.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
         )
 
