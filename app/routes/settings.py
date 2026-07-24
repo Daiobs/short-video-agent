@@ -19,6 +19,12 @@ class LLMSettingsUpdate(BaseModel):
     api_key: str | None = None
     model: str | None = None
     timeout_seconds: float | None = None
+    final_reduce_timeout_seconds: float | None = None
+    quick_distill_budget_seconds: float | None = None
+    deep_distill_budget_seconds: float | None = None
+    batch_job_budget_seconds: float | None = None
+    final_reduce_min_reserve_seconds: float | None = None
+    compact_retry_min_remaining_seconds: float | None = None
     temperature: float | None = None
     llm_max_keyframes: int | None = None
     max_keyframes: int | None = None

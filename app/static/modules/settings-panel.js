@@ -94,8 +94,8 @@
             <dt>API Key</dt><dd>${llm.has_api_key ? `已配置 ${escapeHtml(llm.masked_api_key || "")}` : "未配置"}</dd>
             <dt>图片帧数</dt><dd>${escapeHtml(llm.llm_max_keyframes ?? "")}</dd>
             <dt>Temperature</dt><dd>${escapeHtml(llm.temperature ?? "")}</dd>
-            <dt>快速蒸馏总预算</dt><dd>${escapeHtml(llm.quick_distill_budget_seconds ?? 180)} 秒</dd>
-            <dt>深度蒸馏总预算</dt><dd>${escapeHtml(llm.deep_distill_budget_seconds ?? 300)} 秒</dd>
+            <dt>快速蒸馏总预算</dt><dd>${escapeHtml(llm.quick_distill_budget_seconds ?? 360)} 秒</dd>
+            <dt>深度蒸馏总预算</dt><dd>${escapeHtml(llm.deep_distill_budget_seconds ?? 600)} 秒</dd>
             <dt>分批任务总预算</dt><dd>${escapeHtml(llm.batch_job_budget_seconds ?? 600)} 秒</dd>
             <dt>最终汇总预留</dt><dd>${escapeHtml(llm.final_reduce_min_reserve_seconds ?? 120)} 秒</dd>
           </dl>
@@ -105,7 +105,7 @@
       if (elements.llmProviderInput) elements.llmProviderInput.value = llm.provider || "disabled";
       if (elements.llmApiBaseInput) elements.llmApiBaseInput.value = llm.api_base || "";
       if (elements.llmModelInput) elements.llmModelInput.value = llm.model || "";
-      if (elements.llmTimeoutInput) elements.llmTimeoutInput.value = llm.timeout_seconds || 90;
+      if (elements.llmTimeoutInput) elements.llmTimeoutInput.value = llm.timeout_seconds || 180;
       if (elements.llmTemperatureInput) elements.llmTemperatureInput.value = llm.temperature ?? 0.2;
       if (elements.llmApiKeyInput) {
         elements.llmApiKeyInput.value = "";

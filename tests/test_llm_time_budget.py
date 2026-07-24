@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.errors import AppError, ErrorCode
-from app.routes.jobs import _distill_phase_payload
+from app.routes.jobs import _distill_fallback_message, _distill_phase_payload
 from app.services.creator_clone import (
     CloneSample,
     CloneSampleSet,
@@ -49,6 +49,16 @@ def success_response() -> FakeResponse:
         200,
         payload={"choices": [{"message": {"content": '{"ok": true}'}}]},
     )
+
+
+def test_gateway_timeout_fallback_message_is_actionable() -> None:
+    message = _distill_fallback_message(
+        AppError(ErrorCode.LLM_GATEWAY_TIMEOUT, "大模型网关请求超时。")
+    )
+
+    assert "网关请求超时" in message
+    assert "增加等待时间" in message
+    assert "暂不可用" not in message
 
 
 def install_http_sequence(monkeypatch, responses, *, clock: FakeClock | None = None, advance: float = 0):

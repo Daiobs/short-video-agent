@@ -2556,6 +2556,9 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
             "api_key": "sk-local-runtime-secret",
             "model": "vision-model",
             "timeout_seconds": 42,
+            "quick_distill_budget_seconds": 360,
+            "deep_distill_budget_seconds": 600,
+            "compact_retry_min_remaining_seconds": 60,
             "temperature": 0.1,
         },
     )
@@ -2567,6 +2570,12 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
     assert "sk-local-runtime-secret" not in json.dumps(payload, ensure_ascii=False)
     stored = json.loads(runtime_path.read_text(encoding="utf-8"))
     assert stored["llm"]["api_key"] == "sk-local-runtime-secret"
+    assert stored["llm"]["quick_distill_budget_seconds"] == 360
+    assert stored["llm"]["deep_distill_budget_seconds"] == 600
+    assert stored["llm"]["compact_retry_min_remaining_seconds"] == 60
+    assert payload["llm"]["quick_distill_budget_seconds"] == 360
+    assert payload["llm"]["deep_distill_budget_seconds"] == 600
+    assert payload["llm"]["compact_retry_min_remaining_seconds"] == 60
 
 
 def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypatch, tmp_path) -> None:

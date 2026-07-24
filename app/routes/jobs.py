@@ -1346,6 +1346,8 @@ def _distill_fallback_message(error: AppError) -> str:
         return "大模型鉴权失败，任务已停止；没有继续重试。已保留蒸馏 Prompt。"
     if error.code == ErrorCode.LLM_QUOTA_EXCEEDED:
         return "大模型额度不足，任务已停止；没有继续重试。已保留蒸馏 Prompt。"
+    if error.code == ErrorCode.LLM_GATEWAY_TIMEOUT:
+        return "大模型网关请求超时，已生成蒸馏 Prompt；可稍后重试，或在设置中增加等待时间。"
     return "大模型暂不可用，已生成蒸馏 Prompt"
 
 
