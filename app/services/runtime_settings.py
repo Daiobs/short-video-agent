@@ -10,6 +10,7 @@ from app.config import settings
 
 LOCAL_SETTINGS_PATH = settings.project_root / ".local_settings.json"
 _LOCK = Lock()
+_LLM_REASONING_EFFORTS = {"auto", "low", "medium", "high", "xhigh"}
 
 
 def load_local_settings() -> dict[str, Any]:
@@ -78,6 +79,11 @@ def _safe_int(value, fallback: int) -> int:
         return fallback
 
 
+def _reasoning_effort(value: Any) -> str:
+    normalized = str(value or "auto").strip().lower()
+    return normalized if normalized in _LLM_REASONING_EFFORTS else "auto"
+
+
 def effective_llm_settings() -> dict[str, Any]:
     return {
         "provider": str(_local_value("llm", "provider", settings.llm_provider) or "").strip().lower(),
@@ -90,6 +96,9 @@ def effective_llm_settings() -> dict[str, Any]:
             settings.llm_final_reduce_timeout_seconds,
         ),
         "temperature": _safe_float(_local_value("llm", "temperature", settings.llm_temperature), settings.llm_temperature),
+        "reasoning_effort": _reasoning_effort(
+            _local_value("llm", "reasoning_effort", settings.llm_reasoning_effort)
+        ),
         "max_keyframes": _safe_int(_local_value("llm", "max_keyframes", settings.llm_max_keyframes), settings.llm_max_keyframes),
         "max_output_tokens": _safe_int(_local_value("llm", "max_output_tokens", settings.llm_max_output_tokens), settings.llm_max_output_tokens),
         "final_reduce_max_output_tokens": _safe_int(
@@ -110,6 +119,7 @@ def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
         "timeout_seconds",
         "final_reduce_timeout_seconds",
         "temperature",
+        "reasoning_effort",
         "max_keyframes",
         "max_output_tokens",
         "final_reduce_max_output_tokens",
@@ -123,6 +133,8 @@ def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
         cleaned["api_key"] = str(cleaned["api_key"] or "").strip()
     if "model" in cleaned:
         cleaned["model"] = str(cleaned["model"] or "").strip()
+    if "reasoning_effort" in cleaned:
+        cleaned["reasoning_effort"] = _reasoning_effort(cleaned["reasoning_effort"])
     for key in ("timeout_seconds", "final_reduce_timeout_seconds", "temperature"):
         if key in cleaned:
             cleaned[key] = float(cleaned[key] or 0)

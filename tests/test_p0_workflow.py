@@ -40,7 +40,13 @@ from app.services.profile_scan import (
 )
 from app.services.quality_resolver import resolve_quality_candidates
 from app.services.ffmpeg_service import extract_keyframes, plan_keyframe_timestamps
-from app.services.llm_provider import AnthropicCompatibleProvider, OpenAICompatibleProvider, OpenAIResponsesProvider, parse_json_text
+from app.services.llm_provider import (
+    AnthropicCompatibleProvider,
+    OpenAICompatibleProvider,
+    OpenAIResponsesProvider,
+    get_llm_provider,
+    parse_json_text,
+)
 from app.services.ocr import run_case_ocr
 from app.services.video_importer import engagement_score
 from app.services import auto_analyzer, candidate_probe
@@ -591,6 +597,11 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "本地工作流预检" in response.text
     assert "本机 Chrome 助手使用提示" in response.text
     assert "抖音数据源" in response.text
+    assert 'class="settings-panel wide-settings-panel" id="llm-capability-settings"' in response.text
+    assert '<option value="openai">OpenAI · Responses API</option>' in response.text
+    assert 'list="llm-model-options"' in response.text
+    assert '<option value="gpt-5.6-sol">GPT-5.6 Sol</option>' in response.text
+    assert 'id="llm-reasoning-effort-input"' in response.text
     assert "生成下一批创作方案" in response.text
     assert 'id="creator-strategy-plan-card"' in response.text
     assert 'id="generate-creator-strategy-button"' in response.text
@@ -2542,6 +2553,13 @@ def test_llm_settings_returns_unconfigured_status_without_secret(monkeypatch) ->
     assert payload["ok"] is True
     assert payload["llm"]["configured"] is False
     assert payload["llm"]["has_api_key"] is False
+    assert payload["llm"]["model"] == ""
+    assert payload["llm"]["reasoning_effort"] == "auto"
+    assert {item["value"] for item in payload["llm"]["model_suggestions"]} == {
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    }
     assert "设置弹窗" in payload["llm"]["status_message"]
 
 
@@ -2626,6 +2644,7 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
             "model": "vision-model",
             "timeout_seconds": 42,
             "temperature": 0.1,
+            "reasoning_effort": "xhigh",
         },
     )
 
@@ -2636,6 +2655,8 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
     assert "sk-local-runtime-secret" not in json.dumps(payload, ensure_ascii=False)
     stored = json.loads(runtime_path.read_text(encoding="utf-8"))
     assert stored["llm"]["api_key"] == "sk-local-runtime-secret"
+    assert stored["llm"]["reasoning_effort"] == "xhigh"
+    assert payload["llm"]["reasoning_effort"] == "xhigh"
 
 
 def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypatch, tmp_path) -> None:
@@ -2933,6 +2954,59 @@ def test_openai_compatible_provider_requests_json_object(monkeypatch) -> None:
     assert result == {"ok": True, "message": "pong"}
 
 
+def test_openai_provider_uses_responses_api(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.llm_provider.effective_llm_settings",
+        lambda: {
+            "provider": "openai",
+            "api_base": "https://api.openai.com/v1",
+            "api_key": "sk-test",
+            "model": "gpt-5.6-sol",
+            "timeout_seconds": 90,
+            "temperature": 0.2,
+            "reasoning_effort": "auto",
+            "max_output_tokens": 1200,
+        },
+    )
+
+    assert isinstance(get_llm_provider(), OpenAIResponsesProvider)
+
+
+def test_openai_compatible_provider_sends_explicit_reasoning_effort(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+        text = "{\"choices\": []}"
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{\"ok\": true}"}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            assert json["reasoning_effort"] == "xhigh"
+            assert "temperature" not in json
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
+
+    result = OpenAICompatibleProvider(
+        api_base="https://gateway.example.test/v1",
+        api_key="sk-test",
+        model="gpt-5.6-sol",
+        reasoning_effort="xhigh",
+    ).analyze("ping", [])
+
+    assert result == {"ok": True}
+
+
 def test_openai_compatible_provider_parses_list_content(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200
@@ -3039,6 +3113,40 @@ def test_openai_responses_provider_parses_output_text(monkeypatch) -> None:
     ).analyze("ping", [])
 
     assert result == {"ok": True, "message": "pong"}
+
+
+def test_openai_responses_provider_sends_explicit_reasoning_effort(monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"output_text": "{\"ok\": true}"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            assert json["reasoning"] == {"effort": "high"}
+            assert "temperature" not in json
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm_provider.httpx.Client", FakeClient)
+
+    result = OpenAIResponsesProvider(
+        api_base="https://api.openai.com/v1",
+        api_key="sk-test",
+        model="gpt-5.6-terra",
+        reasoning_effort="high",
+    ).analyze("ping", [])
+
+    assert result == {"ok": True}
 
 
 def test_openai_responses_provider_parses_nested_output(monkeypatch) -> None:

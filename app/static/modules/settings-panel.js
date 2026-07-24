@@ -98,6 +98,7 @@
             <dt>API Key</dt><dd>${llm.has_api_key ? `已配置 ${escapeHtml(llm.masked_api_key || "")}` : "未配置"}</dd>
             <dt>图片帧数</dt><dd>${escapeHtml(llm.llm_max_keyframes ?? "")}</dd>
             <dt>Temperature</dt><dd>${escapeHtml(llm.temperature ?? "")}</dd>
+            <dt>思考等级</dt><dd>${escapeHtml(llm.reasoning_effort || "auto")}</dd>
           </dl>
           <p class="muted compact-copy">${escapeHtml(llm.status_message || "")}</p>
         `;
@@ -107,6 +108,9 @@
       if (elements.llmModelInput) elements.llmModelInput.value = llm.model || "";
       if (elements.llmTimeoutInput) elements.llmTimeoutInput.value = llm.timeout_seconds || 90;
       if (elements.llmTemperatureInput) elements.llmTemperatureInput.value = llm.temperature ?? 0.2;
+      if (elements.llmReasoningEffortInput) {
+        elements.llmReasoningEffortInput.value = llm.reasoning_effort || "auto";
+      }
       if (elements.llmApiKeyInput) {
         elements.llmApiKeyInput.value = "";
         elements.llmApiKeyInput.placeholder = llm.has_api_key
@@ -276,6 +280,15 @@
       if (event.target === elements.modal) close();
     });
 
+    elements.llmProviderInput?.addEventListener("change", () => {
+      if (!elements.llmApiBaseInput) return;
+      const currentBase = String(elements.llmApiBaseInput.value || "").trim();
+      const knownBases = new Set(["", "https://api.openai.com/v1"]);
+      if (elements.llmProviderInput.value === "openai" && knownBases.has(currentBase)) {
+        elements.llmApiBaseInput.value = "https://api.openai.com/v1";
+      }
+    });
+
     elements.llmForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (elements.saveLlmButton) elements.saveLlmButton.disabled = true;
@@ -287,6 +300,7 @@
           model: elements.llmModelInput?.value || "",
           timeout_seconds: Number(elements.llmTimeoutInput?.value || 90),
           temperature: Number(elements.llmTemperatureInput?.value || 0.2),
+          reasoning_effort: elements.llmReasoningEffortInput?.value || "auto",
           clear_api_key: Boolean(elements.llmClearKeyInput?.checked),
         };
         const apiKey = String(elements.llmApiKeyInput?.value || "").trim();

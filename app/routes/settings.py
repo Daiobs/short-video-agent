@@ -20,6 +20,7 @@ class LLMSettingsUpdate(BaseModel):
     model: str | None = None
     timeout_seconds: float | None = None
     temperature: float | None = None
+    reasoning_effort: str | None = None
     llm_max_keyframes: int | None = None
     max_keyframes: int | None = None
     max_output_tokens: int | None = None

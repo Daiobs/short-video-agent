@@ -298,6 +298,7 @@ LLM_MODEL=
 LLM_TIMEOUT_SECONDS=90
 LLM_FINAL_REDUCE_TIMEOUT_SECONDS=600
 LLM_TEMPERATURE=0.2
+LLM_REASONING_EFFORT=auto
 LLM_MAX_KEYFRAMES=6
 LLM_MAX_OUTPUT_TOKENS=1200
 LLM_FINAL_REDUCE_MAX_OUTPUT_TOKENS=4000
@@ -351,10 +352,11 @@ WinToken 已验证可通过 `https://www.wintoken.dev/v1/chat/completions` 或 `
 
 通用要求：
 
-- `LLM_PROVIDER` 可选 `openai_responses` / `responses` / `openai_compatible` / `anthropic_compatible`
+- `LLM_PROVIDER` 可选 `openai` / `openai_responses` / `responses` / `openai_compatible` / `anthropic_compatible`；`openai` 使用官方 Responses API
 - `LLM_API_BASE` 填 API Base，例如 `https://api.openai.com/v1`
 - `LLM_API_KEY` 填你的 API Key
 - `LLM_MODEL` 填支持图片输入的多模态模型
+- `LLM_REASONING_EFFORT` 可选 `auto` / `low` / `medium` / `high` / `xhigh`；并非所有网关都支持全部等级，以“测试连接”结果为准
 
 当前支持官方 OpenAI Responses API、OpenAI-compatible `/chat/completions` 和 Anthropic-compatible `/messages`。AI 自动拆解会把 `contact_sheet.jpg` 和部分关键帧作为图片输入发送给模型，因此建议使用支持图片输入的多模态模型。如果模型不支持图片，可能只能分析标题、元数据和 Prompt，视觉拆解会不准确。
 

@@ -144,7 +144,7 @@
                 </form>
                 </details>
             </div>
-            <div class="settings-panel" id="llm-capability-settings">
+            <div class="settings-panel wide-settings-panel" id="llm-capability-settings">
                 <div class="settings-panel-header">
                     <h3>AI 自动拆解</h3>
                     <span id="llm-status-badge" class="status-badge">读取中</span>
@@ -152,27 +152,44 @@
                 <div id="llm-status-list" class="compact-dl"></div>
                 <div id="llm-config-hint" class="notice hidden">
                     <div>未配置时素材包仍会正常生成。你可以在下方表单保存本机 API 配置，也可以继续使用 <code>.env</code>。</div>
-                    <pre class="env-snippet">LLM_PROVIDER=openai_compatible
+                    <pre class="env-snippet">LLM_PROVIDER=openai
 LLM_API_BASE=https://api.openai.com/v1
 LLM_API_KEY=你的key
-LLM_MODEL=支持图片输入的模型</pre>
+LLM_MODEL=支持图片输入的模型
+LLM_REASONING_EFFORT=auto</pre>
                 </div>
-                <form id="llm-settings-form" class="settings-form">
+                <form id="llm-settings-form" class="settings-form llm-settings-form">
                     <label>Provider
                         <select name="provider" id="llm-provider-input">
-                            <option value="disabled">disabled</option>
-                            <option value="openai_compatible">openai_compatible</option>
-                            <option value="openai_responses">openai_responses</option>
-                            <option value="anthropic_compatible">anthropic_compatible</option>
+                            <option value="disabled">未启用</option>
+                            <option value="openai">OpenAI · Responses API</option>
+                            <option value="openai_compatible">OpenAI-compatible · Chat Completions</option>
+                            <option value="openai_responses">OpenAI-compatible · Responses API</option>
+                            <option value="anthropic_compatible">Anthropic-compatible · Messages API</option>
                         </select>
                     </label>
                     <label>API Base
                         <input name="api_base" id="llm-api-base-input" placeholder="https://api.openai.com/v1">
                     </label>
                     <label>Model
-                        <input name="model" id="llm-model-input" placeholder="gpt-4o / gpt-5.4 / claude-fable-5">
+                        <input name="model" id="llm-model-input" list="llm-model-options" autocomplete="off" placeholder="选择建议模型或输入网关提供的模型 ID">
+                        <datalist id="llm-model-options">
+                            <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+                            <option value="gpt-5.6-terra">GPT-5.6 Terra</option>
+                            <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
+                        </datalist>
+                        <span class="settings-field-help">建议项不会自动设为默认值，也可以直接输入其他模型 ID。</span>
                     </label>
-                    <label>API Key
+                    <label>思考等级
+                        <select name="reasoning_effort" id="llm-reasoning-effort-input">
+                            <option value="auto">自动（由模型或网关决定）</option>
+                            <option value="low">低</option>
+                            <option value="medium">中</option>
+                            <option value="high">高</option>
+                            <option value="xhigh">XHigh</option>
+                        </select>
+                    </label>
+                    <label class="llm-api-key-field">API Key
                         <input name="api_key" id="llm-api-key-input" type="password" autocomplete="off" placeholder="留空表示保留当前 Key">
                     </label>
                     <div class="settings-inline-grid">
@@ -183,19 +200,17 @@ LLM_MODEL=支持图片输入的模型</pre>
                             <input name="temperature" id="llm-temperature-input" type="number" min="0" max="2" step="0.1">
                         </label>
                     </div>
-                    <label class="settings-checkbox">
+                    <label class="settings-checkbox llm-clear-key-field">
                         <input type="checkbox" id="llm-clear-key-input">
                         清空本机保存的 API Key
                     </label>
-                    <div class="settings-actions">
+                    <div class="settings-actions llm-settings-actions">
                         <button type="submit" id="save-llm-settings-button">保存 AI 设置</button>
+                        <button type="button" id="test-llm-button">测试连接</button>
                         <span id="llm-save-result" class="muted"></span>
+                        <span id="llm-test-result" class="muted"></span>
                     </div>
                 </form>
-                <div class="settings-actions">
-                    <button type="button" id="test-llm-button">测试连接</button>
-                    <span id="llm-test-result" class="muted"></span>
-                </div>
             </div>
             <div class="settings-panel wide-settings-panel" id="system-diagnostics-settings">
                 <div class="settings-panel-header">

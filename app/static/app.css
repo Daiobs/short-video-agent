@@ -1167,6 +1167,35 @@ button:disabled {
     grid-column: 1 / -1;
 }
 
+.llm-settings-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 16px;
+}
+
+.llm-settings-form > label {
+    min-width: 0;
+}
+
+.settings-field-help {
+    display: block;
+    margin-top: 7px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.45;
+}
+
+.llm-api-key-field,
+.llm-clear-key-field,
+.llm-settings-actions {
+    grid-column: 1 / -1;
+}
+
+.llm-settings-form .settings-inline-grid {
+    align-items: end;
+}
+
 .preflight-list {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -5705,6 +5734,7 @@ footer {
     .settings-grid,
     .preflight-list,
     .settings-title-row,
+    .llm-settings-form,
     .entry-grid,
     .link-form,
     .single-workbench-form,

@@ -175,7 +175,8 @@ const e = {{
   toggle: element(), modal: element(["hidden"]), close: element(),
   llmStatusBadge: element(), llmStatusList: element(), llmConfigHint: element(), llmForm: element(),
   llmProviderInput: element(), llmApiBaseInput: element(), llmModelInput: element(), llmApiKeyInput: element(),
-  llmTimeoutInput: element(), llmTemperatureInput: element(), llmClearKeyInput: element(), saveLlmButton: element(),
+  llmTimeoutInput: element(), llmTemperatureInput: element(), llmReasoningEffortInput: element(),
+  llmClearKeyInput: element(), saveLlmButton: element(),
   llmSaveResult: element(), testLlmButton: element(), llmTestResult: element(), dataSourceStatusBadge: element(),
   dataSourceStatusList: element(), loginStateStatusBadge: element(), loginStateStatusList: element(),
   loginStatePairingResult: element(["hidden"]), startLoginStatePairingButton: element(), refreshLoginStateButton: element(),
@@ -188,7 +189,7 @@ const requests = [];
 async function requestJson(url, options = {{}}) {{
   requests.push([url, options.method || "GET", options.body || ""]);
   if (url === "/api/settings/llm/test") return {{test: {{message: "pong"}}}};
-  if (url === "/api/settings/llm") return {{llm: {{configured: true, provider: "openai_compatible", api_base: "https://api.example.test/v1", model: "vision", has_api_key: true, masked_api_key: "sk-****abcd", temperature: 0.2}}}};
+  if (url === "/api/settings/llm") return {{llm: {{configured: true, provider: "openai_compatible", api_base: "https://api.example.test/v1", model: "vision", has_api_key: true, masked_api_key: "sk-****abcd", temperature: 0.2, reasoning_effort: "xhigh"}}}};
   if (url === "/api/settings/data-sources/douyin/test") return {{test: {{status: "ok", message: "通过", cookie_diagnostics: {{has_cookie: true, pair_count: 5, login_key_count: 2}}, api_checked: true, status_code: 200, is_json: true, aweme_count: 3}}}};
   if (url === "/api/settings/data-sources/douyin") return {{data_sources: {{configured: true, has_cookie: true, masked_cookie: "********", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
   if (url === "/api/settings/data-sources") return {{data_sources: {{configured: true, has_cookie: true, masked_cookie: "********", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
@@ -223,6 +224,11 @@ const opened = !e.modal.classList.contains("hidden");
 await emit(e.close, "click");
 const closed = e.modal.classList.contains("hidden");
 e.llmApiKeyInput.value = "sk-live-secret-never-render";
+e.llmProviderInput.value = "openai";
+e.llmApiBaseInput.value = "";
+e.llmReasoningEffortInput.value = "xhigh";
+await emit(e.llmProviderInput, "change");
+const openAiBase = e.llmApiBaseInput.value;
 await emit(e.llmForm, "submit");
 e.douyinCookieInput.value = "sessionid=raw-cookie-never-render";
 await emit(e.douyinForm, "submit");
@@ -248,6 +254,8 @@ process.stdout.write(JSON.stringify({{
   opened, closed, preflightCalls, llmStatusCalls,
   configuredBadge, invalidBadge, invalidSummary,
   requestPairs: requests.map((item) => item.slice(0, 2)),
+  llmPutBody: JSON.parse(requests.find((item) => item[0] === "/api/settings/llm" && item[1] === "PUT")[2]),
+  openAiBase,
   leakedKey: visible.includes("sk-live-secret-never-render"),
   leakedCookie: visible.includes("raw-cookie-never-render"),
   noDomOpen: noDom.open(),
@@ -278,6 +286,9 @@ process.stdout.write(JSON.stringify({{
     assert ["/api/local-login-state/pair/start", "POST"] in result["requestPairs"]
     assert result["leakedKey"] is False
     assert result["leakedCookie"] is False
+    assert result["openAiBase"] == "https://api.openai.com/v1"
+    assert result["llmPutBody"]["provider"] == "openai"
+    assert result["llmPutBody"]["reasoning_effort"] == "xhigh"
     assert result["noDomOpen"] is False
     assert result["api"] == [
         "close",

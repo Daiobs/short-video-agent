@@ -17,6 +17,34 @@ SUPPORTED_PROVIDERS = {
     "claude",
 }
 DISABLED_PROVIDERS = {"", "disabled", "none", "off"}
+REASONING_EFFORTS = {"auto", "low", "medium", "high", "xhigh"}
+PROVIDER_OPTIONS = (
+    {
+        "value": "openai",
+        "label": "OpenAI · Responses API",
+        "default_api_base": "https://api.openai.com/v1",
+    },
+    {
+        "value": "openai_compatible",
+        "label": "OpenAI-compatible · Chat Completions",
+        "default_api_base": "",
+    },
+    {
+        "value": "openai_responses",
+        "label": "OpenAI-compatible · Responses API",
+        "default_api_base": "",
+    },
+    {
+        "value": "anthropic_compatible",
+        "label": "Anthropic-compatible · Messages API",
+        "default_api_base": "",
+    },
+)
+MODEL_SUGGESTIONS = (
+    {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
+    {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
+    {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
+)
 
 
 def mask_api_key(value: str) -> str:
@@ -65,10 +93,22 @@ def llm_status_payload() -> dict:
         "masked_api_key": mask_api_key(effective["api_key"]),
         "llm_max_keyframes": effective["max_keyframes"],
         "temperature": effective["temperature"],
+        "reasoning_effort": effective["reasoning_effort"]
+        if effective["reasoning_effort"] in REASONING_EFFORTS
+        else "auto",
         "timeout_seconds": effective["timeout_seconds"],
         "final_reduce_timeout_seconds": effective["final_reduce_timeout_seconds"],
         "max_output_tokens": effective["max_output_tokens"],
         "final_reduce_max_output_tokens": effective["final_reduce_max_output_tokens"],
+        "provider_options": list(PROVIDER_OPTIONS),
+        "model_suggestions": list(MODEL_SUGGESTIONS),
+        "reasoning_effort_options": [
+            {"value": "auto", "label": "自动（由模型或网关决定）"},
+            {"value": "low", "label": "低"},
+            {"value": "medium", "label": "中"},
+            {"value": "high", "label": "高"},
+            {"value": "xhigh", "label": "XHigh"},
+        ],
         "status_message": status_message,
     }
 
@@ -82,6 +122,7 @@ def update_llm_settings_payload(payload: dict) -> dict:
         "timeout_seconds": payload.get("timeout_seconds", current["timeout_seconds"]),
         "final_reduce_timeout_seconds": payload.get("final_reduce_timeout_seconds", current["final_reduce_timeout_seconds"]),
         "temperature": payload.get("temperature", current["temperature"]),
+        "reasoning_effort": payload.get("reasoning_effort", current["reasoning_effort"]),
         "max_keyframes": payload.get("llm_max_keyframes", payload.get("max_keyframes", current["max_keyframes"])),
         "max_output_tokens": payload.get("max_output_tokens", current["max_output_tokens"]),
         "final_reduce_max_output_tokens": payload.get("final_reduce_max_output_tokens", current["final_reduce_max_output_tokens"]),

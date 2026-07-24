@@ -74,6 +74,7 @@ class Settings:
     llm_timeout_seconds: float = _float_env("LLM_TIMEOUT_SECONDS", 90.0)
     llm_final_reduce_timeout_seconds: float = _float_env("LLM_FINAL_REDUCE_TIMEOUT_SECONDS", 600.0)
     llm_temperature: float = _float_env("LLM_TEMPERATURE", 0.2)
+    llm_reasoning_effort: str = os.getenv("LLM_REASONING_EFFORT", "auto").strip().lower()
     llm_max_keyframes: int = _int_env("LLM_MAX_KEYFRAMES", 6)
     llm_max_output_tokens: int = _int_env("LLM_MAX_OUTPUT_TOKENS", 1200)
     llm_final_reduce_max_output_tokens: int = _int_env("LLM_FINAL_REDUCE_MAX_OUTPUT_TOKENS", 4000)

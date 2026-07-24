@@ -20,6 +20,7 @@ const llmModelInput = document.getElementById("llm-model-input");
 const llmApiKeyInput = document.getElementById("llm-api-key-input");
 const llmTimeoutInput = document.getElementById("llm-timeout-input");
 const llmTemperatureInput = document.getElementById("llm-temperature-input");
+const llmReasoningEffortInput = document.getElementById("llm-reasoning-effort-input");
 const llmClearKeyInput = document.getElementById("llm-clear-key-input");
 const saveLlmSettingsButton = document.getElementById("save-llm-settings-button");
 const llmSaveResult = document.getElementById("llm-save-result");
@@ -6679,6 +6680,7 @@ const settingsPanelController = window.SettingsPanel?.init({
     llmApiKeyInput,
     llmTimeoutInput,
     llmTemperatureInput,
+    llmReasoningEffortInput,
     llmClearKeyInput,
     saveLlmButton: saveLlmSettingsButton,
     llmSaveResult,

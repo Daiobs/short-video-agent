@@ -34,6 +34,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         model: str | None = None,
         timeout_seconds: float | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
         max_output_tokens: int | None = None,
     ) -> None:
         effective = effective_llm_settings()
@@ -42,6 +43,9 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self.model = model or effective["model"]
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
         self.temperature = temperature if temperature is not None else effective["temperature"]
+        self.reasoning_effort = (
+            reasoning_effort if reasoning_effort is not None else effective["reasoning_effort"]
+        )
         self.max_output_tokens = (
             max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
@@ -67,9 +71,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                     "content": content,
                 },
             ],
-            "temperature": self.temperature,
             "response_format": {"type": "json_object"},
         }
+        if self.reasoning_effort and self.reasoning_effort != "auto":
+            payload["reasoning_effort"] = self.reasoning_effort
+        else:
+            payload["temperature"] = self.temperature
         if self.max_output_tokens:
             payload["max_tokens"] = self.max_output_tokens
         endpoint = f"{self.api_base}/chat/completions"
@@ -160,6 +167,7 @@ class OpenAIResponsesProvider(BaseLLMProvider):
         model: str | None = None,
         timeout_seconds: float | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
         max_output_tokens: int | None = None,
     ) -> None:
         effective = effective_llm_settings()
@@ -168,6 +176,9 @@ class OpenAIResponsesProvider(BaseLLMProvider):
         self.model = model or effective["model"]
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
         self.temperature = temperature if temperature is not None else effective["temperature"]
+        self.reasoning_effort = (
+            reasoning_effort if reasoning_effort is not None else effective["reasoning_effort"]
+        )
         self.max_output_tokens = (
             max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
@@ -190,8 +201,11 @@ class OpenAIResponsesProvider(BaseLLMProvider):
                     "content": content,
                 }
             ],
-            "temperature": self.temperature,
         }
+        if self.reasoning_effort and self.reasoning_effort != "auto":
+            payload["reasoning"] = {"effort": self.reasoning_effort}
+        else:
+            payload["temperature"] = self.temperature
         if self.max_output_tokens:
             payload["max_output_tokens"] = self.max_output_tokens
         endpoint = f"{self.api_base}/responses"
@@ -338,7 +352,9 @@ def get_llm_provider(
     provider = effective["provider"]
     if provider in {"", "disabled", "none", "off"}:
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
-    if provider in {"openai", "openai_compatible", "compatible"}:
+    if provider == "openai":
+        return OpenAIResponsesProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
+    if provider in {"openai_compatible", "compatible"}:
         return OpenAICompatibleProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
     if provider in {"openai_responses", "responses"}:
         return OpenAIResponsesProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
