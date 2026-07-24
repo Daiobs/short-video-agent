@@ -287,7 +287,35 @@
       }
     });
 
+    function inferLlmProviderFromForm() {
+      if (!elements.llmProviderInput || elements.llmProviderInput.value !== "disabled") {
+        return elements.llmProviderInput?.value || "disabled";
+      }
+      const apiBase = String(elements.llmApiBaseInput?.value || "").trim().replace(/\/+$/, "");
+      const model = String(elements.llmModelInput?.value || "").trim().toLowerCase();
+      let host = "";
+      try {
+        host = new URL(apiBase).hostname.toLowerCase();
+      } catch (_error) {
+        host = "";
+      }
+      if (model.startsWith("claude")) {
+        elements.llmProviderInput.value = "anthropic_compatible";
+      } else if (host === "api.openai.com" || host.endsWith(".openai.com")) {
+        elements.llmProviderInput.value = "openai";
+      } else if (model.startsWith("gpt-") && apiBase) {
+        elements.llmProviderInput.value = apiBase.endsWith("/v1")
+          ? "openai_compatible"
+          : "openai_responses";
+      }
+      return elements.llmProviderInput.value;
+    }
+
+    elements.llmApiBaseInput?.addEventListener("input", inferLlmProviderFromForm);
+    elements.llmModelInput?.addEventListener("input", inferLlmProviderFromForm);
+
     function currentLlmFormPayload() {
+      inferLlmProviderFromForm();
       const payload = {
         provider: elements.llmProviderInput?.value || "disabled",
         api_base: elements.llmApiBaseInput?.value || "",

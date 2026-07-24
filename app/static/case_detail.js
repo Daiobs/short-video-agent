@@ -532,7 +532,7 @@ function renderAutoAnalysisOverview(result, readiness) {
 
 function errorAdvice(code) {
   const advice = {
-    LLM_NOT_CONFIGURED: "请在 .env 中配置 LLM_PROVIDER、LLM_API_BASE、LLM_API_KEY 和 LLM_MODEL，然后重启服务。",
+    LLM_NOT_CONFIGURED: "请在右上角设置中补全 Provider、API Base、API Key 和 Model，然后重新测试。",
     LLM_REQUEST_FAILED: "请检查 API Base、API Key、网络、账户余额和模型名是否正确。",
     LLM_RESPONSE_INVALID: "模型没有返回合法 JSON。可以降低 LLM_TEMPERATURE，或换支持图片输入且 JSON 更稳定的模型。",
     AUTO_ANALYSIS_FAILED: "请确认 contact_sheet.jpg 和 keyframes/ 已生成，再重新分析。",

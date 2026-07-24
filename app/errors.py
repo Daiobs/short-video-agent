@@ -120,7 +120,7 @@ ERROR_MESSAGES = {
     ErrorCode.CASE_BUILD_FAILED: "素材包生成失败。",
     ErrorCode.LOCAL_UPLOAD_FAILED: "本地视频上传失败。",
     ErrorCode.INVALID_VIDEO_FILE: "上传文件不是有效视频，或文件为空。",
-    ErrorCode.LLM_NOT_CONFIGURED: "大模型 API 未配置。请在 .env 中配置 LLM_PROVIDER、LLM_API_BASE、LLM_API_KEY 和 LLM_MODEL。",
+    ErrorCode.LLM_NOT_CONFIGURED: "大模型配置不完整。请在右上角设置中补全 Provider、API Base、API Key 和 Model。",
     ErrorCode.LLM_REQUEST_FAILED: "大模型 API 请求失败。请检查 API Base、Key、网络、余额和模型名。",
     ErrorCode.LLM_RESPONSE_INVALID: "大模型没有返回合法 JSON。可以降低 LLM_TEMPERATURE，或换用更稳定的多模态模型。",
     ErrorCode.AUTO_ANALYSIS_FAILED: "自动拆解失败。请检查 contact_sheet.jpg 和 keyframes/ 是否已经生成。",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.services.llm_provider import BaseLLMProvider, get_llm_provider
@@ -63,6 +65,23 @@ def _llm_values_are_configured(effective: dict) -> bool:
         and bool(effective["api_key"])
         and bool(effective["model"])
     )
+
+
+def infer_llm_provider(effective: dict) -> str:
+    provider = str(effective.get("provider") or "disabled").strip().lower()
+    if provider not in DISABLED_PROVIDERS:
+        return provider
+
+    api_base = str(effective.get("api_base") or "").strip().rstrip("/")
+    model = str(effective.get("model") or "").strip().lower()
+    host = (urlparse(api_base).hostname or "").lower()
+    if model.startswith("claude"):
+        return "anthropic_compatible"
+    if host == "api.openai.com" or host.endswith(".openai.com"):
+        return "openai"
+    if model.startswith("gpt-") and api_base:
+        return "openai_compatible" if api_base.endswith("/v1") else "openai_responses"
+    return provider
 
 
 def llm_is_configured() -> bool:
@@ -164,8 +183,22 @@ def test_llm_connection(
             effective["api_key"] = ""
         elif str(overrides.get("api_key") or "").strip():
             effective["api_key"] = str(overrides["api_key"]).strip()
+        effective["provider"] = infer_llm_provider(effective)
     if not _llm_values_are_configured(effective):
-        raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
+        missing = []
+        if effective["provider"] in DISABLED_PROVIDERS:
+            missing.append("Provider")
+        if not effective["api_base"]:
+            missing.append("API Base")
+        if not effective["api_key"]:
+            missing.append("API Key")
+        if not effective["model"]:
+            missing.append("Model")
+        suffix = "、".join(missing) if missing else "Provider 或模型协议"
+        raise AppError(
+            ErrorCode.LLM_NOT_CONFIGURED,
+            f"当前页面的大模型配置不完整：请补全或修正 {suffix}。",
+        )
 
     llm = provider or (
         get_llm_provider(overrides=effective)

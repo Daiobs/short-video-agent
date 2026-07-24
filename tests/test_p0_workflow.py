@@ -2931,10 +2931,10 @@ def test_llm_connection_test_accepts_unsaved_form_config(monkeypatch, tmp_path: 
     response = client.post(
         "/api/settings/llm/test",
         json={
-            "provider": "openai",
-            "api_base": "https://api.openai.com/v1",
+            "provider": "disabled",
+            "api_base": "https://api.cosflow.icu",
             "api_key": "sk-unsaved-test-secret",
-            "model": "gpt-5.6-sol",
+            "model": "gpt-5.6-terra",
             "reasoning_effort": "xhigh",
             "timeout_seconds": 30,
             "temperature": 0.2,
@@ -2943,11 +2943,33 @@ def test_llm_connection_test_accepts_unsaved_form_config(monkeypatch, tmp_path: 
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["test"]["provider"] == "openai"
-    assert payload["test"]["model"] == "gpt-5.6-sol"
+    assert payload["test"]["provider"] == "openai_responses"
+    assert payload["test"]["model"] == "gpt-5.6-terra"
     assert captured["overrides"]["api_key"] == "sk-unsaved-test-secret"
+    assert captured["overrides"]["provider"] == "openai_responses"
     assert not runtime_path.exists()
     assert "sk-unsaved-test-secret" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_llm_connection_test_points_to_page_settings_when_fields_are_missing(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_provider", "disabled")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_api_key", "")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_model", "")
+
+    response = client.post(
+        "/api/settings/llm/test",
+        json={
+            "provider": "disabled",
+            "api_base": "https://api.cosflow.icu",
+            "model": "",
+        },
+    )
+
+    payload = response.json()
+    assert payload["error_code"] == "LLM_NOT_CONFIGURED"
+    assert "当前页面" in payload["message"]
+    assert "API Key" in payload["message"]
+    assert ".env" not in payload["message"]
 
 
 def test_openai_compatible_provider_requests_json_object(monkeypatch) -> None:

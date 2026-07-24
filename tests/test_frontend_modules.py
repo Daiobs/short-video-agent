@@ -148,7 +148,7 @@ def test_settings_panel_module_coordinates_existing_safe_settings_flow_once() ->
     script = f"""
 const vm = require("vm");
 const source = {json.dumps(source)};
-const context = {{console, setTimeout(callback) {{ callback(); }}}};
+const context = {{console, URL, setTimeout(callback) {{ callback(); }}}};
 context.window = context;
 const before = Object.keys(context);
 vm.runInNewContext(source, context, {{filename: "settings-panel.js"}});
@@ -229,6 +229,11 @@ e.llmApiBaseInput.value = "";
 e.llmReasoningEffortInput.value = "xhigh";
 await emit(e.llmProviderInput, "change");
 const openAiBase = e.llmApiBaseInput.value;
+e.llmProviderInput.value = "disabled";
+e.llmApiBaseInput.value = "https://api.cosflow.icu";
+e.llmModelInput.value = "gpt-5.6-terra";
+await emit(e.llmModelInput, "input");
+const inferredProvider = e.llmProviderInput.value;
 await emit(e.llmForm, "submit");
 e.douyinCookieInput.value = "sessionid=raw-cookie-never-render";
 await emit(e.douyinForm, "submit");
@@ -257,6 +262,7 @@ process.stdout.write(JSON.stringify({{
   llmPutBody: JSON.parse(requests.find((item) => item[0] === "/api/settings/llm" && item[1] === "PUT")[2]),
   llmTestBody: JSON.parse(requests.find((item) => item[0] === "/api/settings/llm/test" && item[1] === "POST")[2]),
   openAiBase,
+  inferredProvider,
   testButtonDisabled: e.testLlmButton.disabled,
   leakedKey: visible.includes("sk-live-secret-never-render"),
   leakedCookie: visible.includes("raw-cookie-never-render"),
@@ -289,7 +295,8 @@ process.stdout.write(JSON.stringify({{
     assert result["leakedKey"] is False
     assert result["leakedCookie"] is False
     assert result["openAiBase"] == "https://api.openai.com/v1"
-    assert result["llmPutBody"]["provider"] == "openai"
+    assert result["inferredProvider"] == "openai_responses"
+    assert result["llmPutBody"]["provider"] == "openai_responses"
     assert result["llmPutBody"]["reasoning_effort"] == "xhigh"
     assert result["llmTestBody"]["model"] == "vision"
     assert result["llmTestBody"]["reasoning_effort"] == "xhigh"
