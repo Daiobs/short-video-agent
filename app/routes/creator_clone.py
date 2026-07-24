@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.errors import AppError, ErrorCode
+from app.errors import AppError, ErrorCode, PROMPT_RECOVERY_LLM_ERROR_CODES
 from app.routes.common import error_response
 from app.services.creator_clone import (
     MAX_DISTILL_SAMPLES,
@@ -34,11 +34,7 @@ from app.services.local_chrome import load_capture_audit, load_handoff_manifest,
 router = APIRouter(prefix="/api/creator-clone", tags=["creator-clone"])
 HANDOFF_TOKEN_TTL_SECONDS = 120
 _HANDOFF_TOKENS: dict[str, float] = {}
-RECOVERABLE_DISTILL_ERROR_CODES = {
-    ErrorCode.LLM_NOT_CONFIGURED,
-    ErrorCode.LLM_REQUEST_FAILED,
-    ErrorCode.LLM_RESPONSE_INVALID,
-}
+RECOVERABLE_DISTILL_ERROR_CODES = set(PROMPT_RECOVERY_LLM_ERROR_CODES)
 
 
 class CreatorCloneImportRequest(BaseModel):
@@ -280,6 +276,7 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
                     "ok": False,
                     "error_code": error.code,
                     "message": error.message,
+                    "diagnostics": error.public_details(),
                     "recovery": "prompt_only",
                     **prompt_payload,
                     "creator_intelligence": intelligence,

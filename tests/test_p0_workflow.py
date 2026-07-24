@@ -3729,7 +3729,7 @@ def test_auto_analyzer_falls_back_to_text_when_vision_request_fails(tmp_path: Pa
         def analyze(self, prompt, image_paths):
             self.calls.append(len(image_paths))
             if image_paths:
-                raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 返回 HTTP 504。")
+                raise AppError(ErrorCode.LLM_GATEWAY_TIMEOUT, "大模型 API 返回 HTTP 504。")
             assert "文本降级拆解" in prompt
             assert "confidence 不要虚高" in prompt
             assert "publish_package 不能只有标题" in prompt
@@ -4244,7 +4244,7 @@ def test_batch_distill_writes_local_fallback_when_final_reduce_times_out(monkeyp
     assert Path(result["batch_distill"]["final"]["result_path"]).is_file()
     assert Path(result["batch_distill"]["final"]["markdown_path"]).is_file()
     assert "final_reduce_recovery" in result["result"]["batch_distill"]
-    assert provider_kwargs[-1]["timeout_seconds"] >= 600
+    assert 0 < provider_kwargs[-1]["timeout_seconds"] <= 600
     assert provider_kwargs[-1]["max_output_tokens"] == 4000
 
 
@@ -11414,8 +11414,8 @@ def test_creator_clone_distill_execution_plan_scales_large_batches(monkeypatch, 
     assert plan["duration"]["known_count"] == 1
     assert plan["duration"]["total_seconds"] == 12.5
     assert plan["timeout_policy"]["recommended_enrichment_timeout_seconds"] >= 1800
-    assert plan["timeout_policy"]["recommended_batch_timeout_seconds"] > 90
-    assert plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] > 600
+    assert plan["timeout_policy"]["recommended_batch_timeout_seconds"] == 90
+    assert plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] == 600
     assert plan["timeout_policy"]["basis"]["known_video_duration_seconds"] == 12.5
     assert plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"] > 0
     assert plan["timeout_policy"]["basis"]["components_seconds"]["sample_complexity"] > 0
@@ -11446,8 +11446,8 @@ def test_creator_clone_distill_execution_plan_uses_continuous_complexity_factors
     long_plan = build_distill_execution_plan(long_samples, batch_size=20, final_timeout_seconds=600, prompt_chars=12000)
     larger_prompt_plan = build_distill_execution_plan(short_samples, batch_size=20, final_timeout_seconds=600, prompt_chars=48000)
 
-    assert long_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] > short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
-    assert larger_prompt_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] > short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
+    assert long_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] == short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
+    assert larger_prompt_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] == short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
     assert long_plan["timeout_policy"]["basis"]["components_seconds"]["duration_complexity"] > short_plan["timeout_policy"]["basis"]["components_seconds"]["duration_complexity"]
     assert larger_prompt_plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"] > short_plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"]
 
@@ -11927,7 +11927,7 @@ def test_creator_clone_distill_caps_external_attempts_and_shares_total_budget(mo
         def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
             provider_calls.append(self.index)
             if self.index == 1:
-                raise AppError(ErrorCode.LLM_REQUEST_FAILED, "模拟网关超时。")
+                raise AppError(ErrorCode.LLM_GATEWAY_TIMEOUT, "模拟网关超时。")
             return {
                 "summary": "共享预算重试成功。",
                 "creator_positioning": {"what_the_creator_sells": "稳定工作流"},
@@ -11970,7 +11970,7 @@ def test_creator_clone_distill_caps_external_attempts_and_shares_total_budget(mo
     assert first_wait["phase"]["attempt_count"] == 2
     assert retry_wait["phase"]["attempt_index"] == 2
     assert retry_wait["phase"]["attempt_count"] == 2
-    assert retry_wait["phase"]["retry_reason"] == ErrorCode.LLM_REQUEST_FAILED
+    assert retry_wait["phase"]["retry_reason"] == ErrorCode.LLM_GATEWAY_TIMEOUT
     assert retry_wait["phase"]["deadline_at"]
 
 

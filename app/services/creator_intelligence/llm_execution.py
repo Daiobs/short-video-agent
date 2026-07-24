@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.errors import AppError, ErrorCode
+from app.errors import AppError, ErrorCode, is_retryable_llm_error
+from app.services.llm_budget import DistillDeadline
 from app.services.creator_intelligence.models import validate_creator_clone_schema
 
 
@@ -49,15 +50,29 @@ class LLMExecutionResult:
 class LLMExecutionEngine:
     """System-level LLM executor for deterministic CreatorCloneSchema output."""
 
-    def __init__(self, provider, *, max_retries: int = 3) -> None:
+    def __init__(
+        self,
+        provider,
+        *,
+        max_retries: int = 3,
+        deadline: DistillDeadline | None = None,
+    ) -> None:
         self.provider = provider
         self.max_retries = max(1, min(int(max_retries or 3), 3))
+        self.deadline = deadline
 
     def execute_creator_clone(self, prompt: str, image_paths: list[Path] | None = None) -> LLMExecutionResult:
         errors: list[dict[str, str]] = []
         repaired = False
         current_prompt = prompt
         for attempt in range(1, self.max_retries + 1):
+            if self.deadline is not None:
+                self.deadline.require_remaining(
+                    0.1,
+                    phase="execution",
+                    attempt_index=attempt,
+                    provider=str(getattr(self.provider, "public_diagnostics", lambda: {})().get("provider") or ""),
+                )
             try:
                 raw = self.provider.analyze(current_prompt, list(image_paths or []))
                 payload = self._repair_raw_payload(raw)
@@ -74,8 +89,14 @@ class LLMExecutionEngine:
                 )
             except AppError as error:
                 errors.append({"error_code": error.code, "message": error.message})
-                if error.code == ErrorCode.LLM_NOT_CONFIGURED or attempt >= self.max_retries:
+                if not is_retryable_llm_error(error.code) or attempt >= self.max_retries:
                     raise
+                if self.deadline is not None:
+                    self.deadline.require_remaining(
+                        5.0,
+                        phase="execution_retry",
+                        attempt_index=attempt + 1,
+                    )
                 current_prompt = prompt + SCHEMA_REPAIR_INSTRUCTION
                 repaired = True
         raise AppError(ErrorCode.LLM_RESPONSE_INVALID)

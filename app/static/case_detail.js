@@ -534,6 +534,11 @@ function errorAdvice(code) {
   const advice = {
     LLM_NOT_CONFIGURED: "请在 .env 中配置 LLM_PROVIDER、LLM_API_BASE、LLM_API_KEY 和 LLM_MODEL，然后重启服务。",
     LLM_REQUEST_FAILED: "请检查 API Base、API Key、网络、账户余额和模型名是否正确。",
+    LLM_RATE_LIMITED: "网关正在限流，本次任务已停止且没有继续重试。请稍后人工重试。",
+    LLM_AUTH_FAILED: "鉴权失败，请检查 API Key、API Base 和模型访问权限。",
+    LLM_QUOTA_EXCEEDED: "账户余额或配额不足，请补充额度后再试。",
+    LLM_UPSTREAM_UNAVAILABLE: "上游暂时不可用，本次任务已停止，可稍后人工重试。",
+    LLM_GATEWAY_TIMEOUT: "网关请求或任务总预算已超时，可稍后人工重试。",
     LLM_RESPONSE_INVALID: "模型没有返回合法 JSON。可以降低 LLM_TEMPERATURE，或换支持图片输入且 JSON 更稳定的模型。",
     AUTO_ANALYSIS_FAILED: "请确认 contact_sheet.jpg 和 keyframes/ 已生成，再重新分析。",
     ENRICHMENT_FAILED: "请确认 metadata.json、ffprobe.json 和 analysis_input.json 都已生成。",

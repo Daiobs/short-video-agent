@@ -1598,14 +1598,27 @@ function renderJobPhase(job) {
   const totalBudget = Number(phase.total_budget_seconds || timeoutPolicy.total_request_budget_seconds || 0);
   const budgetStartedAt = Date.parse(phase.budget_started_at || "");
   const deadlineAt = Date.parse(phase.deadline_at || "");
-  const liveElapsed = Number.isFinite(budgetStartedAt)
+  const isRunningPhase = (phase.status || "running") === "running";
+  const liveElapsed = isRunningPhase && Number.isFinite(budgetStartedAt)
     ? Math.max(Number(phase.elapsed_seconds || 0), Math.floor((Date.now() - budgetStartedAt) / 1000))
     : Number(phase.elapsed_seconds || 0);
-  const liveRemaining = Number.isFinite(deadlineAt)
+  const liveRemaining = isRunningPhase && Number.isFinite(deadlineAt)
     ? Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000))
     : Number(phase.remaining_seconds || 0);
   const attemptLine = Number(phase.attempt_count || 0) && Number(phase.attempt_index || 0)
     ? `外部请求 ${formatNumber(phase.attempt_index || 0)} / ${formatNumber(phase.attempt_count)}`
+    : "";
+  const httpAttemptLine = Number(phase.http_attempt_count || 0)
+    ? `HTTP 请求 ${formatNumber(phase.http_attempt_index || phase.http_attempt_count)} / ${formatNumber(phase.http_attempt_count)}`
+    : "";
+  const fallbackLine = phase.response_format_fallback_used
+    ? "已使用 response_format 兼容回退"
+    : "";
+  const retryableLine = typeof phase.retryable === "boolean"
+    ? `允许重试：${phase.retryable ? "是" : "否"}`
+    : "";
+  const failureLine = phase.failure_class
+    ? `失败分类：${phase.failure_class}`
     : "";
   const recommendedBatchTimeout = timeoutPolicy.recommended_batch_timeout_seconds || "";
   const recommendedFinalTimeout = timeoutPolicy.recommended_final_reduce_timeout_seconds || "";
@@ -1640,6 +1653,10 @@ function renderJobPhase(job) {
     plan.strategy_label || "",
     phase.current_phase_label || "",
     attemptLine,
+    httpAttemptLine,
+    fallbackLine,
+    retryableLine,
+    failureLine,
     batchLine,
     timeoutLine,
     runtimeBudgetLine,

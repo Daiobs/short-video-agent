@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.database import SessionLocal
-from app.errors import AppError, ErrorCode
+from app.errors import AppError, ErrorCode, PROMPT_RECOVERY_LLM_ERROR_CODES
 from app.models import CaseArtifact, DouyinVideoItem, Job, utc_now
 from app.providers.profile_base import ProfileScanRequest
 from app.routes.common import error_response
@@ -1249,11 +1249,7 @@ def _run_profile_build_cases_job(job_id: str, payload: dict) -> None:
         db.close()
 
 
-RECOVERABLE_DISTILL_ERROR_CODES = {
-    ErrorCode.LLM_NOT_CONFIGURED,
-    ErrorCode.LLM_REQUEST_FAILED,
-    ErrorCode.LLM_RESPONSE_INVALID,
-}
+RECOVERABLE_DISTILL_ERROR_CODES = set(PROMPT_RECOVERY_LLM_ERROR_CODES)
 
 
 def _inline_creator_clone_sample_set(payload: dict) -> CloneSampleSet:
@@ -1325,17 +1321,32 @@ def _distill_phase_payload(phase: dict | None, *, execution_plan: dict | None = 
         "batch_count": phase.get("batch_count") or plan.get("batch_count") or 0,
         "sample_count": phase.get("sample_count") or 0,
         "timeout_seconds": phase.get("timeout_seconds"),
-        "total_budget_seconds": phase.get("total_budget_seconds"),
+        "total_budget_seconds": phase.get("total_budget_seconds") or phase.get("total_job_budget_seconds"),
         "elapsed_seconds": phase.get("elapsed_seconds"),
         "remaining_seconds": phase.get("remaining_seconds"),
         "attempt_index": phase.get("attempt_index"),
         "attempt_count": phase.get("attempt_count"),
+        "http_attempt_index": phase.get("http_attempt_index"),
+        "http_attempt_count": phase.get("http_attempt_count"),
+        "response_format_fallback_used": bool(phase.get("response_format_fallback_used")),
+        "retryable": phase.get("retryable"),
+        "failure_class": phase.get("failure_class") or phase.get("error_code") or "",
         "budget_started_at": phase.get("budget_started_at") or "",
         "deadline_at": phase.get("deadline_at") or "",
         "retry_reason": phase.get("retry_reason") or "",
         "diagnostic": phase.get("diagnostic") or "",
         "execution_plan": plan,
     }
+
+
+def _distill_fallback_message(error: AppError) -> str:
+    if error.code == ErrorCode.LLM_RATE_LIMITED:
+        return "网关限流，任务已停止；没有继续重试。已保留蒸馏 Prompt。"
+    if error.code == ErrorCode.LLM_AUTH_FAILED:
+        return "大模型鉴权失败，任务已停止；没有继续重试。已保留蒸馏 Prompt。"
+    if error.code == ErrorCode.LLM_QUOTA_EXCEEDED:
+        return "大模型额度不足，任务已停止；没有继续重试。已保留蒸馏 Prompt。"
+    return "大模型暂不可用，已生成蒸馏 Prompt"
 
 
 def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
@@ -1501,6 +1512,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
             )
             job = db.get(Job, job_id)
             if job:
+                fallback_message = _distill_fallback_message(error)
                 runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
                     sample_set.set_id,
                     WorkflowAction.MARK_EVIDENCE_READY,
@@ -1518,7 +1530,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                     job,
                     "success",
                     100,
-                    "大模型暂不可用，已生成蒸馏 Prompt",
+                    fallback_message,
                     result={
                         "ok": False,
                         "recovery": "prompt_only",
@@ -1535,10 +1547,12 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                                 "phase_count": 3,
                                 "status": "fallback",
                                 "error_code": error.code,
+                                "failure_class": error.code,
+                                **error.public_details(),
                                 "execution_plan": execution_plan,
                             },
                             execution_plan=execution_plan,
-                            message="大模型暂不可用，已生成蒸馏 Prompt",
+                            message=fallback_message,
                         ),
                     },
                 )
@@ -1646,7 +1660,17 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
         )
         job = db.get(Job, job_id)
         if job:
-            message = "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型"
+            batch_status = str((result.get("batch_distill") or {}).get("job_status") or "")
+            message = {
+                "completed": "分批蒸馏和总汇总完成",
+                "partial": "部分批次已完成，已生成可用的本地汇总报告",
+                "budget_exhausted": "总等待预算已耗尽，已保存成功批次和本地汇总报告",
+                "rate_limited": "网关限流，任务已停止；没有继续重试。已保存成功批次",
+                "auth_failed": "大模型鉴权失败，任务已停止；没有继续重试。已保存成功批次",
+            }.get(
+                batch_status,
+                "分批蒸馏和总汇总完成" if result.get("result") else "已生成分批蒸馏 Prompt，等待可用大模型",
+            )
             if result.get("result"):
                 runtime_result = CreatorRuntimeEngine.dispatch_sample_set(
                     sample_set.set_id,
@@ -1689,7 +1713,9 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
                         {
                             "current_phase": "complete" if result.get("result") else "local_fallback",
                             "current_phase_label": "完成" if result.get("result") else "降级为 Prompt",
-                            "status": "success" if result.get("result") else "fallback",
+                            "status": batch_status or ("success" if result.get("result") else "fallback"),
+                            "failure_class": result.get("error_code") or "",
+                            "retryable": False if batch_status in {"rate_limited", "auth_failed", "budget_exhausted"} else None,
                             "execution_plan": result.get("execution_plan") or execution_plan,
                         },
                         execution_plan=result.get("execution_plan") or execution_plan,

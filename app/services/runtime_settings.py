@@ -78,6 +78,34 @@ def effective_llm_settings() -> dict[str, Any]:
             _local_value("llm", "final_reduce_timeout_seconds", settings.llm_final_reduce_timeout_seconds),
             settings.llm_final_reduce_timeout_seconds,
         ),
+        "quick_distill_budget_seconds": _safe_float(
+            _local_value("llm", "quick_distill_budget_seconds", settings.llm_quick_distill_budget_seconds),
+            settings.llm_quick_distill_budget_seconds,
+        ),
+        "deep_distill_budget_seconds": _safe_float(
+            _local_value("llm", "deep_distill_budget_seconds", settings.llm_deep_distill_budget_seconds),
+            settings.llm_deep_distill_budget_seconds,
+        ),
+        "batch_job_budget_seconds": _safe_float(
+            _local_value("llm", "batch_job_budget_seconds", settings.llm_batch_job_budget_seconds),
+            settings.llm_batch_job_budget_seconds,
+        ),
+        "final_reduce_min_reserve_seconds": _safe_float(
+            _local_value(
+                "llm",
+                "final_reduce_min_reserve_seconds",
+                settings.llm_final_reduce_min_reserve_seconds,
+            ),
+            settings.llm_final_reduce_min_reserve_seconds,
+        ),
+        "compact_retry_min_remaining_seconds": _safe_float(
+            _local_value(
+                "llm",
+                "compact_retry_min_remaining_seconds",
+                settings.llm_compact_retry_min_remaining_seconds,
+            ),
+            settings.llm_compact_retry_min_remaining_seconds,
+        ),
         "temperature": _safe_float(_local_value("llm", "temperature", settings.llm_temperature), settings.llm_temperature),
         "max_keyframes": _safe_int(_local_value("llm", "max_keyframes", settings.llm_max_keyframes), settings.llm_max_keyframes),
         "max_output_tokens": _safe_int(_local_value("llm", "max_output_tokens", settings.llm_max_output_tokens), settings.llm_max_output_tokens),
@@ -98,6 +126,11 @@ def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
         "model",
         "timeout_seconds",
         "final_reduce_timeout_seconds",
+        "quick_distill_budget_seconds",
+        "deep_distill_budget_seconds",
+        "batch_job_budget_seconds",
+        "final_reduce_min_reserve_seconds",
+        "compact_retry_min_remaining_seconds",
         "temperature",
         "max_keyframes",
         "max_output_tokens",
@@ -112,7 +145,16 @@ def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
         cleaned["api_key"] = str(cleaned["api_key"] or "").strip()
     if "model" in cleaned:
         cleaned["model"] = str(cleaned["model"] or "").strip()
-    for key in ("timeout_seconds", "final_reduce_timeout_seconds", "temperature"):
+    for key in (
+        "timeout_seconds",
+        "final_reduce_timeout_seconds",
+        "quick_distill_budget_seconds",
+        "deep_distill_budget_seconds",
+        "batch_job_budget_seconds",
+        "final_reduce_min_reserve_seconds",
+        "compact_retry_min_remaining_seconds",
+        "temperature",
+    ):
         if key in cleaned:
             cleaned[key] = float(cleaned[key] or 0)
     for key in ("max_keyframes", "max_output_tokens", "final_reduce_max_output_tokens"):

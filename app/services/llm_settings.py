@@ -67,6 +67,11 @@ def llm_status_payload() -> dict:
         "temperature": effective["temperature"],
         "timeout_seconds": effective["timeout_seconds"],
         "final_reduce_timeout_seconds": effective["final_reduce_timeout_seconds"],
+        "quick_distill_budget_seconds": effective["quick_distill_budget_seconds"],
+        "deep_distill_budget_seconds": effective["deep_distill_budget_seconds"],
+        "batch_job_budget_seconds": effective["batch_job_budget_seconds"],
+        "final_reduce_min_reserve_seconds": effective["final_reduce_min_reserve_seconds"],
+        "compact_retry_min_remaining_seconds": effective["compact_retry_min_remaining_seconds"],
         "max_output_tokens": effective["max_output_tokens"],
         "final_reduce_max_output_tokens": effective["final_reduce_max_output_tokens"],
         "status_message": status_message,
@@ -81,6 +86,26 @@ def update_llm_settings_payload(payload: dict) -> dict:
         "model": payload.get("model", current["model"]),
         "timeout_seconds": payload.get("timeout_seconds", current["timeout_seconds"]),
         "final_reduce_timeout_seconds": payload.get("final_reduce_timeout_seconds", current["final_reduce_timeout_seconds"]),
+        "quick_distill_budget_seconds": payload.get(
+            "quick_distill_budget_seconds",
+            current["quick_distill_budget_seconds"],
+        ),
+        "deep_distill_budget_seconds": payload.get(
+            "deep_distill_budget_seconds",
+            current["deep_distill_budget_seconds"],
+        ),
+        "batch_job_budget_seconds": payload.get(
+            "batch_job_budget_seconds",
+            current["batch_job_budget_seconds"],
+        ),
+        "final_reduce_min_reserve_seconds": payload.get(
+            "final_reduce_min_reserve_seconds",
+            current["final_reduce_min_reserve_seconds"],
+        ),
+        "compact_retry_min_remaining_seconds": payload.get(
+            "compact_retry_min_remaining_seconds",
+            current["compact_retry_min_remaining_seconds"],
+        ),
         "temperature": payload.get("temperature", current["temperature"]),
         "max_keyframes": payload.get("llm_max_keyframes", payload.get("max_keyframes", current["max_keyframes"])),
         "max_output_tokens": payload.get("max_output_tokens", current["max_output_tokens"]),
