@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks
@@ -1778,6 +1779,13 @@ def _seed_job_recovery_context(job_id: str, **context: str) -> None:
         _seed_job_result(job_id, {"recovery_context": values})
 
 
+def _utc_iso(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    current = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc).isoformat()
+
+
 def _job_response_payload(job: Job) -> dict:
     return {
         "id": job.id,
@@ -1787,8 +1795,8 @@ def _job_response_payload(job: Job) -> dict:
         "message": job.message,
         "result_json": job.result(),
         "error_code": job.error_code,
-        "created_at": job.created_at.isoformat() if job.created_at else "",
-        "updated_at": job.updated_at.isoformat() if job.updated_at else "",
+        "created_at": _utc_iso(job.created_at),
+        "updated_at": _utc_iso(job.updated_at),
     }
 
 

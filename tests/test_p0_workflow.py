@@ -5,6 +5,7 @@ import base64
 import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,32 @@ from app.services.creator_clone import (
 
 
 client = TestClient(app)
+
+
+def test_job_api_serializes_sqlite_timestamps_as_explicit_utc() -> None:
+    job_id = "job_timezone_serialization"
+    stored_time = datetime(2026, 7, 24, 3, 0, 0)
+    with SessionLocal() as session:
+        session.add(
+            Job(
+                id=job_id,
+                type="profile-build-cases",
+                status="running",
+                progress=1,
+                message="素材包队列开始",
+                created_at=stored_time,
+                updated_at=stored_time,
+            )
+        )
+        session.commit()
+
+    response = client.get(f"/api/jobs/{job_id}")
+
+    assert response.status_code == 200
+    payload = response.json()["job"]
+    assert payload["created_at"] == "2026-07-24T03:00:00+00:00"
+    assert payload["updated_at"] == "2026-07-24T03:00:00+00:00"
+    assert datetime.fromisoformat(payload["updated_at"]).tzinfo == timezone.utc
 
 
 def test_pytest_runtime_is_isolated_from_default_database_and_outputs(tmp_path: Path) -> None:
