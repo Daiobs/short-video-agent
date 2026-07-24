@@ -2908,6 +2908,48 @@ def test_llm_connection_test_uses_mock_provider(monkeypatch) -> None:
     assert "sk-mocked-secret" not in json.dumps(payload, ensure_ascii=False)
 
 
+def test_llm_connection_test_accepts_unsaved_form_config(monkeypatch, tmp_path: Path) -> None:
+    runtime_path = tmp_path / ".local_settings.json"
+    captured = {}
+
+    class FakeProvider:
+        def analyze(self, prompt, image_paths):
+            assert "pong" in prompt
+            assert image_paths == []
+            return {"ok": True, "message": "pong"}
+
+    def fake_get_llm_provider(**kwargs):
+        captured.update(kwargs)
+        return FakeProvider()
+
+    monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
+    monkeypatch.setattr("app.services.llm_settings.get_llm_provider", fake_get_llm_provider)
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_provider", "disabled")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_api_key", "")
+    monkeypatch.setattr("app.services.llm_settings.settings.llm_model", "")
+
+    response = client.post(
+        "/api/settings/llm/test",
+        json={
+            "provider": "openai",
+            "api_base": "https://api.openai.com/v1",
+            "api_key": "sk-unsaved-test-secret",
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "xhigh",
+            "timeout_seconds": 30,
+            "temperature": 0.2,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["test"]["provider"] == "openai"
+    assert payload["test"]["model"] == "gpt-5.6-sol"
+    assert captured["overrides"]["api_key"] == "sk-unsaved-test-secret"
+    assert not runtime_path.exists()
+    assert "sk-unsaved-test-secret" not in json.dumps(payload, ensure_ascii=False)
+
+
 def test_openai_compatible_provider_requests_json_object(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200

@@ -85,9 +85,7 @@
         elements.llmStatusBadge.classList.toggle("success", configured);
         elements.llmStatusBadge.classList.toggle("muted-badge", !configured);
       }
-      if (elements.testLlmButton) {
-        elements.testLlmButton.disabled = !configured;
-      }
+      if (elements.testLlmButton) elements.testLlmButton.disabled = false;
       elements.llmConfigHint?.classList.toggle("hidden", configured);
       if (elements.llmStatusList) {
         elements.llmStatusList.innerHTML = `
@@ -289,22 +287,27 @@
       }
     });
 
+    function currentLlmFormPayload() {
+      const payload = {
+        provider: elements.llmProviderInput?.value || "disabled",
+        api_base: elements.llmApiBaseInput?.value || "",
+        model: elements.llmModelInput?.value || "",
+        timeout_seconds: Number(elements.llmTimeoutInput?.value || 90),
+        temperature: Number(elements.llmTemperatureInput?.value || 0.2),
+        reasoning_effort: elements.llmReasoningEffortInput?.value || "auto",
+        clear_api_key: Boolean(elements.llmClearKeyInput?.checked),
+      };
+      const apiKey = String(elements.llmApiKeyInput?.value || "").trim();
+      if (apiKey) payload.api_key = apiKey;
+      return payload;
+    }
+
     elements.llmForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (elements.saveLlmButton) elements.saveLlmButton.disabled = true;
       if (elements.llmSaveResult) elements.llmSaveResult.textContent = "正在保存...";
       try {
-        const payload = {
-          provider: elements.llmProviderInput?.value || "disabled",
-          api_base: elements.llmApiBaseInput?.value || "",
-          model: elements.llmModelInput?.value || "",
-          timeout_seconds: Number(elements.llmTimeoutInput?.value || 90),
-          temperature: Number(elements.llmTemperatureInput?.value || 0.2),
-          reasoning_effort: elements.llmReasoningEffortInput?.value || "auto",
-          clear_api_key: Boolean(elements.llmClearKeyInput?.checked),
-        };
-        const apiKey = String(elements.llmApiKeyInput?.value || "").trim();
-        if (apiKey) payload.api_key = apiKey;
+        const payload = currentLlmFormPayload();
         const result = await requestJson("/api/settings/llm", {
           method: "PUT",
           headers: {"Content-Type": "application/json"},
@@ -405,7 +408,11 @@
       elements.testLlmButton.disabled = true;
       if (elements.llmTestResult) elements.llmTestResult.textContent = "正在测试...";
       try {
-        const payload = await requestJson("/api/settings/llm/test", {method: "POST"});
+        const payload = await requestJson("/api/settings/llm/test", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(currentLlmFormPayload()),
+        });
         if (elements.llmTestResult) elements.llmTestResult.textContent = `测试通过：${payload.test?.message || "pong"}`;
       } catch (error) {
         if (elements.llmTestResult) elements.llmTestResult.textContent = errorText(error, "测试失败");

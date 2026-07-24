@@ -55,8 +55,7 @@ def mask_api_key(value: str) -> str:
     return f"{value[:3]}****{value[-4:]}"
 
 
-def llm_is_configured() -> bool:
-    effective = effective_llm_settings()
+def _llm_values_are_configured(effective: dict) -> bool:
     return (
         effective["provider"] not in DISABLED_PROVIDERS
         and effective["provider"] in SUPPORTED_PROVIDERS
@@ -64,6 +63,10 @@ def llm_is_configured() -> bool:
         and bool(effective["api_key"])
         and bool(effective["model"])
     )
+
+
+def llm_is_configured() -> bool:
+    return _llm_values_are_configured(effective_llm_settings())
 
 
 def llm_status_payload() -> dict:
@@ -135,11 +138,40 @@ def update_llm_settings_payload(payload: dict) -> dict:
     return llm_status_payload()
 
 
-def test_llm_connection(provider: BaseLLMProvider | None = None) -> dict:
-    if not llm_is_configured():
+def test_llm_connection(
+    provider: BaseLLMProvider | None = None,
+    overrides: dict | None = None,
+) -> dict:
+    effective = effective_llm_settings()
+    if overrides:
+        effective.update(
+            {
+                key: value
+                for key, value in overrides.items()
+                if key
+                in {
+                    "provider",
+                    "api_base",
+                    "model",
+                    "timeout_seconds",
+                    "temperature",
+                    "reasoning_effort",
+                    "max_output_tokens",
+                }
+            }
+        )
+        if overrides.get("clear_api_key"):
+            effective["api_key"] = ""
+        elif str(overrides.get("api_key") or "").strip():
+            effective["api_key"] = str(overrides["api_key"]).strip()
+    if not _llm_values_are_configured(effective):
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
 
-    llm = provider or get_llm_provider()
+    llm = provider or (
+        get_llm_provider(overrides=effective)
+        if overrides
+        else get_llm_provider()
+    )
     result = llm.analyze(
         '这是一次连接测试。请只返回合法 JSON：{"ok": true, "message": "pong"}',
         [],
@@ -149,6 +181,6 @@ def test_llm_connection(provider: BaseLLMProvider | None = None) -> dict:
     return {
         "ok": True,
         "message": str(result.get("message") or "pong"),
-        "provider": effective_llm_settings()["provider"],
-        "model": effective_llm_settings()["model"],
+        "provider": effective["provider"],
+        "model": effective["model"],
     }

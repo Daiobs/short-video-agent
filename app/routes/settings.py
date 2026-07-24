@@ -58,9 +58,10 @@ def update_llm_settings(payload: LLMSettingsUpdate):
 
 
 @router.post("/llm/test")
-def test_llm_settings():
+def test_llm_settings(payload: LLMSettingsUpdate | None = None):
     try:
-        return {"ok": True, "test": llm_settings.test_llm_connection()}
+        overrides = _payload_dict(payload) if payload is not None else None
+        return {"ok": True, "test": llm_settings.test_llm_connection(overrides=overrides)}
     except AppError as error:
         return error_response(error)
 

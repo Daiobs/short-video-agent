@@ -347,19 +347,43 @@ def get_llm_provider(
     *,
     timeout_seconds: float | None = None,
     max_output_tokens: int | None = None,
+    overrides: dict[str, Any] | None = None,
 ) -> BaseLLMProvider:
     effective = effective_llm_settings()
+    if overrides:
+        effective.update(overrides)
     provider = effective["provider"]
+    provider_timeout = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
+    provider_max_tokens = (
+        max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
+    )
+    common = {
+        "api_base": effective["api_base"],
+        "api_key": effective["api_key"],
+        "model": effective["model"],
+        "timeout_seconds": provider_timeout,
+        "temperature": effective["temperature"],
+        "max_output_tokens": provider_max_tokens,
+    }
     if provider in {"", "disabled", "none", "off"}:
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
     if provider == "openai":
-        return OpenAIResponsesProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
+        return OpenAIResponsesProvider(
+            **common,
+            reasoning_effort=effective["reasoning_effort"],
+        )
     if provider in {"openai_compatible", "compatible"}:
-        return OpenAICompatibleProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
+        return OpenAICompatibleProvider(
+            **common,
+            reasoning_effort=effective["reasoning_effort"],
+        )
     if provider in {"openai_responses", "responses"}:
-        return OpenAIResponsesProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
+        return OpenAIResponsesProvider(
+            **common,
+            reasoning_effort=effective["reasoning_effort"],
+        )
     if provider in {"anthropic", "anthropic_compatible", "claude"}:
-        return AnthropicCompatibleProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
+        return AnthropicCompatibleProvider(**common)
     raise AppError(ErrorCode.LLM_NOT_CONFIGURED, f"不支持的 LLM_PROVIDER：{provider}")
 
 

@@ -255,7 +255,9 @@ process.stdout.write(JSON.stringify({{
   configuredBadge, invalidBadge, invalidSummary,
   requestPairs: requests.map((item) => item.slice(0, 2)),
   llmPutBody: JSON.parse(requests.find((item) => item[0] === "/api/settings/llm" && item[1] === "PUT")[2]),
+  llmTestBody: JSON.parse(requests.find((item) => item[0] === "/api/settings/llm/test" && item[1] === "POST")[2]),
   openAiBase,
+  testButtonDisabled: e.testLlmButton.disabled,
   leakedKey: visible.includes("sk-live-secret-never-render"),
   leakedCookie: visible.includes("raw-cookie-never-render"),
   noDomOpen: noDom.open(),
@@ -289,6 +291,9 @@ process.stdout.write(JSON.stringify({{
     assert result["openAiBase"] == "https://api.openai.com/v1"
     assert result["llmPutBody"]["provider"] == "openai"
     assert result["llmPutBody"]["reasoning_effort"] == "xhigh"
+    assert result["llmTestBody"]["model"] == "vision"
+    assert result["llmTestBody"]["reasoning_effort"] == "xhigh"
+    assert result["testButtonDisabled"] is False
     assert result["noDomOpen"] is False
     assert result["api"] == [
         "close",
