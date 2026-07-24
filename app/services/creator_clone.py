@@ -15,9 +15,10 @@ import io
 import json
 import math
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Callable
@@ -1725,6 +1726,29 @@ def _drop_empty_prompt_values(value):
     return value if _is_meaningful_report_text(value) else ""
 
 
+def _distill_budget_snapshot(
+    *,
+    started_monotonic: float,
+    started_at: datetime,
+    deadline_at: datetime,
+    total_budget_seconds: int,
+    attempt_index: int,
+    attempt_count: int,
+    attempt_timeout_seconds: int,
+) -> dict:
+    elapsed_seconds = max(0, int(time.monotonic() - started_monotonic))
+    return {
+        "attempt_index": attempt_index,
+        "attempt_count": attempt_count,
+        "timeout_seconds": max(1, int(attempt_timeout_seconds)),
+        "total_budget_seconds": max(1, int(total_budget_seconds)),
+        "elapsed_seconds": min(elapsed_seconds, total_budget_seconds),
+        "remaining_seconds": max(0, total_budget_seconds - elapsed_seconds),
+        "budget_started_at": started_at.isoformat(),
+        "deadline_at": deadline_at.isoformat(),
+    }
+
+
 def distill_creator_clone(
     sample_set: CloneSampleSet,
     selected_sample_ids: list[str],
@@ -1783,34 +1807,88 @@ def distill_creator_clone(
         final_timeout_seconds=float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
         prompt_chars=len(prompt),
     )
-    llm_timeout = int(execution_plan["timeout_policy"]["recommended_batch_timeout_seconds"])
-    llm = get_llm_provider(timeout_seconds=llm_timeout)
+    total_budget_seconds = int(execution_plan["timeout_policy"]["recommended_batch_timeout_seconds"])
+    retry_available = use_map_reduce or include_case_reports
+    attempt_count = 2 if retry_available else 1
+    first_attempt_timeout = (
+        min(total_budget_seconds, max(30, int(total_budget_seconds * 0.8)))
+        if retry_available
+        else total_budget_seconds
+    )
+    execution_plan["timeout_policy"].update(
+        {
+            "total_request_budget_seconds": total_budget_seconds,
+            "max_external_attempts": attempt_count,
+            "retry_policy": "一次主请求；仅在可恢复错误时使用剩余总预算进行一次精简重试。",
+        }
+    )
     report_progress(
         58,
-        f"蒸馏 Prompt 已写入，准备调用大模型，最长等待 {llm_timeout} 秒",
+        f"蒸馏 Prompt 已写入，大模型总等待预算 {total_budget_seconds} 秒",
         {
             "current_phase": "prompt_ready",
             "current_phase_label": "Prompt 就绪",
-            "timeout_seconds": llm_timeout,
+            "timeout_seconds": first_attempt_timeout,
+            "total_budget_seconds": total_budget_seconds,
+            "attempt_index": 0,
+            "attempt_count": attempt_count,
             "execution_plan": execution_plan,
         },
     )
+    budget_started_at = datetime.now(timezone.utc)
+    budget_deadline_at = budget_started_at + timedelta(seconds=total_budget_seconds)
+    budget_started_monotonic = time.monotonic()
+    active_attempt_index = 1
+
+    def remaining_budget_seconds() -> int:
+        elapsed_seconds = max(0, math.ceil(time.monotonic() - budget_started_monotonic))
+        return max(0, total_budget_seconds - elapsed_seconds)
+
+    def budget_phase(attempt_index: int, attempt_timeout_seconds: int, **extra) -> dict:
+        return {
+            **_distill_budget_snapshot(
+                started_monotonic=budget_started_monotonic,
+                started_at=budget_started_at,
+                deadline_at=budget_deadline_at,
+                total_budget_seconds=total_budget_seconds,
+                attempt_index=attempt_index,
+                attempt_count=attempt_count,
+                attempt_timeout_seconds=attempt_timeout_seconds,
+            ),
+            "execution_plan": execution_plan,
+            **extra,
+        }
+
     try:
         report_progress(
             68,
-            "正在等待大模型返回蒸馏 JSON",
-            {
-                "current_phase": "llm_wait",
-                "current_phase_label": "等待大模型",
-                "timeout_seconds": llm_timeout,
-                "execution_plan": execution_plan,
-                "diagnostic": "如果停留在这里，通常是网关排队、模型生成较慢，或 prompt 较长导致首字节/生成耗时增加。",
-            },
+            f"第 1/{attempt_count} 次请求：等待大模型返回蒸馏 JSON",
+            budget_phase(
+                1,
+                first_attempt_timeout,
+                current_phase="llm_wait",
+                current_phase_label="等待大模型",
+                diagnostic="如果停留在这里，通常是网关排队、模型生成较慢，或 prompt 较长导致首字节/生成耗时增加。",
+            ),
         )
-        result = execution_layer.generate_creator_clone(llm, prompt, []).to_dict()
+        llm = get_llm_provider(timeout_seconds=first_attempt_timeout)
+        result = execution_layer.generate_creator_clone(llm, prompt, [], max_retries=1).to_dict()
     except AppError as error:
         if use_map_reduce and error.code in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID}:
-            report_progress(72, "常规 Reduce 失败，正在生成 micro reduce 重试 Prompt", {"current_phase": "retry_prompt", "current_phase_label": "准备重试"})
+            remaining_seconds = remaining_budget_seconds()
+            if remaining_seconds < 5:
+                raise
+            report_progress(
+                72,
+                "首次请求失败，正在生成 micro reduce 重试 Prompt",
+                budget_phase(
+                    2,
+                    remaining_seconds,
+                    current_phase="retry_prompt",
+                    current_phase_label="准备精简重试",
+                    retry_reason=error.code,
+                ),
+            )
             micro_prompt = build_micro_reduce_distill_prompt(
                 sample_set,
                 selected_samples,
@@ -1818,16 +1896,45 @@ def distill_creator_clone(
                 distill_mode=distill_mode,
             )
             (output_dir / "distill_prompt_micro.md").write_text(micro_prompt, encoding="utf-8")
-            try:
-                report_progress(78, "正在用 micro reduce 重试大模型蒸馏", {"current_phase": "llm_retry", "current_phase_label": "大模型重试"})
-                result = execution_layer.generate_creator_clone(llm, micro_prompt, []).to_dict()
-            except AppError:
+            remaining_seconds = remaining_budget_seconds()
+            if remaining_seconds < 5:
                 raise error
+            try:
+                active_attempt_index = 2
+                report_progress(
+                    78,
+                    f"第 2/{attempt_count} 次请求：使用 micro reduce，剩余预算 {remaining_seconds} 秒",
+                    budget_phase(
+                        2,
+                        remaining_seconds,
+                        current_phase="llm_retry",
+                        current_phase_label="精简重试",
+                        retry_reason=error.code,
+                        diagnostic="这是本任务最后一次外部请求；失败后会保留 Prompt 和诊断，不再隐藏重试。",
+                    ),
+                )
+                retry_llm = get_llm_provider(timeout_seconds=remaining_seconds)
+                result = execution_layer.generate_creator_clone(retry_llm, micro_prompt, [], max_retries=1).to_dict()
+            except AppError as retry_error:
+                raise retry_error from error
             warnings.append("常规 Reduce 蒸馏失败，已使用 micro reduce 短提示重试成功。")
         elif error.code not in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID} or not include_case_reports:
             raise
         else:
-            report_progress(72, "首次蒸馏失败，正在生成精简证据包重试", {"current_phase": "compact_retry_prompt", "current_phase_label": "精简重试"})
+            remaining_seconds = remaining_budget_seconds()
+            if remaining_seconds < 5:
+                raise
+            report_progress(
+                72,
+                "首次请求失败，正在生成精简证据包",
+                budget_phase(
+                    2,
+                    remaining_seconds,
+                    current_phase="compact_retry_prompt",
+                    current_phase_label="准备精简重试",
+                    retry_reason=error.code,
+                ),
+            )
             compact_prompt = build_distill_prompt(
                 sample_set,
                 selected_samples,
@@ -1835,13 +1942,38 @@ def distill_creator_clone(
                 include_case_reports=False,
             )
             (output_dir / "distill_prompt_compact.md").write_text(compact_prompt, encoding="utf-8")
-            try:
-                report_progress(78, "正在用精简证据包重试大模型蒸馏", {"current_phase": "compact_llm_retry", "current_phase_label": "精简重试"})
-                result = execution_layer.generate_creator_clone(llm, compact_prompt, []).to_dict()
-            except AppError:
+            remaining_seconds = remaining_budget_seconds()
+            if remaining_seconds < 5:
                 raise error
+            try:
+                active_attempt_index = 2
+                report_progress(
+                    78,
+                    f"第 2/{attempt_count} 次请求：使用精简证据包，剩余预算 {remaining_seconds} 秒",
+                    budget_phase(
+                        2,
+                        remaining_seconds,
+                        current_phase="compact_llm_retry",
+                        current_phase_label="精简重试",
+                        retry_reason=error.code,
+                        diagnostic="这是本任务最后一次外部请求；失败后会保留 Prompt 和诊断，不再隐藏重试。",
+                    ),
+                )
+                retry_llm = get_llm_provider(timeout_seconds=remaining_seconds)
+                result = execution_layer.generate_creator_clone(retry_llm, compact_prompt, [], max_retries=1).to_dict()
+            except AppError as retry_error:
+                raise retry_error from error
             warnings.append("首次蒸馏失败，已使用精简证据包重试成功。")
-    report_progress(86, "大模型已返回，正在解析蒸馏结果", {"current_phase": "parse_result", "current_phase_label": "解析结果"})
+    report_progress(
+        86,
+        "大模型已返回，正在解析蒸馏结果",
+        budget_phase(
+            active_attempt_index,
+            max(1, remaining_budget_seconds()),
+            current_phase="parse_result",
+            current_phase_label="解析结果",
+        ),
+    )
     normalized = normalize_creator_clone_result(result, sample_set, selected_samples, warnings)
     _write_json(output_dir / "creator_clone_result.json", normalized)
     report_progress(94, "正在写入 Markdown / HTML 报告", {"current_phase": "write_report", "current_phase_label": "写入报告"})
@@ -2918,7 +3050,7 @@ def batch_distill_creator_clone(
         if llm_configured:
             try:
                 batch_llm = get_llm_provider(timeout_seconds=batch_timeout)
-                raw_result = ExecutionLayer().generate_creator_clone(batch_llm, prompt, []).to_dict()
+                raw_result = ExecutionLayer().generate_creator_clone(batch_llm, prompt, [], max_retries=1).to_dict()
                 normalized = normalize_creator_clone_result(raw_result, sample_set, chunk, warnings=[])
                 _write_json(result_path, normalized)
                 markdown_path.write_text(render_creator_clone_markdown(normalized), encoding="utf-8")
@@ -3003,7 +3135,7 @@ def batch_distill_creator_clone(
                 timeout_seconds=final_timeout,
                 max_output_tokens=max(int(effective_llm.get("max_output_tokens") or settings.llm_max_output_tokens), final_max_output_tokens),
             )
-            raw_final = ExecutionLayer().generate_creator_clone(final_llm, final_prompt, []).to_dict()
+            raw_final = ExecutionLayer().generate_creator_clone(final_llm, final_prompt, [], max_retries=1).to_dict()
             final_result = normalize_creator_clone_result(raw_final, sample_set, selected_samples, warnings=warnings)
             final_result["batch_distill"] = {
                 "batch_count": len(batch_results),

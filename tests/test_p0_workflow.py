@@ -51,6 +51,7 @@ from app.services.creator_clone import (
     build_sample_set,
     build_distill_prompt,
     dedupe_samples,
+    distill_creator_clone,
     load_sample_set,
     normalize_creator_clone_result,
     performance_segments,
@@ -1149,6 +1150,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "function renderJobPhase" in script
     assert "function renderJobStatus" in script
     assert "distill_phase" in script
+    assert "total_budget_seconds" in script
+    assert "外部请求" in script
+    assert "剩余约" in script
     assert "进入大模型蒸馏准备阶段" in Path("app/routes/jobs.py").read_text(encoding="utf-8")
     assert "正在生成样本摘要和蒸馏 Prompt" in Path("app/services/creator_clone.py").read_text(encoding="utf-8")
     assert ".job-phase" in stylesheet
@@ -11909,6 +11913,65 @@ def test_creator_clone_distill_uses_map_reduce_for_two_samples(monkeypatch) -> N
     assert len(map_summaries) == 2
     assert map_summaries[0]["sample_id"] == "sample_retry_a"
     assert provider.calls == 1
+
+
+def test_creator_clone_distill_caps_external_attempts_and_shares_total_budget(monkeypatch) -> None:
+    provider_calls: list[int] = []
+    provider_timeouts: list[int] = []
+    progress_events: list[dict] = []
+
+    class AttemptProvider:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
+            provider_calls.append(self.index)
+            if self.index == 1:
+                raise AppError(ErrorCode.LLM_REQUEST_FAILED, "模拟网关超时。")
+            return {
+                "summary": "共享预算重试成功。",
+                "creator_positioning": {"what_the_creator_sells": "稳定工作流"},
+                "creator_clone_spec": {"taste": "证据优先"},
+            }
+
+    def fake_get_llm_provider(**kwargs):
+        provider_timeouts.append(int(kwargs["timeout_seconds"]))
+        return AttemptProvider(len(provider_timeouts))
+
+    monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
+    monkeypatch.setattr("app.services.creator_clone.get_llm_provider", fake_get_llm_provider)
+    sample_set = CloneSampleSet(
+        set_id="clone_shared_distill_budget",
+        title="共享预算测试",
+        samples=[
+            CloneSample(sample_id="sample_budget_a", title="样本 A", like_count=100),
+            CloneSample(sample_id="sample_budget_b", title="样本 B", like_count=50),
+        ],
+    )
+
+    result = distill_creator_clone(
+        sample_set,
+        ["sample_budget_a", "sample_budget_b"],
+        progress=lambda value, message, phase=None: progress_events.append(
+            {"value": value, "message": message, "phase": phase or {}}
+        ),
+    )
+
+    timeout_policy = result["execution_plan"]["timeout_policy"]
+    assert result["result"]["summary"] == "共享预算重试成功。"
+    assert provider_calls == [1, 2]
+    assert len(provider_timeouts) == 2
+    assert provider_timeouts[0] < timeout_policy["total_request_budget_seconds"]
+    assert provider_timeouts[1] <= timeout_policy["total_request_budget_seconds"]
+    assert timeout_policy["max_external_attempts"] == 2
+    first_wait = next(event for event in progress_events if event["phase"].get("current_phase") == "llm_wait")
+    retry_wait = next(event for event in progress_events if event["phase"].get("current_phase") == "llm_retry")
+    assert first_wait["phase"]["attempt_index"] == 1
+    assert first_wait["phase"]["attempt_count"] == 2
+    assert retry_wait["phase"]["attempt_index"] == 2
+    assert retry_wait["phase"]["attempt_count"] == 2
+    assert retry_wait["phase"]["retry_reason"] == ErrorCode.LLM_REQUEST_FAILED
+    assert retry_wait["phase"]["deadline_at"]
 
 
 def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) -> None:

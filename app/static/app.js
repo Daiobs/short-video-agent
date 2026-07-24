@@ -1595,6 +1595,18 @@ function renderJobPhase(job) {
   const plan = phase.execution_plan || result.execution_plan || {};
   const timeoutPolicy = plan.timeout_policy || {};
   const timeout = phase.timeout_seconds || timeoutPolicy.recommended_batch_timeout_seconds || timeoutPolicy.configured_batch_timeout_seconds || "";
+  const totalBudget = Number(phase.total_budget_seconds || timeoutPolicy.total_request_budget_seconds || 0);
+  const budgetStartedAt = Date.parse(phase.budget_started_at || "");
+  const deadlineAt = Date.parse(phase.deadline_at || "");
+  const liveElapsed = Number.isFinite(budgetStartedAt)
+    ? Math.max(Number(phase.elapsed_seconds || 0), Math.floor((Date.now() - budgetStartedAt) / 1000))
+    : Number(phase.elapsed_seconds || 0);
+  const liveRemaining = Number.isFinite(deadlineAt)
+    ? Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000))
+    : Number(phase.remaining_seconds || 0);
+  const attemptLine = Number(phase.attempt_count || 0) && Number(phase.attempt_index || 0)
+    ? `外部请求 ${formatNumber(phase.attempt_index || 0)} / ${formatNumber(phase.attempt_count)}`
+    : "";
   const recommendedBatchTimeout = timeoutPolicy.recommended_batch_timeout_seconds || "";
   const recommendedFinalTimeout = timeoutPolicy.recommended_final_reduce_timeout_seconds || "";
   const recommendedEnrichmentTimeout = timeoutPolicy.recommended_enrichment_timeout_seconds || "";
@@ -1602,7 +1614,10 @@ function renderJobPhase(job) {
     ? `批次 ${phase.phase_index ? `${formatNumber(phase.phase_index)} / ` : ""}${formatNumber(phase.batch_count || plan.batch_count)}`
     : "";
   const timeoutLine = timeout
-    ? `当前阶段最多等待 ${formatNumber(timeout)} 秒`
+    ? `本次请求最多等待 ${formatNumber(timeout)} 秒`
+    : "";
+  const runtimeBudgetLine = totalBudget
+    ? `总预算 ${formatNumber(totalBudget)} 秒 · 已等待 ${formatNumber(liveElapsed)} 秒 · 剩余约 ${formatNumber(liveRemaining)} 秒`
     : "";
   const budgetLine = [recommendedEnrichmentTimeout ? `富化建议 ${formatNumber(recommendedEnrichmentTimeout)} 秒` : "", recommendedBatchTimeout ? `单批建议 ${formatNumber(recommendedBatchTimeout)} 秒` : "", recommendedFinalTimeout ? `汇总建议 ${formatNumber(recommendedFinalTimeout)} 秒` : ""].filter(Boolean).join(" · ");
   const duration = plan.duration || {};
@@ -1624,8 +1639,10 @@ function renderJobPhase(job) {
   const chips = [
     plan.strategy_label || "",
     phase.current_phase_label || "",
+    attemptLine,
     batchLine,
     timeoutLine,
+    runtimeBudgetLine,
     budgetLine,
     durationLine,
     promptLine,
