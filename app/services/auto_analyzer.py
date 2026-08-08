@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.config import settings
-from app.errors import AppError, ErrorCode
+from app.errors import AppError, ErrorCode, is_retryable_llm_error
 from app.models import CaseArtifact
 from app.services.analysis_taxonomy import build_analysis_context
 from app.services.enrichment import refresh_analysis_input_enrichment
@@ -1435,7 +1435,7 @@ def _compact_text_prompt(
 
 
 def _should_degrade_llm_error(error: AppError) -> bool:
-    return error.code in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID}
+    return is_retryable_llm_error(error.code)
 
 
 def _normalize_result(

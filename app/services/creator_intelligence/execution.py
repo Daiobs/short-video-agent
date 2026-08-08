@@ -15,6 +15,7 @@ from app.services.creator_intelligence.adapters import (
 )
 from app.services.creator_intelligence.cognition import build_behavior_representation
 from app.services.creator_intelligence.llm_execution import LLMExecutionEngine, LLMExecutionResult
+from app.services.llm_budget import DistillDeadline
 from app.services.creator_intelligence.models import (
     BehaviorRepresentation,
     CreatorProject,
@@ -71,6 +72,7 @@ class ExecutionLayer:
         prompt: str = "",
         image_paths: list[Path] | None = None,
         max_retries: int = 3,
+        deadline: DistillDeadline | None = None,
     ) -> dict[str, Any]:
         behavior_model = self.extract_behavior_model(sample_set if isinstance(sample_set, CreatorProject) else self.normalize_sample_set(sample_set))
         payload = {
@@ -84,6 +86,7 @@ class ExecutionLayer:
                 prompt,
                 image_paths or [],
                 max_retries=max_retries,
+                deadline=deadline,
             ).to_dict()
         return payload
 
@@ -94,8 +97,13 @@ class ExecutionLayer:
         image_paths: list[Path] | None = None,
         *,
         max_retries: int = 3,
+        deadline: DistillDeadline | None = None,
     ) -> LLMExecutionResult:
-        return LLMExecutionEngine(provider, max_retries=max_retries).execute_creator_clone(prompt, image_paths or [])
+        return LLMExecutionEngine(
+            provider,
+            max_retries=max_retries,
+            deadline=deadline,
+        ).execute_creator_clone(prompt, image_paths or [])
 
     def analyze_json(self, provider: Any, prompt: str, image_paths: list[Path] | None = None) -> dict[str, Any]:
         return provider.analyze(prompt, image_paths or [])

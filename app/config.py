@@ -72,7 +72,19 @@ class Settings:
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_model: str = os.getenv("LLM_MODEL", "")
     llm_timeout_seconds: float = _float_env("LLM_TIMEOUT_SECONDS", 90.0)
+    llm_creator_distill_request_timeout_seconds: float = _float_env(
+        "LLM_CREATOR_DISTILL_REQUEST_TIMEOUT_SECONDS",
+        180.0,
+    )
     llm_final_reduce_timeout_seconds: float = _float_env("LLM_FINAL_REDUCE_TIMEOUT_SECONDS", 600.0)
+    llm_quick_distill_budget_seconds: float = _float_env("LLM_QUICK_DISTILL_BUDGET_SECONDS", 240.0)
+    llm_deep_distill_budget_seconds: float = _float_env("LLM_DEEP_DISTILL_BUDGET_SECONDS", 600.0)
+    llm_batch_job_budget_seconds: float = _float_env("LLM_BATCH_JOB_BUDGET_SECONDS", 600.0)
+    llm_final_reduce_min_reserve_seconds: float = _float_env("LLM_FINAL_REDUCE_MIN_RESERVE_SECONDS", 120.0)
+    llm_compact_retry_min_remaining_seconds: float = _float_env(
+        "LLM_COMPACT_RETRY_MIN_REMAINING_SECONDS",
+        60.0,
+    )
     llm_temperature: float = _float_env("LLM_TEMPERATURE", 0.2)
     llm_max_keyframes: int = _int_env("LLM_MAX_KEYFRAMES", 6)
     llm_max_output_tokens: int = _int_env("LLM_MAX_OUTPUT_TOKENS", 1200)

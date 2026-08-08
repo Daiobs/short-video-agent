@@ -293,7 +293,13 @@ LLM_API_BASE=https://api.openai.com/v1
 LLM_API_KEY=
 LLM_MODEL=
 LLM_TIMEOUT_SECONDS=90
+LLM_CREATOR_DISTILL_REQUEST_TIMEOUT_SECONDS=180
 LLM_FINAL_REDUCE_TIMEOUT_SECONDS=600
+LLM_QUICK_DISTILL_BUDGET_SECONDS=240
+LLM_DEEP_DISTILL_BUDGET_SECONDS=600
+LLM_BATCH_JOB_BUDGET_SECONDS=600
+LLM_FINAL_REDUCE_MIN_RESERVE_SECONDS=120
+LLM_COMPACT_RETRY_MIN_REMAINING_SECONDS=60
 LLM_TEMPERATURE=0.2
 LLM_MAX_KEYFRAMES=6
 LLM_MAX_OUTPUT_TOKENS=1200
@@ -314,7 +320,7 @@ OCR_SUBTITLE_CROP_RATIO=0.35
 
 `CANDIDATE_PROBE_*` 只在同一档清晰度存在多个 CDN host 时生效。它会用 Range 请求读取少量字节并排序，不会为了测速降低清晰度。
 
-`LLM_TIMEOUT_SECONDS` 用于单条拆解和普通批次蒸馏；`LLM_FINAL_REDUCE_TIMEOUT_SECONDS` 专门用于 20 条以上分批蒸馏后的最终账号级汇总，默认 600 秒。大样本蒸馏优先等待最终 Reduce 完成，只有最终汇总仍超时或失败时，才会基于已成功的批次摘要生成本地兜底报告。
+`LLM_TIMEOUT_SECONDS` 是普通拆解等请求的单次上限，默认 90 秒；`LLM_CREATOR_DISTILL_REQUEST_TIMEOUT_SECONDS` 是 Creator 蒸馏单次请求上限，默认 180 秒；`LLM_FINAL_REDUCE_TIMEOUT_SECONDS` 单独控制分批蒸馏的最终汇总请求。完整任务还受墙钟总预算约束：Quick 默认 240 秒，Deep 默认 600 秒，Batch Job 默认 600 秒并至少为 Final Reduce 预留 120 秒。Creator 页面可在“响应模式”中显式选择 Quick 或 Deep。单次蒸馏实际等待为 `min(Creator 单请求上限, 当前剩余总预算)`，总预算是硬上限而不是保证等待时长。Quick 遇到 timeout 立即失败并建议切换 Deep；Deep 才允许 timeout、502/503 或无效 JSON 在剩余预算不少于 60 秒时执行一次精简 Prompt 重试。限流、鉴权失败和额度不足均不自动重试。Prompt、样本数和视频时长只进入诊断，不会自动把总预算扩展到几十分钟。
 
 AI 自动拆解默认关闭。默认 `LLM_PROVIDER=disabled` 时，系统不会自动调用任何大模型；主流程只会生成素材包。官方 OpenAI API 建议使用 Responses API：
 

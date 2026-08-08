@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.services.llm_provider import BaseLLMProvider, get_llm_provider
@@ -17,6 +19,16 @@ SUPPORTED_PROVIDERS = {
     "claude",
 }
 DISABLED_PROVIDERS = {"", "disabled", "none", "off"}
+LLM_TIMING_LIMITS = {
+    "timeout_seconds": (5.0, 300.0, "普通 LLM 请求上限"),
+    "creator_distill_request_timeout_seconds": (30.0, 300.0, "Creator 单请求上限"),
+    "quick_distill_budget_seconds": (60.0, 600.0, "Quick 总预算"),
+    "deep_distill_budget_seconds": (120.0, 1200.0, "Deep 总预算"),
+    "batch_job_budget_seconds": (180.0, 1800.0, "Batch 总预算"),
+    "final_reduce_timeout_seconds": (30.0, 900.0, "Final Reduce 请求上限"),
+    "final_reduce_min_reserve_seconds": (30.0, 600.0, "Final Reduce 预留"),
+    "compact_retry_min_remaining_seconds": (10.0, 300.0, "Compact Retry 最低剩余"),
+}
 
 
 def mask_api_key(value: str) -> str:
@@ -66,11 +78,55 @@ def llm_status_payload() -> dict:
         "llm_max_keyframes": effective["max_keyframes"],
         "temperature": effective["temperature"],
         "timeout_seconds": effective["timeout_seconds"],
+        "creator_distill_request_timeout_seconds": effective["creator_distill_request_timeout_seconds"],
         "final_reduce_timeout_seconds": effective["final_reduce_timeout_seconds"],
+        "quick_distill_budget_seconds": effective["quick_distill_budget_seconds"],
+        "deep_distill_budget_seconds": effective["deep_distill_budget_seconds"],
+        "batch_job_budget_seconds": effective["batch_job_budget_seconds"],
+        "final_reduce_min_reserve_seconds": effective["final_reduce_min_reserve_seconds"],
+        "compact_retry_min_remaining_seconds": effective["compact_retry_min_remaining_seconds"],
         "max_output_tokens": effective["max_output_tokens"],
         "final_reduce_max_output_tokens": effective["final_reduce_max_output_tokens"],
         "status_message": status_message,
     }
+
+
+def validate_llm_timing_settings(values: dict) -> dict[str, float]:
+    normalized: dict[str, float] = {}
+    for key, (minimum, maximum, label) in LLM_TIMING_LIMITS.items():
+        try:
+            value = float(values.get(key))
+        except (TypeError, ValueError) as error:
+            raise AppError(ErrorCode.LLM_SETTINGS_INVALID, f"{label}必须是有效数字。") from error
+        if not math.isfinite(value):
+            raise AppError(ErrorCode.LLM_SETTINGS_INVALID, f"{label}必须是有限数字。")
+        if value < minimum or value > maximum:
+            raise AppError(
+                ErrorCode.LLM_SETTINGS_INVALID,
+                f"{label}必须在 {minimum:g}–{maximum:g} 秒之间。",
+            )
+        normalized[key] = value
+
+    creator_timeout = normalized["creator_distill_request_timeout_seconds"]
+    quick_budget = normalized["quick_distill_budget_seconds"]
+    deep_budget = normalized["deep_distill_budget_seconds"]
+    retry_minimum = normalized["compact_retry_min_remaining_seconds"]
+    batch_budget = normalized["batch_job_budget_seconds"]
+    final_timeout = normalized["final_reduce_timeout_seconds"]
+    final_reserve = normalized["final_reduce_min_reserve_seconds"]
+    if quick_budget < creator_timeout:
+        raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Quick 总预算不能小于 Creator 单请求上限。")
+    if deep_budget < creator_timeout:
+        raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Deep 总预算不能小于 Creator 单请求上限。")
+    if retry_minimum >= quick_budget:
+        raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Compact Retry 最低剩余必须小于 Quick 总预算。")
+    if retry_minimum >= deep_budget:
+        raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Compact Retry 最低剩余必须小于 Deep 总预算。")
+    if final_reserve >= batch_budget:
+        raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Final Reduce 预留必须小于 Batch 总预算。")
+    if final_timeout > batch_budget:
+        raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Final Reduce 请求上限不能大于 Batch 总预算。")
+    return normalized
 
 
 def update_llm_settings_payload(payload: dict) -> dict:
@@ -80,12 +136,37 @@ def update_llm_settings_payload(payload: dict) -> dict:
         "api_base": payload.get("api_base", current["api_base"]),
         "model": payload.get("model", current["model"]),
         "timeout_seconds": payload.get("timeout_seconds", current["timeout_seconds"]),
+        "creator_distill_request_timeout_seconds": payload.get(
+            "creator_distill_request_timeout_seconds",
+            current["creator_distill_request_timeout_seconds"],
+        ),
         "final_reduce_timeout_seconds": payload.get("final_reduce_timeout_seconds", current["final_reduce_timeout_seconds"]),
+        "quick_distill_budget_seconds": payload.get(
+            "quick_distill_budget_seconds",
+            current["quick_distill_budget_seconds"],
+        ),
+        "deep_distill_budget_seconds": payload.get(
+            "deep_distill_budget_seconds",
+            current["deep_distill_budget_seconds"],
+        ),
+        "batch_job_budget_seconds": payload.get(
+            "batch_job_budget_seconds",
+            current["batch_job_budget_seconds"],
+        ),
+        "final_reduce_min_reserve_seconds": payload.get(
+            "final_reduce_min_reserve_seconds",
+            current["final_reduce_min_reserve_seconds"],
+        ),
+        "compact_retry_min_remaining_seconds": payload.get(
+            "compact_retry_min_remaining_seconds",
+            current["compact_retry_min_remaining_seconds"],
+        ),
         "temperature": payload.get("temperature", current["temperature"]),
         "max_keyframes": payload.get("llm_max_keyframes", payload.get("max_keyframes", current["max_keyframes"])),
         "max_output_tokens": payload.get("max_output_tokens", current["max_output_tokens"]),
         "final_reduce_max_output_tokens": payload.get("final_reduce_max_output_tokens", current["final_reduce_max_output_tokens"]),
     }
+    values.update(validate_llm_timing_settings(values))
     if payload.get("clear_api_key"):
         values["api_key"] = ""
     elif str(payload.get("api_key") or "").strip():

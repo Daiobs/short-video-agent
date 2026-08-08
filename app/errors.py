@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 
 class ErrorCode:
@@ -29,7 +30,13 @@ class ErrorCode:
     INVALID_VIDEO_FILE = "INVALID_VIDEO_FILE"
     LLM_NOT_CONFIGURED = "LLM_NOT_CONFIGURED"
     LLM_REQUEST_FAILED = "LLM_REQUEST_FAILED"
+    LLM_RATE_LIMITED = "LLM_RATE_LIMITED"
+    LLM_AUTH_FAILED = "LLM_AUTH_FAILED"
+    LLM_QUOTA_EXCEEDED = "LLM_QUOTA_EXCEEDED"
+    LLM_UPSTREAM_UNAVAILABLE = "LLM_UPSTREAM_UNAVAILABLE"
+    LLM_GATEWAY_TIMEOUT = "LLM_GATEWAY_TIMEOUT"
     LLM_RESPONSE_INVALID = "LLM_RESPONSE_INVALID"
+    LLM_SETTINGS_INVALID = "LLM_SETTINGS_INVALID"
     AUTO_ANALYSIS_FAILED = "AUTO_ANALYSIS_FAILED"
     ENRICHMENT_FAILED = "ENRICHMENT_FAILED"
     COMMENTS_IMPORT_FAILED = "COMMENTS_IMPORT_FAILED"
@@ -82,7 +89,13 @@ ERROR_MESSAGES = {
     ErrorCode.INVALID_VIDEO_FILE: "上传文件不是有效视频，或文件为空。",
     ErrorCode.LLM_NOT_CONFIGURED: "大模型 API 未配置。请在 .env 中配置 LLM_PROVIDER、LLM_API_BASE、LLM_API_KEY 和 LLM_MODEL。",
     ErrorCode.LLM_REQUEST_FAILED: "大模型 API 请求失败。请检查 API Base、Key、网络、余额和模型名。",
+    ErrorCode.LLM_RATE_LIMITED: "大模型网关限流，任务已停止；没有继续重试。",
+    ErrorCode.LLM_AUTH_FAILED: "大模型鉴权失败。请检查 API Key、API Base 和模型访问权限。",
+    ErrorCode.LLM_QUOTA_EXCEEDED: "大模型账户额度或余额不足。请补充额度后再试。",
+    ErrorCode.LLM_UPSTREAM_UNAVAILABLE: "大模型上游暂时不可用。已停止当前请求，可稍后人工重试。",
+    ErrorCode.LLM_GATEWAY_TIMEOUT: "大模型网关请求超时。已停止当前请求，可稍后人工重试。",
     ErrorCode.LLM_RESPONSE_INVALID: "大模型没有返回合法 JSON。可以降低 LLM_TEMPERATURE，或换用更稳定的多模态模型。",
+    ErrorCode.LLM_SETTINGS_INVALID: "大模型时间配置无效。请检查各项范围和总预算约束。",
     ErrorCode.AUTO_ANALYSIS_FAILED: "自动拆解失败。请检查 contact_sheet.jpg 和 keyframes/ 是否已经生成。",
     ErrorCode.ENRICHMENT_FAILED: "素材富化归档失败。请检查素材包文件是否完整。",
     ErrorCode.COMMENTS_IMPORT_FAILED: "评论导入失败。请检查评论文本或 JSON 格式。",
@@ -114,14 +127,87 @@ ERROR_MESSAGES = {
 class AppError(Exception):
     code: str
     message: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.message:
             self.message = ERROR_MESSAGES.get(self.code, "操作失败。")
 
-    def as_dict(self) -> dict[str, str]:
-        return {"error_code": self.code, "message": self.message}
+    def public_details(self) -> dict[str, Any]:
+        allowed = {
+            "status_code",
+            "content_type",
+            "redirected",
+            "page_count",
+            "item_count",
+            "duplicate_count",
+            "invalid_item_count",
+            "partial",
+            "truncated_reason",
+            "retry_count",
+            "provider",
+            "retryable",
+            "phase",
+            "attempt_index",
+            "http_attempt_index",
+            "http_attempt_count",
+            "response_format_fallback_used",
+        }
+        payload: dict[str, Any] = {}
+        for key in allowed:
+            value = self.details.get(key)
+            if isinstance(value, bool):
+                payload[key] = value
+            elif isinstance(value, int):
+                payload[key] = value
+            elif isinstance(value, str):
+                payload[key] = value[:160]
+            elif value is None and key in self.details:
+                payload[key] = None
+        return payload
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"error_code": self.code, "message": self.message}
+        diagnostics = self.public_details()
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
+        return payload
 
 
 def error_message(code: str) -> str:
     return ERROR_MESSAGES.get(code, "操作失败。")
+
+
+RETRYABLE_LLM_ERROR_CODES = frozenset(
+    {
+        ErrorCode.LLM_GATEWAY_TIMEOUT,
+        ErrorCode.LLM_UPSTREAM_UNAVAILABLE,
+        ErrorCode.LLM_RESPONSE_INVALID,
+    }
+)
+
+NON_RETRYABLE_LLM_ERROR_CODES = frozenset(
+    {
+        ErrorCode.LLM_NOT_CONFIGURED,
+        ErrorCode.LLM_RATE_LIMITED,
+        ErrorCode.LLM_AUTH_FAILED,
+        ErrorCode.LLM_QUOTA_EXCEEDED,
+    }
+)
+
+PROMPT_RECOVERY_LLM_ERROR_CODES = frozenset(
+    {
+        ErrorCode.LLM_NOT_CONFIGURED,
+        ErrorCode.LLM_REQUEST_FAILED,
+        ErrorCode.LLM_RATE_LIMITED,
+        ErrorCode.LLM_AUTH_FAILED,
+        ErrorCode.LLM_QUOTA_EXCEEDED,
+        ErrorCode.LLM_UPSTREAM_UNAVAILABLE,
+        ErrorCode.LLM_GATEWAY_TIMEOUT,
+        ErrorCode.LLM_RESPONSE_INVALID,
+    }
+)
+
+
+def is_retryable_llm_error(code: str) -> bool:
+    return str(code or "") in RETRYABLE_LLM_ERROR_CODES

@@ -719,6 +719,13 @@ const llmApiBaseInput = document.getElementById("llm-api-base-input");
 const llmModelInput = document.getElementById("llm-model-input");
 const llmApiKeyInput = document.getElementById("llm-api-key-input");
 const llmTimeoutInput = document.getElementById("llm-timeout-input");
+const llmCreatorDistillTimeoutInput = document.getElementById("llm-creator-distill-timeout-input");
+const llmFinalReduceTimeoutInput = document.getElementById("llm-final-reduce-timeout-input");
+const llmQuickDistillBudgetInput = document.getElementById("llm-quick-distill-budget-input");
+const llmDeepDistillBudgetInput = document.getElementById("llm-deep-distill-budget-input");
+const llmBatchJobBudgetInput = document.getElementById("llm-batch-job-budget-input");
+const llmFinalReduceReserveInput = document.getElementById("llm-final-reduce-reserve-input");
+const llmCompactRetryMinInput = document.getElementById("llm-compact-retry-min-input");
 const llmTemperatureInput = document.getElementById("llm-temperature-input");
 const llmClearKeyInput = document.getElementById("llm-clear-key-input");
 const saveLlmSettingsButton = document.getElementById("save-llm-settings-button");
@@ -820,6 +827,7 @@ const profileQueueItems = document.getElementById("profile-queue-items");
 const creatorCloneDistillButton = document.getElementById("creator-clone-distill-button");
 const creatorCloneBatchDistillButton = document.getElementById("creator-clone-batch-distill-button");
 const profileContentProfile = document.getElementById("profile-content-profile");
+const profileDistillMode = document.getElementById("profile-distill-mode");
 const creatorCloneSelectionStatus = document.getElementById("creator-clone-selection-status");
 const profileEvidenceStatus = document.getElementById("profile-evidence-status");
 const profileDistillReadinessStatus = document.getElementById("profile-distill-readiness");
@@ -1595,6 +1603,31 @@ function renderJobPhase(job) {
   const plan = phase.execution_plan || result.execution_plan || {};
   const timeoutPolicy = plan.timeout_policy || {};
   const timeout = phase.timeout_seconds || timeoutPolicy.recommended_batch_timeout_seconds || timeoutPolicy.configured_batch_timeout_seconds || "";
+  const totalBudget = Number(phase.total_budget_seconds || timeoutPolicy.total_request_budget_seconds || 0);
+  const budgetStartedAt = Date.parse(phase.budget_started_at || "");
+  const deadlineAt = Date.parse(phase.deadline_at || "");
+  const isRunningPhase = (phase.status || "running") === "running";
+  const liveElapsed = isRunningPhase && Number.isFinite(budgetStartedAt)
+    ? Math.max(Number(phase.elapsed_seconds || 0), Math.floor((Date.now() - budgetStartedAt) / 1000))
+    : Number(phase.elapsed_seconds || 0);
+  const liveRemaining = isRunningPhase && Number.isFinite(deadlineAt)
+    ? Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000))
+    : Number(phase.remaining_seconds || 0);
+  const attemptLine = Number(phase.attempt_count || 0) && Number(phase.attempt_index || 0)
+    ? `外部请求 ${formatNumber(phase.attempt_index || 0)} / ${formatNumber(phase.attempt_count)}`
+    : "";
+  const httpAttemptLine = Number(phase.http_attempt_count || 0)
+    ? `HTTP 请求 ${formatNumber(phase.http_attempt_index || phase.http_attempt_count)} / ${formatNumber(phase.http_attempt_count)}`
+    : "";
+  const fallbackLine = phase.response_format_fallback_used
+    ? "已使用 response_format 兼容回退"
+    : "";
+  const retryableLine = typeof phase.retryable === "boolean"
+    ? `允许重试：${phase.retryable ? "是" : "否"}`
+    : "";
+  const failureLine = phase.failure_class
+    ? `失败分类：${phase.failure_class}`
+    : "";
   const recommendedBatchTimeout = timeoutPolicy.recommended_batch_timeout_seconds || "";
   const recommendedFinalTimeout = timeoutPolicy.recommended_final_reduce_timeout_seconds || "";
   const recommendedEnrichmentTimeout = timeoutPolicy.recommended_enrichment_timeout_seconds || "";
@@ -1602,7 +1635,10 @@ function renderJobPhase(job) {
     ? `批次 ${phase.phase_index ? `${formatNumber(phase.phase_index)} / ` : ""}${formatNumber(phase.batch_count || plan.batch_count)}`
     : "";
   const timeoutLine = timeout
-    ? `当前阶段最多等待 ${formatNumber(timeout)} 秒`
+    ? `本次请求最多等待 ${formatNumber(timeout)} 秒`
+    : "";
+  const runtimeBudgetLine = totalBudget
+    ? `总预算 ${formatNumber(totalBudget)} 秒 · 已等待 ${formatNumber(liveElapsed)} 秒 · 剩余约 ${formatNumber(liveRemaining)} 秒`
     : "";
   const budgetLine = [recommendedEnrichmentTimeout ? `富化建议 ${formatNumber(recommendedEnrichmentTimeout)} 秒` : "", recommendedBatchTimeout ? `单批建议 ${formatNumber(recommendedBatchTimeout)} 秒` : "", recommendedFinalTimeout ? `汇总建议 ${formatNumber(recommendedFinalTimeout)} 秒` : ""].filter(Boolean).join(" · ");
   const duration = plan.duration || {};
@@ -1624,8 +1660,14 @@ function renderJobPhase(job) {
   const chips = [
     plan.strategy_label || "",
     phase.current_phase_label || "",
+    attemptLine,
+    httpAttemptLine,
+    fallbackLine,
+    retryableLine,
+    failureLine,
     batchLine,
     timeoutLine,
+    runtimeBudgetLine,
     budgetLine,
     durationLine,
     promptLine,
@@ -6165,7 +6207,7 @@ async function distillSelectedCreatorClone(options = {}) {
         sample_set_id: currentCloneSetId,
         samples: currentCloneSetId ? [] : activeCreatorSampleViewItems().map(creatorCloneSamplePayload),
         selected_sample_ids: selectedIds,
-        distill_mode: "quick",
+        distill_mode: profileDistillMode?.value || "quick",
         include_case_reports: true,
         max_samples: CREATOR_CLONE_MAX_DISTILL_SAMPLES,
         title: "创作者蒸馏素材池",
@@ -6227,7 +6269,7 @@ async function batchDistillSelectedCreatorClone(options = {}) {
         sample_set_id: currentCloneSetId,
         samples: currentCloneSetId ? [] : activeCreatorSampleViewItems().map(creatorCloneSamplePayload),
         selected_sample_ids: selectedIds,
-        distill_mode: "quick",
+        distill_mode: profileDistillMode?.value || "quick",
         batch_size: CREATOR_CLONE_MAX_DISTILL_SAMPLES,
         max_samples: PROFILE_BUILD_MAX_ITEMS,
         title: "创作者蒸馏素材池",
@@ -7595,6 +7637,13 @@ const settingsPanelController = window.SettingsPanel?.init({
     llmModelInput,
     llmApiKeyInput,
     llmTimeoutInput,
+    llmCreatorDistillTimeoutInput,
+    llmFinalReduceTimeoutInput,
+    llmQuickDistillBudgetInput,
+    llmDeepDistillBudgetInput,
+    llmBatchJobBudgetInput,
+    llmFinalReduceReserveInput,
+    llmCompactRetryMinInput,
     llmTemperatureInput,
     llmClearKeyInput,
     saveLlmButton: saveLlmSettingsButton,

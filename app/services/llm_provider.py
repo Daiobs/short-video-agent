@@ -14,6 +14,7 @@ from PIL import Image, ImageOps
 
 from app.config import settings
 from app.errors import AppError, ErrorCode
+from app.services.llm_budget import DistillDeadline
 from app.services.runtime_settings import effective_llm_settings
 
 
@@ -22,8 +23,13 @@ logger = logging.getLogger("uvicorn.error")
 
 
 class BaseLLMProvider:
+    _diagnostics: dict[str, Any] = {}
+
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
         raise NotImplementedError
+
+    def public_diagnostics(self) -> dict[str, Any]:
+        return _safe_llm_diagnostics(getattr(self, "_diagnostics", {}))
 
 
 class OpenAICompatibleProvider(BaseLLMProvider):
@@ -35,6 +41,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         timeout_seconds: float | None = None,
         temperature: float | None = None,
         max_output_tokens: int | None = None,
+        deadline: DistillDeadline | None = None,
     ) -> None:
         effective = effective_llm_settings()
         self.api_base = (api_base or effective["api_base"]).rstrip("/")
@@ -45,6 +52,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self.max_output_tokens = (
             max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
+        self.deadline = deadline
+        self._diagnostics = _new_llm_diagnostics("openai_compatible")
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
         if not self.api_key or not self.model:
@@ -75,6 +84,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         endpoint = f"{self.api_base}/chat/completions"
         started_at = time.monotonic()
         image_bytes = _image_bytes(image_paths)
+        self._diagnostics = _new_llm_diagnostics("openai_compatible")
         logger.info(
             "llm_request_start provider=openai_compatible model=%s endpoint=%s prompt_chars=%s image_count=%s image_bytes=%s timeout=%s",
             self.model,
@@ -85,7 +95,15 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             self.timeout_seconds,
         )
         try:
-            with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
+            first_timeout = _provider_request_timeout(
+                self.timeout_seconds,
+                self.deadline,
+                phase="chat_completions",
+                attempt_index=1,
+                provider="openai_compatible",
+            )
+            self._diagnostics.update({"http_attempt_index": 1, "http_attempt_count": 1})
+            with httpx.Client(timeout=first_timeout, trust_env=False) as client:
                 response = client.post(
                     endpoint,
                     headers={
@@ -94,9 +112,25 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                     },
                     json=payload,
                 )
-                if response.status_code >= 400 and _response_format_may_be_unsupported(response):
-                    payload.pop("response_format", None)
-                    response = client.post(
+            if _response_format_may_be_unsupported(response):
+                fallback_timeout = _provider_request_timeout(
+                    self.timeout_seconds,
+                    self.deadline,
+                    minimum_seconds=5.0,
+                    phase="response_format_fallback",
+                    attempt_index=2,
+                    provider="openai_compatible",
+                )
+                payload.pop("response_format", None)
+                self._diagnostics.update(
+                    {
+                        "http_attempt_index": 2,
+                        "http_attempt_count": 2,
+                        "response_format_fallback_used": True,
+                    }
+                )
+                with httpx.Client(timeout=fallback_timeout, trust_env=False) as fallback_client:
+                    response = fallback_client.post(
                         endpoint,
                         headers={
                             "Authorization": f"Bearer {self.api_key}",
@@ -114,9 +148,26 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                     len([path for path in image_paths if path.is_file()]),
                     image_bytes,
                 )
-                raise AppError(ErrorCode.LLM_REQUEST_FAILED, f"大模型 API 返回 HTTP {response.status_code}。")
-            data = response.json()
-            result = parse_json_text(_chat_completion_output_text(data))
+                raise _classify_llm_http_error(
+                    response,
+                    provider="openai_compatible",
+                    phase="response_format_fallback" if self._diagnostics["response_format_fallback_used"] else "chat_completions",
+                    attempt_index=int(self._diagnostics["http_attempt_index"]),
+                    diagnostics=self._diagnostics,
+                )
+            data = _response_json(response, "openai_compatible", diagnostics=self._diagnostics)
+            try:
+                result = parse_json_text(_chat_completion_output_text(data))
+            except AppError as error:
+                raise AppError(
+                    ErrorCode.LLM_RESPONSE_INVALID,
+                    details={
+                        **self.public_diagnostics(),
+                        "retryable": True,
+                        "phase": "parse_response",
+                        "attempt_index": int(self._diagnostics["http_attempt_index"]),
+                    },
+                ) from error
             logger.info(
                 "llm_request_success provider=openai_compatible model=%s duration_ms=%s prompt_chars=%s image_count=%s image_bytes=%s",
                 self.model,
@@ -138,7 +189,33 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 image_bytes,
                 self.timeout_seconds,
             )
-            raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 请求超时。") from error
+            raise AppError(
+                ErrorCode.LLM_GATEWAY_TIMEOUT,
+                details={
+                    **self.public_diagnostics(),
+                    "retryable": True,
+                    "phase": "response_format_fallback"
+                    if self._diagnostics.get("response_format_fallback_used")
+                    else "chat_completions",
+                    "attempt_index": int(self._diagnostics.get("http_attempt_index") or 1),
+                },
+            ) from error
+        except httpx.RequestError as error:
+            logger.warning(
+                "llm_request_transport_error provider=openai_compatible model=%s error_type=%s duration_ms=%s",
+                self.model,
+                type(error).__name__,
+                _duration_ms(started_at),
+            )
+            raise AppError(
+                ErrorCode.LLM_UPSTREAM_UNAVAILABLE,
+                details={
+                    **self.public_diagnostics(),
+                    "retryable": True,
+                    "phase": "transport",
+                    "attempt_index": int(self._diagnostics.get("http_attempt_index") or 1),
+                },
+            ) from error
         except Exception as error:
             logger.warning(
                 "llm_request_error provider=openai_compatible model=%s error_type=%s duration_ms=%s prompt_chars=%s image_count=%s image_bytes=%s",
@@ -149,7 +226,15 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 len([path for path in image_paths if path.is_file()]),
                 image_bytes,
             )
-            raise AppError(ErrorCode.LLM_REQUEST_FAILED, str(error)[:500]) from error
+            raise AppError(
+                ErrorCode.LLM_REQUEST_FAILED,
+                details={
+                    **self.public_diagnostics(),
+                    "retryable": False,
+                    "phase": "client",
+                    "attempt_index": int(self._diagnostics.get("http_attempt_index") or 1),
+                },
+            ) from error
 
 
 class OpenAIResponsesProvider(BaseLLMProvider):
@@ -161,6 +246,7 @@ class OpenAIResponsesProvider(BaseLLMProvider):
         timeout_seconds: float | None = None,
         temperature: float | None = None,
         max_output_tokens: int | None = None,
+        deadline: DistillDeadline | None = None,
     ) -> None:
         effective = effective_llm_settings()
         self.api_base = (api_base or effective["api_base"]).rstrip("/")
@@ -171,6 +257,8 @@ class OpenAIResponsesProvider(BaseLLMProvider):
         self.max_output_tokens = (
             max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
+        self.deadline = deadline
+        self._diagnostics = _new_llm_diagnostics("openai_responses")
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
         if not self.api_key or not self.model:
@@ -197,6 +285,7 @@ class OpenAIResponsesProvider(BaseLLMProvider):
         endpoint = f"{self.api_base}/responses"
         started_at = time.monotonic()
         image_bytes = _image_bytes(image_paths)
+        self._diagnostics = _new_llm_diagnostics("openai_responses")
         logger.info(
             "llm_request_start provider=openai_responses model=%s endpoint=%s prompt_chars=%s image_count=%s image_bytes=%s timeout=%s",
             self.model,
@@ -207,7 +296,15 @@ class OpenAIResponsesProvider(BaseLLMProvider):
             self.timeout_seconds,
         )
         try:
-            with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
+            request_timeout = _provider_request_timeout(
+                self.timeout_seconds,
+                self.deadline,
+                phase="responses",
+                attempt_index=1,
+                provider="openai_responses",
+            )
+            self._diagnostics.update({"http_attempt_index": 1, "http_attempt_count": 1})
+            with httpx.Client(timeout=request_timeout, trust_env=False) as client:
                 response = client.post(
                     endpoint,
                     headers={
@@ -218,24 +315,31 @@ class OpenAIResponsesProvider(BaseLLMProvider):
                 )
             if response.status_code >= 400:
                 logger.warning(
-                    "llm_request_failed provider=openai_responses model=%s status=%s duration_ms=%s response_preview=%s",
+                    "llm_request_failed provider=openai_responses model=%s status=%s duration_ms=%s",
                     self.model,
                     response.status_code,
                     _duration_ms(started_at),
-                    _response_preview(response),
                 )
-                raise AppError(
-                    ErrorCode.LLM_REQUEST_FAILED,
-                    f"大模型 API 返回 HTTP {response.status_code}：{_response_preview(response)}",
+                raise _classify_llm_http_error(
+                    response,
+                    provider="openai_responses",
+                    phase="responses",
+                    attempt_index=1,
+                    diagnostics=self._diagnostics,
                 )
-            data = _response_json(response, "openai_responses")
+            data = _response_json(response, "openai_responses", diagnostics=self._diagnostics)
             output_text = _responses_output_text(data)
             try:
                 result = parse_json_text(output_text)
             except AppError as error:
                 raise AppError(
-                    error.code,
-                    f"Responses 模型输出不是合法 JSON：{_text_preview(output_text)}",
+                    ErrorCode.LLM_RESPONSE_INVALID,
+                    details={
+                        **self.public_diagnostics(),
+                        "retryable": True,
+                        "phase": "parse_response",
+                        "attempt_index": 1,
+                    },
                 ) from error
             logger.info(
                 "llm_request_success provider=openai_responses model=%s duration_ms=%s prompt_chars=%s image_count=%s image_bytes=%s",
@@ -255,7 +359,31 @@ class OpenAIResponsesProvider(BaseLLMProvider):
                 _duration_ms(started_at),
                 self.timeout_seconds,
             )
-            raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 请求超时。") from error
+            raise AppError(
+                ErrorCode.LLM_GATEWAY_TIMEOUT,
+                details={
+                    **self.public_diagnostics(),
+                    "retryable": True,
+                    "phase": "responses",
+                    "attempt_index": 1,
+                },
+            ) from error
+        except httpx.RequestError as error:
+            logger.warning(
+                "llm_request_transport_error provider=openai_responses model=%s error_type=%s duration_ms=%s",
+                self.model,
+                type(error).__name__,
+                _duration_ms(started_at),
+            )
+            raise AppError(
+                ErrorCode.LLM_UPSTREAM_UNAVAILABLE,
+                details={
+                    **self.public_diagnostics(),
+                    "retryable": True,
+                    "phase": "transport",
+                    "attempt_index": 1,
+                },
+            ) from error
         except Exception as error:
             logger.warning(
                 "llm_request_error provider=openai_responses model=%s error_type=%s duration_ms=%s",
@@ -263,7 +391,15 @@ class OpenAIResponsesProvider(BaseLLMProvider):
                 type(error).__name__,
                 _duration_ms(started_at),
             )
-            raise AppError(ErrorCode.LLM_REQUEST_FAILED, str(error)[:500]) from error
+            raise AppError(
+                ErrorCode.LLM_REQUEST_FAILED,
+                details={
+                    **self.public_diagnostics(),
+                    "retryable": False,
+                    "phase": "client",
+                    "attempt_index": 1,
+                },
+            ) from error
 
 
 class AnthropicCompatibleProvider(BaseLLMProvider):
@@ -275,6 +411,7 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
         timeout_seconds: float | None = None,
         temperature: float | None = None,
         max_output_tokens: int | None = None,
+        deadline: DistillDeadline | None = None,
     ) -> None:
         effective = effective_llm_settings()
         self.api_base = (api_base or effective["api_base"]).rstrip("/")
@@ -285,6 +422,8 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
         self.max_output_tokens = (
             max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
         )
+        self.deadline = deadline
+        self._diagnostics = _new_llm_diagnostics("anthropic_compatible")
 
     def analyze(self, prompt: str, image_paths: list[Path]) -> dict:
         if not self.api_key or not self.model:
@@ -307,8 +446,17 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
                 }
             ],
         }
+        self._diagnostics = _new_llm_diagnostics("anthropic_compatible")
         try:
-            with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
+            request_timeout = _provider_request_timeout(
+                self.timeout_seconds,
+                self.deadline,
+                phase="messages",
+                attempt_index=1,
+                provider="anthropic_compatible",
+            )
+            self._diagnostics.update({"http_attempt_index": 1, "http_attempt_count": 1})
+            with httpx.Client(timeout=request_timeout, trust_env=False) as client:
                 response = client.post(
                     _anthropic_messages_url(self.api_base),
                     headers={
@@ -319,31 +467,85 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
                     json=payload,
                 )
             if response.status_code >= 400:
-                raise AppError(ErrorCode.LLM_REQUEST_FAILED, f"大模型 API 返回 HTTP {response.status_code}。")
-            return parse_json_text(_anthropic_output_text(response.json()))
+                raise _classify_llm_http_error(
+                    response,
+                    provider="anthropic_compatible",
+                    phase="messages",
+                    attempt_index=1,
+                    diagnostics=self._diagnostics,
+                )
+            data = _response_json(response, "anthropic_compatible", diagnostics=self._diagnostics)
+            try:
+                return parse_json_text(_anthropic_output_text(data))
+            except AppError as error:
+                raise AppError(
+                    ErrorCode.LLM_RESPONSE_INVALID,
+                    details={
+                        **self.public_diagnostics(),
+                        "retryable": True,
+                        "phase": "parse_response",
+                        "attempt_index": 1,
+                    },
+                ) from error
         except AppError:
             raise
         except httpx.TimeoutException as error:
-            raise AppError(ErrorCode.LLM_REQUEST_FAILED, "大模型 API 请求超时。") from error
+            raise AppError(
+                ErrorCode.LLM_GATEWAY_TIMEOUT,
+                details={
+                    **self.public_diagnostics(),
+                    "retryable": True,
+                    "phase": "messages",
+                    "attempt_index": 1,
+                },
+            ) from error
+        except httpx.RequestError as error:
+            raise AppError(
+                ErrorCode.LLM_UPSTREAM_UNAVAILABLE,
+                details={
+                    **self.public_diagnostics(),
+                    "retryable": True,
+                    "phase": "transport",
+                    "attempt_index": 1,
+                },
+            ) from error
         except Exception as error:
-            raise AppError(ErrorCode.LLM_REQUEST_FAILED, str(error)[:500]) from error
+            raise AppError(
+                ErrorCode.LLM_REQUEST_FAILED,
+                details={
+                    **self.public_diagnostics(),
+                    "retryable": False,
+                    "phase": "client",
+                    "attempt_index": 1,
+                },
+            ) from error
 
 
 def get_llm_provider(
     *,
     timeout_seconds: float | None = None,
     max_output_tokens: int | None = None,
+    deadline: DistillDeadline | None = None,
 ) -> BaseLLMProvider:
     effective = effective_llm_settings()
     provider = effective["provider"]
+    provider_timeout = timeout_seconds if timeout_seconds is not None else effective["timeout_seconds"]
+    provider_max_tokens = (
+        max_output_tokens if max_output_tokens is not None else effective["max_output_tokens"]
+    )
+    common = {
+        "timeout_seconds": provider_timeout,
+        "max_output_tokens": provider_max_tokens,
+        "deadline": deadline,
+    }
     if provider in {"", "disabled", "none", "off"}:
         raise AppError(ErrorCode.LLM_NOT_CONFIGURED)
     if provider in {"openai", "openai_compatible", "compatible"}:
-        return OpenAICompatibleProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
+        return OpenAICompatibleProvider(**common)
     if provider in {"openai_responses", "responses"}:
-        return OpenAIResponsesProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
+        return OpenAIResponsesProvider(**common)
     if provider in {"anthropic", "anthropic_compatible", "claude"}:
-        return AnthropicCompatibleProvider(timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
+        return AnthropicCompatibleProvider(**common)
     raise AppError(ErrorCode.LLM_NOT_CONFIGURED, f"不支持的 LLM_PROVIDER：{provider}")
 
 
@@ -485,32 +687,141 @@ def _response_format_may_be_unsupported(response: httpx.Response) -> bool:
         body = response.text.lower()
     except Exception:
         return False
-    return response.status_code in {400, 422} and "response_format" in body
+    unsupported_markers = (
+        "not support",
+        "unsupported",
+        "unknown parameter",
+        "unrecognized",
+        "not permitted",
+        "extra inputs",
+        "不支持",
+    )
+    return (
+        response.status_code in {400, 422}
+        and "response_format" in body
+        and any(marker in body for marker in unsupported_markers)
+    )
 
 
-def _response_json(response: httpx.Response, provider: str) -> dict:
+def _response_json(response: httpx.Response, provider: str, *, diagnostics: dict | None = None) -> dict:
     try:
         data = response.json()
     except ValueError as error:
         raise AppError(
-            ErrorCode.LLM_REQUEST_FAILED,
-            f"{provider} 响应不是 JSON：{_response_preview(response)}",
+            ErrorCode.LLM_RESPONSE_INVALID,
+            details={
+                **_safe_llm_diagnostics(diagnostics or {}),
+                "provider": provider,
+                "retryable": True,
+                "phase": "parse_response",
+                "attempt_index": int((diagnostics or {}).get("http_attempt_index") or 1),
+            },
         ) from error
     if not isinstance(data, dict):
-        raise AppError(ErrorCode.LLM_RESPONSE_INVALID, f"{provider} 响应不是 JSON object。")
+        raise AppError(
+            ErrorCode.LLM_RESPONSE_INVALID,
+            details={
+                **_safe_llm_diagnostics(diagnostics or {}),
+                "provider": provider,
+                "retryable": True,
+                "phase": "parse_response",
+                "attempt_index": int((diagnostics or {}).get("http_attempt_index") or 1),
+            },
+        )
     return data
 
 
-def _response_preview(response: httpx.Response, limit: int = 220) -> str:
-    text = response.text or ""
-    return _text_preview(text, limit=limit)
+def _new_llm_diagnostics(provider: str) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "http_attempt_index": 0,
+        "http_attempt_count": 0,
+        "response_format_fallback_used": False,
+    }
 
 
-def _text_preview(text: str, limit: int = 220) -> str:
-    cleaned = " ".join((text or "").split())
-    if not cleaned:
-        return "<empty>"
-    return cleaned[:limit]
+def _safe_llm_diagnostics(value: dict[str, Any] | None) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    return {
+        "provider": str(source.get("provider") or "")[:80],
+        "http_attempt_index": max(0, int(source.get("http_attempt_index") or 0)),
+        "http_attempt_count": max(0, int(source.get("http_attempt_count") or 0)),
+        "response_format_fallback_used": bool(source.get("response_format_fallback_used")),
+    }
+
+
+def _provider_request_timeout(
+    configured_timeout_seconds: float,
+    deadline: DistillDeadline | None,
+    *,
+    minimum_seconds: float = 0.1,
+    phase: str,
+    attempt_index: int,
+    provider: str,
+) -> float:
+    configured = max(0.1, float(configured_timeout_seconds))
+    if deadline is None:
+        return configured
+    return deadline.request_timeout(
+        configured,
+        minimum_seconds=minimum_seconds,
+        phase=phase,
+        attempt_index=attempt_index,
+        provider=provider,
+    )
+
+
+def _classify_llm_http_error(
+    response: httpx.Response,
+    *,
+    provider: str,
+    phase: str,
+    attempt_index: int,
+    diagnostics: dict | None = None,
+) -> AppError:
+    status_code = int(response.status_code)
+    try:
+        body = str(response.text or "").lower()
+    except Exception:
+        body = ""
+    quota_markers = (
+        "insufficient_quota",
+        "quota exceeded",
+        "billing",
+        "credit balance",
+        "余额不足",
+        "额度不足",
+        "配额不足",
+    )
+    if any(marker in body for marker in quota_markers):
+        code = ErrorCode.LLM_QUOTA_EXCEEDED
+        retryable = False
+    elif status_code in {401, 403}:
+        code = ErrorCode.LLM_AUTH_FAILED
+        retryable = False
+    elif status_code == 429:
+        code = ErrorCode.LLM_RATE_LIMITED
+        retryable = False
+    elif status_code in {408, 504}:
+        code = ErrorCode.LLM_GATEWAY_TIMEOUT
+        retryable = True
+    elif status_code in {502, 503} or status_code >= 500:
+        code = ErrorCode.LLM_UPSTREAM_UNAVAILABLE
+        retryable = True
+    else:
+        code = ErrorCode.LLM_REQUEST_FAILED
+        retryable = False
+    return AppError(
+        code,
+        details={
+            **_safe_llm_diagnostics(diagnostics or {}),
+            "status_code": status_code,
+            "provider": provider,
+            "retryable": retryable,
+            "phase": phase,
+            "attempt_index": attempt_index,
+        },
+    )
 
 
 def _responses_output_text(data: dict) -> str:

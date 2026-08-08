@@ -31,6 +31,7 @@ from app.models import CaseArtifact
 from app.providers.profile_base import ProfileScanResult, ProfileVideoItem, profile_engagement_score
 from app.services.douyin_url_parser import extract_aweme_id, extract_first_url
 from app.services.llm_provider import get_llm_provider
+from app.services.llm_budget import DistillDeadline
 from app.services.llm_settings import llm_is_configured
 from app.services.runtime_settings import effective_llm_settings
 from app.services.profile_scan import scan_profile
@@ -80,6 +81,19 @@ CONTENT_PROFILE_GUIDANCE = {
 }
 MAX_DISTILL_SAMPLES = 20
 BATCH_DISTILL_MAX_SAMPLES = 150
+QUICK_DISTILL_RETRYABLE_ERRORS = frozenset(
+    {
+        ErrorCode.LLM_RESPONSE_INVALID,
+        ErrorCode.LLM_UPSTREAM_UNAVAILABLE,
+    }
+)
+DEEP_DISTILL_RETRYABLE_ERRORS = frozenset(
+    {
+        ErrorCode.LLM_GATEWAY_TIMEOUT,
+        ErrorCode.LLM_RESPONSE_INVALID,
+        ErrorCode.LLM_UPSTREAM_UNAVAILABLE,
+    }
+)
 HANDOFF_SENSITIVE_RE = re.compile(
     r"(cookie|sessionid|sid_guard|passport|token|authorization|x-bogus|mstoken|odin_tt)(\s*[:=]\s*(?:bearer\s+)?[^&;\"'<>]+)?",
     re.IGNORECASE,
@@ -92,6 +106,21 @@ HANDOFF_DISALLOWED_KEY_RE = re.compile(
 )
 HANDOFF_SIGNED_MEDIA_HOST_SUFFIXES = ("365yg.com", "douyinvod.com")
 HANDOFF_CONTRACT_SECTIONS = {"safety", "security_contract", "handoff_scope"}
+
+
+def normalize_distill_mode(value: str) -> str:
+    return "deep" if str(value or "").strip().lower() == "deep" else "quick"
+
+
+def distill_error_is_retryable(code: str, distill_mode: str) -> bool:
+    retryable = (
+        DEEP_DISTILL_RETRYABLE_ERRORS
+        if normalize_distill_mode(distill_mode) == "deep"
+        else QUICK_DISTILL_RETRYABLE_ERRORS
+    )
+    return str(code or "") in retryable
+
+
 HANDOFF_FREE_TEXT_KEYS = {"title", "creator_name", "nickname", "bio", "desc", "author", "notes", "create_time"}
 HANDOFF_TOP_LEVEL_SENSITIVE_FIELDS = ("title", "creator_name", "source_url")
 HANDOFF_SAMPLE_SENSITIVE_FIELDS = (
@@ -1725,6 +1754,17 @@ def _drop_empty_prompt_values(value):
     return value if _is_meaningful_report_text(value) else ""
 
 
+def _provider_public_diagnostics(provider) -> dict:
+    public_diagnostics = getattr(provider, "public_diagnostics", None)
+    if not callable(public_diagnostics):
+        return {}
+    try:
+        payload = public_diagnostics()
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def distill_creator_clone(
     sample_set: CloneSampleSet,
     selected_sample_ids: list[str],
@@ -1733,6 +1773,7 @@ def distill_creator_clone(
     include_case_reports: bool = True,
     max_samples: int = MAX_DISTILL_SAMPLES,
     progress: Callable[[int, str, dict | None], None] | None = None,
+    deadline: DistillDeadline | None = None,
 ) -> dict:
     def report_progress(value: int, message: str, phase: dict | None = None) -> None:
         if progress is None:
@@ -1742,6 +1783,7 @@ def distill_creator_clone(
         except TypeError:
             progress(value, message, None)
 
+    distill_mode = normalize_distill_mode(distill_mode)
     selected_samples, warnings = validate_selected_samples(sample_set.samples, selected_sample_ids, max_samples=max_samples)
     sample_set.selected_sample_ids = [sample.sample_id for sample in selected_samples]
     for sample in sample_set.samples:
@@ -1779,38 +1821,171 @@ def distill_creator_clone(
     execution_plan = build_distill_execution_plan(
         selected_samples,
         batch_size=max_samples,
-        single_timeout_seconds=float(effective_llm.get("timeout_seconds") or settings.llm_timeout_seconds),
+        single_timeout_seconds=float(
+            effective_llm.get("creator_distill_request_timeout_seconds")
+            or settings.llm_creator_distill_request_timeout_seconds
+        ),
         final_timeout_seconds=float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
         prompt_chars=len(prompt),
     )
-    llm_timeout = int(execution_plan["timeout_policy"]["recommended_batch_timeout_seconds"])
-    llm = get_llm_provider(timeout_seconds=llm_timeout)
+    configured_mode_budget = (
+        effective_llm.get("deep_distill_budget_seconds")
+        if distill_mode == "deep"
+        else effective_llm.get("quick_distill_budget_seconds")
+    )
+    total_budget_seconds = max(1, int(configured_mode_budget or settings.llm_quick_distill_budget_seconds))
+    total_deadline = deadline or DistillDeadline.start(total_budget_seconds)
+    total_budget_seconds = max(1, int(total_deadline.total_budget_seconds))
+    configured_request_timeout = max(
+        1,
+        int(
+            effective_llm.get("creator_distill_request_timeout_seconds")
+            or settings.llm_creator_distill_request_timeout_seconds
+        ),
+    )
+    compact_retry_minimum = max(
+        5,
+        int(
+            effective_llm.get("compact_retry_min_remaining_seconds")
+            or settings.llm_compact_retry_min_remaining_seconds
+        ),
+    )
+    retry_available = (use_map_reduce or include_case_reports) and total_budget_seconds >= compact_retry_minimum + 5
+    attempt_count = 2 if retry_available else 1
+    first_attempt_timeout = (
+        min(configured_request_timeout, max(1, total_budget_seconds - compact_retry_minimum))
+        if retry_available
+        else min(configured_request_timeout, total_budget_seconds)
+    )
+    execution_plan["timeout_policy"].update(
+        {
+            "distill_mode": distill_mode,
+            "total_request_budget_seconds": total_budget_seconds,
+            "max_external_attempts": attempt_count,
+            "max_http_attempts_per_logical_request": 2,
+            "max_total_external_http_requests": attempt_count * 2,
+            "compact_retry_min_remaining_seconds": compact_retry_minimum,
+            "retryable_error_codes": sorted(
+                DEEP_DISTILL_RETRYABLE_ERRORS
+                if distill_mode == "deep"
+                else QUICK_DISTILL_RETRYABLE_ERRORS
+            ),
+            "timeout_retry_enabled": distill_mode == "deep",
+            "retry_policy": (
+                "Deep：timeout、无效 JSON、502/503 可在剩余预算充足时精简重试一次。"
+                if distill_mode == "deep"
+                else "Quick：timeout 不重试；无效 JSON、502/503 可在剩余预算充足时精简重试一次。"
+            ),
+        }
+    )
     report_progress(
         58,
-        f"蒸馏 Prompt 已写入，准备调用大模型，最长等待 {llm_timeout} 秒",
+        f"蒸馏 Prompt 已写入，大模型总等待预算 {total_budget_seconds} 秒",
         {
             "current_phase": "prompt_ready",
             "current_phase_label": "Prompt 就绪",
-            "timeout_seconds": llm_timeout,
+            "timeout_seconds": first_attempt_timeout,
+            "total_budget_seconds": total_budget_seconds,
+            "attempt_index": 0,
+            "attempt_count": attempt_count,
             "execution_plan": execution_plan,
         },
     )
+    active_attempt_index = 1
+    active_provider = None
+
+    def budget_phase(
+        attempt_index: int,
+        attempt_timeout_seconds: int,
+        *,
+        provider=None,
+        error: AppError | None = None,
+        **extra,
+    ) -> dict:
+        diagnostics = _provider_public_diagnostics(provider)
+        if error is not None:
+            diagnostics = {**diagnostics, **error.public_details()}
+        return {
+            **total_deadline.public_snapshot(),
+            "attempt_index": attempt_index,
+            "attempt_count": attempt_count,
+            "timeout_seconds": max(1, int(attempt_timeout_seconds)),
+            "execution_plan": execution_plan,
+            **diagnostics,
+            **extra,
+        }
+
     try:
         report_progress(
             68,
-            "正在等待大模型返回蒸馏 JSON",
-            {
-                "current_phase": "llm_wait",
-                "current_phase_label": "等待大模型",
-                "timeout_seconds": llm_timeout,
-                "execution_plan": execution_plan,
-                "diagnostic": "如果停留在这里，通常是网关排队、模型生成较慢，或 prompt 较长导致首字节/生成耗时增加。",
-            },
+            f"第 1/{attempt_count} 次请求：等待大模型返回蒸馏 JSON",
+            budget_phase(
+                1,
+                first_attempt_timeout,
+                current_phase="llm_wait",
+                current_phase_label="等待大模型",
+                diagnostic="如果停留在这里，通常是网关排队、模型生成较慢，或 prompt 较长导致首字节/生成耗时增加。",
+            ),
         )
-        result = execution_layer.generate_creator_clone(llm, prompt, []).to_dict()
+        first_deadline = total_deadline.child(first_attempt_timeout)
+        active_provider = get_llm_provider(
+            timeout_seconds=first_attempt_timeout,
+            deadline=first_deadline,
+        )
+        result = execution_layer.generate_creator_clone(
+            active_provider,
+            prompt,
+            [],
+            max_retries=1,
+            deadline=first_deadline,
+        ).to_dict()
     except AppError as error:
-        if use_map_reduce and error.code in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID}:
-            report_progress(72, "常规 Reduce 失败，正在生成 micro reduce 重试 Prompt", {"current_phase": "retry_prompt", "current_phase_label": "准备重试"})
+        retry_kind = "micro" if use_map_reduce else "compact"
+        error_retryable = distill_error_is_retryable(error.code, distill_mode)
+        can_retry = (
+            error_retryable
+            and retry_available
+            and total_deadline.remaining_seconds() >= compact_retry_minimum
+        )
+        if not can_retry:
+            report_progress(
+                78,
+                error.message,
+                budget_phase(
+                    1,
+                    first_attempt_timeout,
+                    provider=active_provider,
+                    error=error,
+                    current_phase="llm_failed",
+                    current_phase_label="大模型请求已停止",
+                    status="failed",
+                    failure_class=error.code,
+                    retryable=error_retryable,
+                    diagnostic=(
+                        "网关限流，任务已停止；没有继续重试。"
+                        if error.code == ErrorCode.LLM_RATE_LIMITED
+                        else "Quick 模式不自动重试 timeout；已保留 Prompt，可切换 Deep 模式容忍慢网关。"
+                        if error.code == ErrorCode.LLM_GATEWAY_TIMEOUT and distill_mode == "quick"
+                        else "当前错误不可重试，或剩余总预算不足；已保留 Prompt 和安全诊断。"
+                    ),
+                ),
+            )
+            raise
+        report_progress(
+            72,
+            "首次请求失败，正在生成精简重试 Prompt",
+            budget_phase(
+                2,
+                int(total_deadline.remaining_seconds()),
+                provider=active_provider,
+                error=error,
+                current_phase="retry_prompt",
+                current_phase_label="准备精简重试",
+                retry_reason=error.code,
+                retryable=True,
+            ),
+        )
+        if retry_kind == "micro":
             micro_prompt = build_micro_reduce_distill_prompt(
                 sample_set,
                 selected_samples,
@@ -1818,16 +1993,9 @@ def distill_creator_clone(
                 distill_mode=distill_mode,
             )
             (output_dir / "distill_prompt_micro.md").write_text(micro_prompt, encoding="utf-8")
-            try:
-                report_progress(78, "正在用 micro reduce 重试大模型蒸馏", {"current_phase": "llm_retry", "current_phase_label": "大模型重试"})
-                result = execution_layer.generate_creator_clone(llm, micro_prompt, []).to_dict()
-            except AppError:
-                raise error
-            warnings.append("常规 Reduce 蒸馏失败，已使用 micro reduce 短提示重试成功。")
-        elif error.code not in {ErrorCode.LLM_REQUEST_FAILED, ErrorCode.LLM_RESPONSE_INVALID} or not include_case_reports:
-            raise
+            retry_prompt = micro_prompt
+            success_warning = "常规 Reduce 蒸馏失败，已使用 micro reduce 短提示重试成功。"
         else:
-            report_progress(72, "首次蒸馏失败，正在生成精简证据包重试", {"current_phase": "compact_retry_prompt", "current_phase_label": "精简重试"})
             compact_prompt = build_distill_prompt(
                 sample_set,
                 selected_samples,
@@ -1835,13 +2003,67 @@ def distill_creator_clone(
                 include_case_reports=False,
             )
             (output_dir / "distill_prompt_compact.md").write_text(compact_prompt, encoding="utf-8")
-            try:
-                report_progress(78, "正在用精简证据包重试大模型蒸馏", {"current_phase": "compact_llm_retry", "current_phase_label": "精简重试"})
-                result = execution_layer.generate_creator_clone(llm, compact_prompt, []).to_dict()
-            except AppError:
-                raise error
-            warnings.append("首次蒸馏失败，已使用精简证据包重试成功。")
-    report_progress(86, "大模型已返回，正在解析蒸馏结果", {"current_phase": "parse_result", "current_phase_label": "解析结果"})
+            retry_prompt = compact_prompt
+            success_warning = "首次蒸馏失败，已使用精简证据包重试成功。"
+        remaining_seconds = max(1, int(total_deadline.remaining_seconds()))
+        retry_timeout_seconds = max(1, min(configured_request_timeout, remaining_seconds))
+        retry_deadline = total_deadline.child(retry_timeout_seconds)
+        active_attempt_index = 2
+        report_progress(
+            78,
+            f"第 2/{attempt_count} 次请求：使用精简 Prompt，本次最多等待 {retry_timeout_seconds} 秒",
+            budget_phase(
+                2,
+                retry_timeout_seconds,
+                current_phase="llm_retry",
+                current_phase_label="精简重试",
+                retry_reason=error.code,
+                retryable=True,
+                diagnostic="这是本任务最后一次逻辑请求；其 HTTP 兼容请求也共享同一总 deadline。",
+            ),
+        )
+        retry_provider = get_llm_provider(
+            timeout_seconds=retry_timeout_seconds,
+            deadline=retry_deadline,
+        )
+        try:
+            result = execution_layer.generate_creator_clone(
+                retry_provider,
+                retry_prompt,
+                [],
+                max_retries=1,
+                deadline=retry_deadline,
+            ).to_dict()
+            active_provider = retry_provider
+        except AppError as retry_error:
+            report_progress(
+                80,
+                retry_error.message,
+                budget_phase(
+                    2,
+                    remaining_seconds,
+                    provider=retry_provider,
+                    error=retry_error,
+                    current_phase="llm_failed",
+                    current_phase_label="精简重试失败",
+                    status="failed",
+                    failure_class=retry_error.code,
+                    retryable=False,
+                ),
+            )
+            raise retry_error from error
+        warnings.append(success_warning)
+    report_progress(
+        86,
+        "大模型已返回，正在解析蒸馏结果",
+        budget_phase(
+            active_attempt_index,
+            max(1, int(total_deadline.remaining_seconds())),
+            provider=active_provider,
+            current_phase="parse_result",
+            current_phase_label="解析结果",
+        ),
+    )
     normalized = normalize_creator_clone_result(result, sample_set, selected_samples, warnings)
     _write_json(output_dir / "creator_clone_result.json", normalized)
     report_progress(94, "正在写入 Markdown / HTML 报告", {"current_phase": "write_report", "current_phase_label": "写入报告"})
@@ -1949,7 +2171,9 @@ def build_distill_execution_plan(
         strategy = "hierarchical_reduce"
         strategy_label = "大样本：分层汇总，保留批次中间结果"
 
-    configured_single_timeout = float(single_timeout_seconds or settings.llm_timeout_seconds)
+    configured_single_timeout = float(
+        single_timeout_seconds or settings.llm_creator_distill_request_timeout_seconds
+    )
     configured_final_timeout = float(final_timeout_seconds or settings.llm_final_reduce_timeout_seconds)
     known_duration_minutes = total_duration / 60.0 if durations else 0.0
     prompt_k = max(0.0, float(prompt_chars or 0) / 1000.0)
@@ -1958,28 +2182,8 @@ def build_distill_execution_plan(
     batch_complexity = batch_count * 75.0
     prompt_complexity = prompt_k * 8.0
     enrichment_timeout = int(min(1800.0, 120.0 + selected_count * 20.0 + known_duration_minutes * 15.0))
-    batch_prompt_complexity = prompt_complexity / max(1, batch_count)
-    recommended_single_timeout = int(
-        min(
-            1200.0,
-            max(
-                configured_single_timeout,
-                180.0
-                + min(selected_count, normalized_batch_size) * 20.0
-                + batch_prompt_complexity
-                + min(180.0, duration_complexity / max(1, batch_count)),
-            ),
-        )
-    )
-    recommended_final_timeout = int(
-        min(
-            2400.0,
-            max(
-                configured_final_timeout,
-                300.0 + batch_complexity + prompt_complexity + sample_complexity + duration_complexity,
-            ),
-        )
-    )
+    recommended_single_timeout = max(1, int(configured_single_timeout))
+    recommended_final_timeout = max(1, int(configured_final_timeout))
     return {
         "strategy": strategy,
         "strategy_label": strategy_label,
@@ -2013,8 +2217,8 @@ def build_distill_execution_plan(
                 },
                 "rules": [
                     "富化预算 = 120s + 样本数*20s + 已知视频分钟数*15s，上限 1800s",
-                    "单批蒸馏预算 = 180s + 批内样本数*20s + 分摊Prompt复杂度 + 分摊时长复杂度，上限 1200s",
-                    "最终汇总预算 = 300s + 批次数复杂度 + Prompt复杂度 + 样本复杂度 + 时长复杂度，上限 2400s",
+                    "单批请求上限使用显式配置，不因 Prompt 或视频时长自动扩展。",
+                    "最终汇总请求上限使用显式配置，并受 Batch Job 总墙钟预算约束。",
                 ],
             },
             "phase_diagnostics": [
@@ -2821,6 +3025,7 @@ def batch_distill_creator_clone(
     batch_size: int = MAX_DISTILL_SAMPLES,
     max_samples: int = BATCH_DISTILL_MAX_SAMPLES,
     progress=None,
+    deadline: DistillDeadline | None = None,
 ) -> dict:
     selected_samples, warnings = selected_samples_for_batch_distill(
         sample_set.samples,
@@ -2845,26 +3050,52 @@ def batch_distill_creator_clone(
         except TypeError:
             progress(value, message)
 
-    if progress:
-        report_progress(
-            10,
-            f"已规划 {len(chunks)} 个蒸馏批次",
-            {
-                "current_phase": "planning",
-                "current_phase_label": "规划分批蒸馏",
-                "phase_index": 1,
-                "phase_count": max(1, len(chunks) + 2),
-                "batch_count": len(chunks),
-            },
-        )
-
     batch_results: list[dict] = []
     llm_configured = llm_is_configured()
     if not llm_configured:
         warnings.append("大模型未配置，已生成分批蒸馏 Prompt 和最终汇总 Prompt。")
     effective_llm = effective_llm_settings()
-    configured_batch_timeout = float(effective_llm.get("timeout_seconds") or settings.llm_timeout_seconds)
+    configured_batch_timeout = float(
+        effective_llm.get("creator_distill_request_timeout_seconds")
+        or settings.llm_creator_distill_request_timeout_seconds
+    )
     configured_final_timeout = float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds)
+    total_job_budget = max(
+        1,
+        int(effective_llm.get("batch_job_budget_seconds") or settings.llm_batch_job_budget_seconds),
+    )
+    job_deadline = deadline or DistillDeadline.start(total_job_budget)
+    total_job_budget = max(1, int(job_deadline.total_budget_seconds))
+    configured_final_reserve = max(
+        1,
+        int(
+            effective_llm.get("final_reduce_min_reserve_seconds")
+            or settings.llm_final_reduce_min_reserve_seconds
+        ),
+    )
+    final_reduce_reserve = min(configured_final_reserve, max(1, total_job_budget - 5))
+    terminal_status = ""
+    terminal_error_code = ""
+
+    def job_phase(**extra) -> dict:
+        return {
+            **job_deadline.public_snapshot(),
+            "batch_count": len(chunks),
+            "total_job_budget_seconds": total_job_budget,
+            "final_reduce_min_reserve_seconds": final_reduce_reserve,
+            **extra,
+        }
+
+    report_progress(
+        10,
+        f"已规划 {len(chunks)} 个蒸馏批次，总等待预算 {total_job_budget} 秒",
+        job_phase(
+            current_phase="planning",
+            current_phase_label="规划分批蒸馏",
+            phase_index=1,
+            phase_count=max(1, len(chunks) + 2),
+        ),
+    )
 
     for index, chunk in enumerate(chunks, start=1):
         batch_id = f"batch_{index:03d}"
@@ -2882,25 +3113,11 @@ def batch_distill_creator_clone(
             final_timeout_seconds=configured_final_timeout,
             prompt_chars=len(prompt),
         )
-        batch_timeout = int(batch_plan["timeout_policy"]["recommended_batch_timeout_seconds"])
+        remaining_batch_count = len(chunks) - index + 1
+        available_for_batches = max(0.0, job_deadline.remaining_seconds() - final_reduce_reserve)
+        fair_batch_budget = available_for_batches / max(1, remaining_batch_count)
+        batch_timeout = max(0, int(min(configured_batch_timeout, fair_batch_budget)))
         batch_progress = 10 + int((index - 1) / max(1, len(chunks)) * 65)
-        report_progress(
-            batch_progress,
-            f"正在蒸馏批次 {index}/{len(chunks)}，最长等待 {batch_timeout} 秒",
-            {
-                "current_phase": "batch_reduce",
-                "current_phase_label": "分批大模型蒸馏",
-                "phase_index": index,
-                "phase_count": len(chunks),
-                "batch_id": batch_id,
-                "batch_count": len(chunks),
-                "sample_count": len(chunk),
-                "timeout_seconds": batch_timeout,
-                "status": "running",
-                "execution_plan": batch_plan,
-                "diagnostic": "批次 timeout 由批内样本数、已知视频时长和本批 Prompt 体积共同决定。",
-            },
-        )
         batch_payload = {
             "batch_id": batch_id,
             "index": index,
@@ -2915,10 +3132,89 @@ def batch_distill_creator_clone(
             "timeout_seconds": batch_timeout,
             "execution_plan": batch_plan,
         }
-        if llm_configured:
+        if not llm_configured:
+            batch_payload["status"] = "prompt_only"
+            report_progress(
+                batch_progress,
+                f"批次 {index}/{len(chunks)} Prompt 已生成",
+                job_phase(
+                    current_phase="batch_reduce",
+                    current_phase_label="生成分批 Prompt",
+                    phase_index=index,
+                    phase_count=len(chunks),
+                    batch_id=batch_id,
+                    sample_count=len(chunk),
+                    timeout_seconds=0,
+                    status="prompt_only",
+                    execution_plan=batch_plan,
+                ),
+            )
+        elif terminal_status:
+            batch_payload.update(
+                {
+                    "status": terminal_status,
+                    "error_code": terminal_error_code,
+                    "message": "总预算或不可重试错误已停止后续外部请求。",
+                }
+            )
+        elif batch_timeout < 5:
+            terminal_status = "budget_exhausted"
+            terminal_error_code = ErrorCode.LLM_GATEWAY_TIMEOUT
+            batch_payload.update(
+                {
+                    "status": terminal_status,
+                    "error_code": terminal_error_code,
+                    "message": "Batch Job 剩余预算不足，未创建新的大模型请求。",
+                }
+            )
+            report_progress(
+                batch_progress,
+                f"批次 {index}/{len(chunks)} 因总预算不足停止",
+                job_phase(
+                    current_phase="batch_reduce",
+                    current_phase_label="总预算已耗尽",
+                    phase_index=index,
+                    phase_count=len(chunks),
+                    batch_id=batch_id,
+                    sample_count=len(chunk),
+                    timeout_seconds=0,
+                    status="budget_exhausted",
+                    failure_class=ErrorCode.LLM_GATEWAY_TIMEOUT,
+                    retryable=False,
+                    execution_plan=batch_plan,
+                ),
+            )
+        else:
+            report_progress(
+                batch_progress,
+                f"正在蒸馏批次 {index}/{len(chunks)}，本批预算 {batch_timeout} 秒",
+                job_phase(
+                    current_phase="batch_reduce",
+                    current_phase_label="分批大模型蒸馏",
+                    phase_index=index,
+                    phase_count=len(chunks),
+                    batch_id=batch_id,
+                    sample_count=len(chunk),
+                    timeout_seconds=batch_timeout,
+                    per_batch_timeout_seconds=batch_timeout,
+                    status="running",
+                    execution_plan=batch_plan,
+                    diagnostic="本批请求使用总 Job 剩余预算的公平份额，并持续保留最终汇总预算。",
+                ),
+            )
+            batch_deadline = job_deadline.child(batch_timeout)
             try:
-                batch_llm = get_llm_provider(timeout_seconds=batch_timeout)
-                raw_result = ExecutionLayer().generate_creator_clone(batch_llm, prompt, []).to_dict()
+                batch_llm = get_llm_provider(
+                    timeout_seconds=batch_timeout,
+                    deadline=batch_deadline,
+                )
+                raw_result = ExecutionLayer().generate_creator_clone(
+                    batch_llm,
+                    prompt,
+                    [],
+                    max_retries=1,
+                    deadline=batch_deadline,
+                ).to_dict()
                 normalized = normalize_creator_clone_result(raw_result, sample_set, chunk, warnings=[])
                 _write_json(result_path, normalized)
                 markdown_path.write_text(render_creator_clone_markdown(normalized), encoding="utf-8")
@@ -2926,16 +3222,16 @@ def batch_distill_creator_clone(
                 report_progress(
                     min(75, batch_progress + int(60 / max(1, len(chunks)))),
                     f"批次 {index}/{len(chunks)} 已完成",
-                    {
-                        "current_phase": "batch_reduce",
-                        "current_phase_label": "分批大模型蒸馏",
-                        "phase_index": index,
-                        "phase_count": len(chunks),
-                        "batch_id": batch_id,
-                        "batch_count": len(chunks),
-                        "sample_count": len(chunk),
-                        "status": "success",
-                    },
+                    job_phase(
+                        current_phase="batch_reduce",
+                        current_phase_label="分批大模型蒸馏",
+                        phase_index=index,
+                        phase_count=len(chunks),
+                        batch_id=batch_id,
+                        sample_count=len(chunk),
+                        status="success",
+                        **_provider_public_diagnostics(batch_llm),
+                    ),
                 )
             except AppError as error:
                 fallback = normalize_creator_clone_result({}, sample_set, chunk, warnings=[f"{error.code}：{error.message}"])
@@ -2943,20 +3239,30 @@ def batch_distill_creator_clone(
                 _write_json(result_path, fallback)
                 markdown_path.write_text(render_creator_clone_markdown(fallback), encoding="utf-8")
                 batch_payload.update({"status": "failed", "result": fallback, "summary": fallback["summary"], "error_code": error.code, "message": error.message})
+                if error.code == ErrorCode.LLM_RATE_LIMITED:
+                    terminal_status = "rate_limited"
+                    terminal_error_code = error.code
+                elif error.code == ErrorCode.LLM_AUTH_FAILED:
+                    terminal_status = "auth_failed"
+                    terminal_error_code = error.code
+                elif error.code == ErrorCode.LLM_QUOTA_EXCEEDED:
+                    terminal_status = "partial"
+                    terminal_error_code = error.code
                 report_progress(
                     min(75, batch_progress + int(60 / max(1, len(chunks)))),
                     f"批次 {index}/{len(chunks)} 失败，已保留本地 Map 摘要",
-                    {
-                        "current_phase": "batch_reduce",
-                        "current_phase_label": "分批大模型蒸馏",
-                        "phase_index": index,
-                        "phase_count": len(chunks),
-                        "batch_id": batch_id,
-                        "batch_count": len(chunks),
-                        "sample_count": len(chunk),
-                        "status": "failed",
-                        "error_code": error.code,
-                    },
+                    job_phase(
+                        current_phase="batch_reduce",
+                        current_phase_label="分批大模型蒸馏",
+                        phase_index=index,
+                        phase_count=len(chunks),
+                        batch_id=batch_id,
+                        sample_count=len(chunk),
+                        status=terminal_status or "failed",
+                        error_code=error.code,
+                        failure_class=error.code,
+                        **error.public_details(),
+                    ),
                 )
         batch_results.append(batch_payload)
 
@@ -2981,29 +3287,38 @@ def batch_distill_creator_clone(
         final_timeout_seconds=configured_final_timeout,
         prompt_chars=len(final_prompt),
     )
-    final_timeout = int(execution_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"])
-    report_progress(
-        82,
-        f"正在汇总所有批次，最长等待 {int(final_timeout)} 秒",
-        {
-            "current_phase": "final_reduce",
-            "current_phase_label": "最终账号级汇总",
-            "phase_index": len(chunks) + 1,
-            "phase_count": len(chunks) + 2,
-            "batch_count": len(chunks),
-            "timeout_seconds": int(final_timeout),
-            "status": "running",
-            "execution_plan": execution_plan,
-            "diagnostic": "如果长时间停留在这里，通常是网关排队、模型生成较慢或最终 JSON 过长。",
-        },
-    )
-    if llm_configured:
+    final_timeout = max(0, int(min(configured_final_timeout, job_deadline.remaining_seconds())))
+    final_blocked = terminal_status in {"rate_limited", "auth_failed", "budget_exhausted", "partial"}
+    if llm_configured and not final_blocked and final_timeout >= 5:
+        report_progress(
+            82,
+            f"正在汇总所有批次，剩余预算内最长等待 {final_timeout} 秒",
+            job_phase(
+                current_phase="final_reduce",
+                current_phase_label="最终账号级汇总",
+                phase_index=len(chunks) + 1,
+                phase_count=len(chunks) + 2,
+                timeout_seconds=final_timeout,
+                status="running",
+                execution_plan=execution_plan,
+                diagnostic="最终汇总与全部批次共享同一 Job deadline，不会重新获得完整超时。",
+            ),
+        )
+        final_deadline = job_deadline.child(final_timeout)
         try:
             final_llm = get_llm_provider(
                 timeout_seconds=final_timeout,
                 max_output_tokens=max(int(effective_llm.get("max_output_tokens") or settings.llm_max_output_tokens), final_max_output_tokens),
+                deadline=final_deadline,
             )
-            raw_final = ExecutionLayer().generate_creator_clone(final_llm, final_prompt, []).to_dict()
+            raw_final = ExecutionLayer().generate_creator_clone(
+                final_llm,
+                final_prompt,
+                [],
+                max_retries=1,
+                deadline=final_deadline,
+            )
+            raw_final = raw_final.to_dict()
             final_result = normalize_creator_clone_result(raw_final, sample_set, selected_samples, warnings=warnings)
             final_result["batch_distill"] = {
                 "batch_count": len(batch_results),
@@ -3020,15 +3335,15 @@ def batch_distill_creator_clone(
             report_progress(
                 95,
                 "最终汇总完成，正在写入报告",
-                {
-                    "current_phase": "parse_persist",
-                    "current_phase_label": "解析并写入报告",
-                    "phase_index": len(chunks) + 2,
-                    "phase_count": len(chunks) + 2,
-                    "batch_count": len(chunks),
-                    "status": "running",
-                    "execution_plan": execution_plan,
-                },
+                job_phase(
+                    current_phase="parse_persist",
+                    current_phase_label="解析并写入报告",
+                    phase_index=len(chunks) + 2,
+                    phase_count=len(chunks) + 2,
+                    status="running",
+                    execution_plan=execution_plan,
+                    **_provider_public_diagnostics(final_llm),
+                ),
             )
         except AppError as error:
             final_result = build_local_batch_distill_result(sample_set, selected_samples, batch_results, warnings=warnings)
@@ -3049,19 +3364,90 @@ def batch_distill_creator_clone(
             report_progress(
                 92,
                 "最终汇总失败，正在生成本地批次汇总报告",
-                {
-                    "current_phase": "local_fallback",
-                    "current_phase_label": "本地降级汇总",
-                    "phase_index": len(chunks) + 2,
-                    "phase_count": len(chunks) + 2,
-                    "batch_count": len(chunks),
-                    "status": "fallback",
-                    "error_code": error.code,
-                    "execution_plan": execution_plan,
-                    "diagnostic": "批次摘要已完成，最终 Reduce 失败时会用批次结果生成可读报告。",
-                },
+                job_phase(
+                    current_phase="local_fallback",
+                    current_phase_label="本地降级汇总",
+                    phase_index=len(chunks) + 2,
+                    phase_count=len(chunks) + 2,
+                    status="fallback",
+                    error_code=error.code,
+                    failure_class=error.code,
+                    execution_plan=execution_plan,
+                    diagnostic="批次摘要已保留；最终 Reduce 失败后不会再次发起隐藏请求。",
+                    **error.public_details(),
+                ),
             )
+    elif llm_configured:
+        if not terminal_status:
+            terminal_status = "budget_exhausted"
+            terminal_error_code = ErrorCode.LLM_GATEWAY_TIMEOUT
+        final_result = build_local_batch_distill_result(
+            sample_set,
+            selected_samples,
+            batch_results,
+            warnings=warnings,
+        )
+        final_result["batch_distill"] = {
+            "batch_count": len(batch_results),
+            "selected_count": len(selected_samples),
+            "batch_size": max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES)),
+            "final_reduce_recovery": "local_fallback",
+            "final_reduce_error_code": terminal_error_code,
+        }
+        final_result["creator_report_view_model"] = build_creator_report_view_model(
+            final_result,
+            sample_set,
+            selected_samples,
+        )
+        _write_json(final_result_path, final_result)
+        final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
+        _write_json(output_dir / "creator_clone_result.json", final_result)
+        write_creator_clone_report_files(output_dir, final_result)
+        final_payload.update(
+            {
+                "status": "fallback",
+                "result": final_result,
+                "error_code": terminal_error_code,
+                "message": "外部请求已按总预算或不可重试错误停止，已生成本地汇总报告。",
+            }
+        )
+        report_progress(
+            92,
+            "外部请求已停止，正在保存已有批次结果",
+            job_phase(
+                current_phase="local_fallback",
+                current_phase_label="保存部分结果",
+                phase_index=len(chunks) + 2,
+                phase_count=len(chunks) + 2,
+                status=terminal_status,
+                error_code=terminal_error_code,
+                failure_class=terminal_error_code,
+                retryable=False,
+                execution_plan=execution_plan,
+            ),
+        )
+    else:
+        report_progress(
+            82,
+            "最终汇总 Prompt 已生成",
+            job_phase(
+                current_phase="final_reduce",
+                current_phase_label="生成最终汇总 Prompt",
+                phase_index=len(chunks) + 1,
+                phase_count=len(chunks) + 2,
+                timeout_seconds=0,
+                status="prompt_only",
+                execution_plan=execution_plan,
+            ),
+        )
 
+    successful_batches = sum(1 for item in batch_results if item.get("status") == "success")
+    if final_payload.get("status") == "success" and successful_batches == len(batch_results):
+        job_status = "completed"
+    elif terminal_status:
+        job_status = terminal_status
+    else:
+        job_status = "partial"
     manifest = {
         "set_id": sample_set.set_id,
         "selected_count": len(selected_samples),
@@ -3069,6 +3455,12 @@ def batch_distill_creator_clone(
         "batch_count": len(batch_results),
         "batches": batch_results,
         "final": final_payload,
+        "job_status": job_status,
+        "successful_batch_count": successful_batches,
+        "total_job_budget_seconds": total_job_budget,
+        "per_batch_timeout_seconds": max(1, int(configured_batch_timeout)),
+        "final_reduce_min_reserve_seconds": final_reduce_reserve,
+        "budget": job_deadline.public_snapshot(),
         "execution_plan": execution_plan,
         "warnings": warnings,
     }
@@ -3076,15 +3468,14 @@ def batch_distill_creator_clone(
     report_progress(
         100,
         "分批蒸馏完成",
-        {
-            "current_phase": "complete",
-            "current_phase_label": "完成",
-            "phase_index": len(chunks) + 2,
-            "phase_count": len(chunks) + 2,
-            "batch_count": len(chunks),
-            "status": "success" if final_payload.get("status") == "success" else final_payload.get("status") or "success",
-            "execution_plan": execution_plan,
-        },
+        job_phase(
+            current_phase="complete",
+            current_phase_label="完成",
+            phase_index=len(chunks) + 2,
+            phase_count=len(chunks) + 2,
+            status=job_status,
+            execution_plan=execution_plan,
+        ),
     )
     return {
         "set": sample_set.to_dict(),

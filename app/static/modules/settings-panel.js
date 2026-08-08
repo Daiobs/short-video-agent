@@ -94,6 +94,14 @@
             <dt>API Key</dt><dd>${llm.has_api_key ? `已配置 ${escapeHtml(llm.masked_api_key || "")}` : "未配置"}</dd>
             <dt>图片帧数</dt><dd>${escapeHtml(llm.llm_max_keyframes ?? "")}</dd>
             <dt>Temperature</dt><dd>${escapeHtml(llm.temperature ?? "")}</dd>
+            <dt>普通分析单请求</dt><dd>${escapeHtml(llm.timeout_seconds ?? 90)} 秒</dd>
+            <dt>Creator 单请求</dt><dd>${escapeHtml(llm.creator_distill_request_timeout_seconds ?? 180)} 秒</dd>
+            <dt>快速蒸馏总预算</dt><dd>${escapeHtml(llm.quick_distill_budget_seconds ?? 240)} 秒</dd>
+            <dt>深度蒸馏总预算</dt><dd>${escapeHtml(llm.deep_distill_budget_seconds ?? 600)} 秒</dd>
+            <dt>分批任务总预算</dt><dd>${escapeHtml(llm.batch_job_budget_seconds ?? 600)} 秒</dd>
+            <dt>最终汇总请求</dt><dd>${escapeHtml(llm.final_reduce_timeout_seconds ?? 600)} 秒</dd>
+            <dt>最终汇总预留</dt><dd>${escapeHtml(llm.final_reduce_min_reserve_seconds ?? 120)} 秒</dd>
+            <dt>精简重试最低剩余</dt><dd>${escapeHtml(llm.compact_retry_min_remaining_seconds ?? 60)} 秒</dd>
           </dl>
           <p class="muted compact-copy">${escapeHtml(llm.status_message || "")}</p>
         `;
@@ -102,6 +110,27 @@
       if (elements.llmApiBaseInput) elements.llmApiBaseInput.value = llm.api_base || "";
       if (elements.llmModelInput) elements.llmModelInput.value = llm.model || "";
       if (elements.llmTimeoutInput) elements.llmTimeoutInput.value = llm.timeout_seconds || 90;
+      if (elements.llmCreatorDistillTimeoutInput) {
+        elements.llmCreatorDistillTimeoutInput.value = llm.creator_distill_request_timeout_seconds || 180;
+      }
+      if (elements.llmFinalReduceTimeoutInput) {
+        elements.llmFinalReduceTimeoutInput.value = llm.final_reduce_timeout_seconds || 600;
+      }
+      if (elements.llmQuickDistillBudgetInput) {
+        elements.llmQuickDistillBudgetInput.value = llm.quick_distill_budget_seconds || 240;
+      }
+      if (elements.llmDeepDistillBudgetInput) {
+        elements.llmDeepDistillBudgetInput.value = llm.deep_distill_budget_seconds || 600;
+      }
+      if (elements.llmBatchJobBudgetInput) {
+        elements.llmBatchJobBudgetInput.value = llm.batch_job_budget_seconds || 600;
+      }
+      if (elements.llmFinalReduceReserveInput) {
+        elements.llmFinalReduceReserveInput.value = llm.final_reduce_min_reserve_seconds || 120;
+      }
+      if (elements.llmCompactRetryMinInput) {
+        elements.llmCompactRetryMinInput.value = llm.compact_retry_min_remaining_seconds || 60;
+      }
       if (elements.llmTemperatureInput) elements.llmTemperatureInput.value = llm.temperature ?? 0.2;
       if (elements.llmApiKeyInput) {
         elements.llmApiKeyInput.value = "";
@@ -236,6 +265,13 @@
           api_base: elements.llmApiBaseInput?.value || "",
           model: elements.llmModelInput?.value || "",
           timeout_seconds: Number(elements.llmTimeoutInput?.value || 90),
+          creator_distill_request_timeout_seconds: Number(elements.llmCreatorDistillTimeoutInput?.value || 180),
+          final_reduce_timeout_seconds: Number(elements.llmFinalReduceTimeoutInput?.value || 600),
+          quick_distill_budget_seconds: Number(elements.llmQuickDistillBudgetInput?.value || 240),
+          deep_distill_budget_seconds: Number(elements.llmDeepDistillBudgetInput?.value || 600),
+          batch_job_budget_seconds: Number(elements.llmBatchJobBudgetInput?.value || 600),
+          final_reduce_min_reserve_seconds: Number(elements.llmFinalReduceReserveInput?.value || 120),
+          compact_retry_min_remaining_seconds: Number(elements.llmCompactRetryMinInput?.value || 60),
           temperature: Number(elements.llmTemperatureInput?.value || 0.2),
           clear_api_key: Boolean(elements.llmClearKeyInput?.checked),
         };

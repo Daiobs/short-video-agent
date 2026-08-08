@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.errors import AppError
 from app.routes.common import error_response
@@ -18,8 +18,20 @@ class LLMSettingsUpdate(BaseModel):
     api_base: str | None = None
     api_key: str | None = None
     model: str | None = None
-    timeout_seconds: float | None = None
-    temperature: float | None = None
+    timeout_seconds: float | None = Field(default=None, ge=5, le=300, allow_inf_nan=False)
+    creator_distill_request_timeout_seconds: float | None = Field(
+        default=None,
+        ge=30,
+        le=300,
+        allow_inf_nan=False,
+    )
+    final_reduce_timeout_seconds: float | None = Field(default=None, ge=30, le=900, allow_inf_nan=False)
+    quick_distill_budget_seconds: float | None = Field(default=None, ge=60, le=600, allow_inf_nan=False)
+    deep_distill_budget_seconds: float | None = Field(default=None, ge=120, le=1200, allow_inf_nan=False)
+    batch_job_budget_seconds: float | None = Field(default=None, ge=180, le=1800, allow_inf_nan=False)
+    final_reduce_min_reserve_seconds: float | None = Field(default=None, ge=30, le=600, allow_inf_nan=False)
+    compact_retry_min_remaining_seconds: float | None = Field(default=None, ge=10, le=300, allow_inf_nan=False)
+    temperature: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)
     llm_max_keyframes: int | None = None
     max_keyframes: int | None = None
     max_output_tokens: int | None = None
@@ -53,7 +65,10 @@ def get_llm_settings():
 
 @router.put("/llm")
 def update_llm_settings(payload: LLMSettingsUpdate):
-    return {"ok": True, "llm": llm_settings.update_llm_settings_payload(_payload_dict(payload))}
+    try:
+        return {"ok": True, "llm": llm_settings.update_llm_settings_payload(_payload_dict(payload))}
+    except AppError as error:
+        return error_response(error)
 
 
 @router.post("/llm/test")
