@@ -153,6 +153,8 @@ class CloneSample:
     author: str = ""
     cover_url: str = ""
     media_type: str = "unknown"
+    duration: float = 0.0
+    content_category: str = ""
     like_count: int = 0
     comment_count: int = 0
     share_count: int = 0
@@ -189,6 +191,8 @@ class CloneSample:
             "author": self.author,
             "cover_url": self.cover_url,
             "media_type": self.media_type,
+            "duration": self.duration,
+            "content_category": self.content_category,
             "like_count": self.like_count,
             "comment_count": self.comment_count,
             "share_count": self.share_count,
@@ -392,6 +396,7 @@ def sample_from_profile_item(item: ProfileVideoItem) -> CloneSample:
         author=_safe_public_metadata_text(item.author, 120),
         cover_url=_safe_public_metadata_url(item.cover_url),
         media_type=media_type,
+        duration=max(0.0, float(item.duration or 0)) / 1000.0,
         like_count=int(item.like_count or 0),
         comment_count=int(item.comment_count or 0),
         share_count=int(item.share_count or 0),
@@ -495,6 +500,8 @@ def sample_from_handoff_item(item: dict) -> CloneSample:
         author=_safe_handoff_text(str(item.get("author") or ""), 120),
         cover_url=cover_url,
         media_type=normalize_media_type(str(item.get("media_type") or "unknown")),
+        duration=_safe_float(item.get("duration")),
+        content_category=_safe_handoff_text(str(item.get("content_category") or ""), 120),
         like_count=_safe_int(item.get("like_count")),
         comment_count=_safe_int(item.get("comment_count")),
         share_count=_safe_int(item.get("share_count")),
@@ -545,6 +552,11 @@ def sample_from_structured_row(row: dict) -> CloneSample:
         author=_safe_public_metadata_text(str(_row_field(row, "author", "nickname", default="")).strip(), 120),
         cover_url=_safe_public_metadata_url(str(_row_field(row, "cover_url", "cover", default="")).strip()),
         media_type=media_type,
+        duration=_safe_float(_row_field(row, "duration", "duration_seconds", default=0)),
+        content_category=_safe_public_metadata_text(
+            str(_row_field(row, "content_category", "category", default="")).strip(),
+            120,
+        ),
         like_count=_safe_int(_row_field(row, "like_count", "likes", "digg_count", "statistics.digg_count", default=0)),
         comment_count=_safe_int(_row_field(row, "comment_count", "comments", "statistics.comment_count", default=0)),
         share_count=_safe_int(_row_field(row, "share_count", "shares", "statistics.share_count", default=0)),
@@ -582,6 +594,7 @@ def samples_from_case_ids(db: Session, case_ids_text: str) -> list[CloneSample]:
 
 def sample_from_case_artifact(artifact: CaseArtifact) -> CloneSample:
     metadata = _read_json(Path(artifact.metadata_path))
+    ffprobe = _read_json(Path(artifact.ffprobe_path))
     analysis_result_path = Path(artifact.prompt_path).parent / "analysis_result.json"
     case_dir = Path(artifact.prompt_path).parent
     asr_dir = case_dir / "enrichment" / "asr"
@@ -602,9 +615,12 @@ def sample_from_case_artifact(artifact: CaseArtifact) -> CloneSample:
         desc=str(metadata.get("notes") or ""),
         author=str(metadata.get("author") or ""),
         media_type="video",
+        duration=_safe_float(ffprobe.get("duration")),
+        content_category=_safe_public_metadata_text(str(metadata.get("content_category") or ""), 120),
         like_count=_safe_int(metadata.get("like_count")),
         comment_count=_safe_int(metadata.get("comment_count")),
         share_count=_safe_int(metadata.get("share_count")),
+        collect_count=_safe_int(metadata.get("collect_count")),
         create_time=str(metadata.get("create_time") or ""),
         case_id=artifact.case_id,
         understanding_level="full" if analysis_result_path.is_file() else "partial",
@@ -754,6 +770,12 @@ def save_sample_set(sample_set: CloneSampleSet) -> None:
     _write_json(output_dir / "samples.json", sample_set.to_dict())
 
 
+def save_sample_recommendations(set_id: str, payload: dict) -> Path:
+    output_path = creator_clone_dir(set_id) / "sample_recommendations.json"
+    _write_json(output_path, payload)
+    return output_path
+
+
 def load_sample_set(set_id: str) -> CloneSampleSet:
     payload = _read_json(creator_clone_dir(set_id) / "samples.json")
     samples = [sample_from_dict(item) for item in payload.get("samples", []) if isinstance(item, dict)]
@@ -782,6 +804,8 @@ def sample_from_dict(item: dict) -> CloneSample:
         author=_safe_public_metadata_text(str(item.get("author") or ""), 120),
         cover_url=_safe_public_metadata_url(str(item.get("cover_url") or "")),
         media_type=normalize_media_type(str(item.get("media_type") or "unknown")),
+        duration=_safe_float(item.get("duration")),
+        content_category=_safe_public_metadata_text(str(item.get("content_category") or ""), 120),
         like_count=_safe_int(item.get("like_count")),
         comment_count=_safe_int(item.get("comment_count")),
         share_count=_safe_int(item.get("share_count")),
@@ -4494,3 +4518,12 @@ def _safe_int(value) -> int:
         return int(float(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_float(value) -> float:
+    try:
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        return max(0.0, float(value or 0))
+    except (TypeError, ValueError):
+        return 0.0

@@ -281,6 +281,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "/static/workbench.js?v=" in response.text
     assert "/static/modules/creator-report-view.js?v=" in response.text
     assert "/static/modules/settings-panel.js?v=" in response.text
+    assert "/static/modules/representative-sample-selector.js?v=" in response.text
     assert "/static/workbench-tasks.js?v=" in response.text
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
@@ -10487,7 +10488,8 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "page_confirmed: true" not in script
     assert script.count("resetProfileChromeConfirmation();") >= 4
     assert "recommendedProfileSampleMix" in script
-    assert "dedupeCreatorSampleViewItems" in script
+    assert "dedupeCreatorSampleViewItems" not in script
+    assert "/api/creator-clone/sample-recommendations" in script
     assert "function getCreatorCloneWizardState()" not in script
     assert "currentCreatorIntelligenceWorkflow" not in script
     assert "currentCreatorRuntimeState" in script
@@ -10622,6 +10624,7 @@ def test_creator_clone_build_sample_set_passes_profile_max_pages(monkeypatch) ->
                     aweme_id="7622653084993647603",
                     title="分页样本",
                     like_count=1,
+                    duration=12_000,
                     source_provider="cookie_api",
                 )
             ],
@@ -10638,6 +10641,7 @@ def test_creator_clone_build_sample_set_passes_profile_max_pages(monkeypatch) ->
     assert captured["request"].count == 150
     assert captured["request"].max_pages == 15
     assert len(sample_set.samples) == 1
+    assert sample_set.samples[0].duration == 12.0
     assert sample_set.profile_metadata["source_input"] == "https://www.douyin.com/user/MS4wLjABAAAAabc12345"
     assert sample_set.profile_metadata["source_mode"] == "profile"
 

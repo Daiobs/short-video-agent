@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -25,7 +26,14 @@ from app.services.creator_clone import (
     normalize_content_profile,
     prompt_only_result,
     sample_from_dict,
+    save_sample_recommendations,
     save_sample_set,
+)
+from app.services.creator_sample_selector import (
+    DEFAULT_TARGET_COUNT,
+    MAX_INPUT_COUNT,
+    RepresentativeSampleSelectorError,
+    recommend_representative_samples,
 )
 from app.services.creator_intelligence import CreatorRuntimeEngine, WorkflowAction
 from app.services.local_chrome import load_capture_audit, load_handoff_manifest, local_helper_security_contract
@@ -72,6 +80,12 @@ class CreatorCloneHandoffImportRequest(BaseModel):
 class CreatorCloneWorkflowDispatchRequest(BaseModel):
     action: str
     selected_sample_ids: list[str] = Field(default_factory=list)
+
+
+class RepresentativeSampleRequest(BaseModel):
+    sample_set_id: str = ""
+    samples: list[dict] = Field(default_factory=list)
+    target_count: int = DEFAULT_TARGET_COUNT
 
 
 def _cleanup_handoff_tokens() -> None:
@@ -190,6 +204,47 @@ def get_creator_clone_set(set_id: str):
         return error_response(error)
 
 
+@router.post("/sample-recommendations")
+def recommend_creator_clone_samples(payload: RepresentativeSampleRequest):
+    try:
+        sample_set = load_sample_set(payload.sample_set_id) if payload.sample_set_id else None
+        source_samples = sample_set.samples if sample_set is not None else payload.samples
+        if not source_samples:
+            raise AppError(ErrorCode.AWEME_ID_NOT_FOUND, "请先导入 Creator 素材池。")
+        if len(source_samples) > MAX_INPUT_COUNT:
+            raise AppError(
+                ErrorCode.PROFILE_SCAN_FAILED,
+                f"代表样本推荐最多处理 {MAX_INPUT_COUNT} 条素材。",
+            )
+        try:
+            selection = recommend_representative_samples(source_samples, payload.target_count)
+        except RepresentativeSampleSelectorError as error:
+            raise AppError(ErrorCode.PROFILE_SCAN_FAILED, str(error)) from error
+        result = selection.to_dict()
+        if sample_set is not None:
+            audit_payload = {
+                "algorithm_version": result["algorithm_version"],
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "input_count": result["input_count"],
+                "target_count": result["target_count"],
+                "recommendations": result["recommendations"],
+                "coverage": result["coverage"],
+                "warnings": result["warnings"],
+            }
+            save_sample_recommendations(sample_set.set_id, audit_payload)
+            result["artifact_url"] = (
+                f"/api/creator-clone/sets/{sample_set.set_id}/files/sample_recommendations.json"
+            )
+        return JSONResponse(
+            content={"ok": True, **result},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        response = error_response(error)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 @router.post("/sets/{set_id}/workflow")
 def dispatch_creator_clone_workflow(set_id: str, payload: CreatorCloneWorkflowDispatchRequest):
     try:
@@ -293,6 +348,7 @@ def download_creator_clone_file(set_id: str, filename: str):
         "handoff_manifest.json",
         "distill_prompt.md",
         "creator_clone_result.json",
+        "sample_recommendations.json",
         "creator_clone.md",
         "creator_clone.html",
     }
