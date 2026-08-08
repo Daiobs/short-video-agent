@@ -13382,9 +13382,11 @@ def test_local_chrome_extractor_reads_visible_card_metric_attributes_safely() ->
     assert "metricFromCard(card, ['分享', '转发'])" in script
     assert "metricFromCard(card, ['收藏'])" in script
     assert "metricFromCard(card, ['播放', '观看'])" in script
-    assert "comment_count: metricFromCard(card, ['评论'])" in script
-    assert "share_count: metricFromCard(card, ['分享', '转发'])" in script
-    assert "collect_count: metricFromCard(card, ['收藏'])" in script
+    assert "const commentObservation = metricFromCard(card, ['评论'])" in script
+    assert "const shareObservation = metricFromCard(card, ['分享', '转发'])" in script
+    assert "const collectObservation = metricFromCard(card, ['收藏'])" in script
+    assert "comment_count: commentObservation ?? 0" in script
+    assert "comment_count: commentObservation !== null" in script
     assert "parseCount(countTexts[1]" not in script
     assert "parseCount(countTexts[2]" not in script
     assert "parseCount(countTexts[3]" not in script
@@ -13603,6 +13605,32 @@ def test_local_chrome_sample_preserves_visible_metadata_fields() -> None:
     assert sample.comment_count == 34
     assert sample.share_count == 5
     assert sample.collect_count == 8
+    assert sample.metric_availability == {
+        "like_count": True,
+        "comment_count": True,
+        "share_count": True,
+        "collect_count": True,
+    }
+
+
+def test_local_chrome_sample_prefers_explicit_metric_availability() -> None:
+    from app.services.local_chrome import _sample_from_browser_item
+
+    sample = _sample_from_browser_item(
+        {
+            "aweme_id": "7622653084993647615",
+            "comment_count": 0,
+            "metric_availability": {
+                "like_count": False,
+                "comment_count": False,
+                "share_count": False,
+                "collect_count": False,
+            },
+        }
+    )
+
+    assert sample.comment_count == 0
+    assert sample.metric_availability["comment_count"] is False
 
 
 def test_local_chrome_sample_preserves_douyin_note_source_url() -> None:

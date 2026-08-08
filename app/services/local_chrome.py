@@ -19,6 +19,7 @@ import httpx
 
 from app.config import settings
 from app.errors import AppError, ErrorCode
+from app.metric_availability import metric_availability_from_mapping
 from app.services.creator_clone import (
     CloneSample,
     CloneSampleSet,
@@ -714,6 +715,7 @@ def _handoff_sample(sample: CloneSample) -> dict:
         "comment_count",
         "share_count",
         "collect_count",
+        "metric_availability",
         "view_count",
         "create_time",
         "case_id",
@@ -1005,7 +1007,7 @@ def _extractor_script(max_items: int = 100, scroll_rounds: int = DEFAULT_SCROLL_
       const match = normalized.match(pattern);
       if (match) return parseCount(`${{match[1]}}${{match[2] || ''}}`);
 	    }}
-	    return 0;
+	    return null;
 	  }};
   const profileWorkCount = () => {{
     const candidates = [
@@ -1016,7 +1018,7 @@ def _extractor_script(max_items: int = 100, scroll_rounds: int = DEFAULT_SCROLL_
       const text = textOf(node);
       if (/^作品\\s*\\d/.test(text)) return metricNear(text, '作品') || parseCount(text.replace('作品', ''));
     }}
-    return metricNear(textOf(document.body), '作品');
+	    return metricNear(textOf(document.body), '作品') || 0;
   }};
 		  const metricNodeText = (node) => [
 	    textOf(node),
@@ -1026,7 +1028,7 @@ def _extractor_script(max_items: int = 100, scroll_rounds: int = DEFAULT_SCROLL_
 	  ].join(' ');
 	  const leadingCount = (text) => {{
 	    const match = String(text || '').trim().match(/^(\\d+(?:\\.\\d+)?)(万|亿)?(?:\\s|$)/);
-	    return match ? parseCount(`${{match[1]}}${{match[2] || ''}}`) : 0;
+	    return match ? parseCount(`${{match[1]}}${{match[2] || ''}}`) : null;
 	  }};
 	  const metricFromCard = (card, keywords) => {{
 	    const nodes = card?.querySelectorAll
@@ -1043,10 +1045,10 @@ def _extractor_script(max_items: int = 100, scroll_rounds: int = DEFAULT_SCROLL_
 	    for (const keyword of keywords) {{
 	      for (const text of texts) {{
 	        const direct = metricNear(text, keyword);
-	        if (direct) return direct;
+	        if (direct !== null) return direct;
 	      }}
 	    }}
-	    return 0;
+	    return null;
 	  }};
   const findScrollTarget = () => {{
     const nodes = Array.from(document.querySelectorAll('body, main, div, section'));
@@ -1113,11 +1115,18 @@ def _extractor_script(max_items: int = 100, scroll_rounds: int = DEFAULT_SCROLL_
       const image = card.querySelector('img');
       const cover = image ? absUrl(image.currentSrc || image.src || image.getAttribute('src')) : '';
       const mediaType = url.includes('/note/') ? 'image' : 'video';
-      const countTexts = Array.from(card.querySelectorAll('*'))
-        .map((node) => textOf(node))
-        .filter((value) => /^\\d+(?:\\.\\d+)?[万亿]?$/.test(value))
-        .slice(0, 4);
-      items.push({{
+	      const countTexts = Array.from(card.querySelectorAll('*'))
+	        .map((node) => textOf(node))
+	        .filter((value) => /^\\d+(?:\\.\\d+)?[万亿]?$/.test(value))
+	        .slice(0, 4);
+	      const likeMetric = metricFromCard(card, ['点赞', '赞', '喜欢']);
+	      const leadingLike = leadingCount(rawText);
+	      const fallbackLike = countTexts.length ? parseCount(countTexts[0]) : null;
+	      const likeObservation = likeMetric ?? leadingLike ?? fallbackLike;
+	      const commentObservation = metricFromCard(card, ['评论']);
+	      const shareObservation = metricFromCard(card, ['分享', '转发']);
+	      const collectObservation = metricFromCard(card, ['收藏']);
+	      items.push({{
         aweme_id: id,
         source_url: url,
         title: compactTitle(rawText, id),
@@ -1127,10 +1136,16 @@ def _extractor_script(max_items: int = 100, scroll_rounds: int = DEFAULT_SCROLL_
         author: profileNickname(),
 	        create_time: visibleTime(rawText),
 	        tags: visibleTags(rawText),
-	        like_count: metricFromCard(card, ['点赞', '赞', '喜欢']) || leadingCount(rawText) || parseCount(countTexts[0] || 0),
-	        comment_count: metricFromCard(card, ['评论']),
-	        share_count: metricFromCard(card, ['分享', '转发']),
-	        collect_count: metricFromCard(card, ['收藏']),
+	        like_count: likeObservation ?? 0,
+	        comment_count: commentObservation ?? 0,
+	        share_count: shareObservation ?? 0,
+	        collect_count: collectObservation ?? 0,
+	        metric_availability: {{
+	          like_count: likeObservation !== null,
+	          comment_count: commentObservation !== null,
+	          share_count: shareObservation !== null,
+	          collect_count: collectObservation !== null,
+	        }},
 	        view_count: metricFromCard(card, ['播放', '观看']) || 0,
 	      }});
       if (items.length >= maxItems) break;
@@ -1217,6 +1232,7 @@ def _sample_from_browser_item(item: dict) -> CloneSample:
         comment_count=_safe_int(item.get("comment_count")),
         share_count=_safe_int(item.get("share_count")),
         collect_count=_safe_int(item.get("collect_count")),
+        metric_availability=metric_availability_from_mapping(item),
         view_count=_safe_int(item.get("view_count")),
         create_time=_redact_sensitive(str(item.get("create_time") or ""))[:80],
         understanding_level="metadata_only",

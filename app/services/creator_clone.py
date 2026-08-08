@@ -27,6 +27,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.errors import AppError, ErrorCode
+from app.metric_availability import (
+    PUBLIC_METRIC_ALIASES,
+    metric_availability_from_mapping,
+    sanitize_metric_availability,
+    unavailable_metric_availability,
+)
 from app.models import CaseArtifact
 from app.providers.profile_base import ProfileScanResult, ProfileVideoItem, profile_engagement_score
 from app.services.douyin_url_parser import extract_aweme_id, extract_first_url
@@ -159,6 +165,7 @@ class CloneSample:
     comment_count: int = 0
     share_count: int = 0
     collect_count: int = 0
+    metric_availability: dict[str, bool] = field(default_factory=dict)
     view_count: int = 0
     create_time: str = ""
     case_id: str = ""
@@ -197,6 +204,7 @@ class CloneSample:
             "comment_count": self.comment_count,
             "share_count": self.share_count,
             "collect_count": self.collect_count,
+            "metric_availability": sanitize_metric_availability(self.metric_availability),
             "view_count": self.view_count,
             "create_time": self.create_time,
             "case_id": self.case_id,
@@ -401,6 +409,7 @@ def sample_from_profile_item(item: ProfileVideoItem) -> CloneSample:
         comment_count=int(item.comment_count or 0),
         share_count=int(item.share_count or 0),
         collect_count=int(item.collect_count or 0),
+        metric_availability=sanitize_metric_availability(item.metric_availability),
         view_count=int(getattr(item, "view_count", 0) or 0),
         create_time=_safe_public_metadata_text(item.create_time, 80),
         understanding_level="metadata_only",
@@ -433,6 +442,7 @@ def samples_from_manual_text(text: str) -> list[CloneSample]:
                 title=line[:120] if not raw_id else f"抖音作品 {raw_id}",
                 desc=line[:260],
                 media_type="video" if raw_id or source_type in {"douyin", "bili"} else "unknown",
+                metric_availability=unavailable_metric_availability(),
                 understanding_level="metadata_only",
                 notes="来自手动链接导入，尚未生成素材包。",
             )
@@ -506,6 +516,7 @@ def sample_from_handoff_item(item: dict) -> CloneSample:
         comment_count=_safe_int(item.get("comment_count")),
         share_count=_safe_int(item.get("share_count")),
         collect_count=_safe_int(item.get("collect_count")),
+        metric_availability=metric_availability_from_mapping(item),
         view_count=_safe_int(item.get("view_count")),
         create_time=_safe_handoff_text(str(item.get("create_time") or ""), 80),
         case_id=_safe_handoff_text(str(item.get("case_id") or ""), 120),
@@ -561,6 +572,7 @@ def sample_from_structured_row(row: dict) -> CloneSample:
         comment_count=_safe_int(_row_field(row, "comment_count", "comments", "statistics.comment_count", default=0)),
         share_count=_safe_int(_row_field(row, "share_count", "shares", "statistics.share_count", default=0)),
         collect_count=_safe_int(_row_field(row, "collect_count", "collects", "statistics.collect_count", default=0)),
+        metric_availability=metric_availability_from_mapping(row, PUBLIC_METRIC_ALIASES),
         view_count=_safe_int(_row_field(row, "view_count", "play_count", "statistics.play_count", default=0)),
         create_time=_safe_public_metadata_text(str(_row_field(row, "create_time", "publish_time", default="")).strip(), 80),
         case_id=_safe_public_metadata_text(str(_row_field(row, "case_id", default="")).strip(), 120),
@@ -621,6 +633,7 @@ def sample_from_case_artifact(artifact: CaseArtifact) -> CloneSample:
         comment_count=_safe_int(metadata.get("comment_count")),
         share_count=_safe_int(metadata.get("share_count")),
         collect_count=_safe_int(metadata.get("collect_count")),
+        metric_availability=metric_availability_from_mapping(metadata),
         create_time=str(metadata.get("create_time") or ""),
         case_id=artifact.case_id,
         understanding_level="full" if analysis_result_path.is_file() else "partial",
@@ -810,6 +823,7 @@ def sample_from_dict(item: dict) -> CloneSample:
         comment_count=_safe_int(item.get("comment_count")),
         share_count=_safe_int(item.get("share_count")),
         collect_count=_safe_int(item.get("collect_count")),
+        metric_availability=sanitize_metric_availability(item.get("metric_availability")),
         view_count=_safe_int(item.get("view_count")),
         create_time=_safe_public_metadata_text(str(item.get("create_time") or ""), 80),
         case_id=_safe_public_metadata_text(str(item.get("case_id") or ""), 120),
@@ -4471,6 +4485,8 @@ def _write_json(path: Path, payload: dict | list) -> None:
 
 def _row_field(row: dict, *names: str, default=""):
     for name in names:
+        if name in row and row.get(name) not in (None, ""):
+            return row.get(name)
         current = row
         for part in name.split("."):
             if not isinstance(current, dict):

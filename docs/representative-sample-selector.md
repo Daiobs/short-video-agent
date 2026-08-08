@@ -30,7 +30,30 @@ v1 默认推荐 6 条，允许 3–10 条，最多处理 200 条输入。作品�
 3. 无法可靠判断的角色标记为“数据不足”；
 4. 推荐仍按可用内容特征与稳定排序降级，不抛出除零或 `NaN`。
 
-旧版 `samples.json` 的计数字段可能已经把“原始缺失”保存为 `0`。v1 无法从这种历史产物重新区分缺失和真实零值，这是已知限制；新内联输入仍保留缺失语义。
+## Metric Availability
+
+`CloneSample` 保持原有整数 count 字段兼容，同时使用固定 allowlist 的 `metric_availability` 记录来源是否真正提供了互动指标：
+
+```json
+{
+  "metric_availability": {
+    "like_count": true,
+    "comment_count": true,
+    "share_count": false,
+    "collect_count": false
+  }
+}
+```
+
+语义固定为：
+
+- `availability=true, count=0`：来源明确报告为 0，Selector 保留真实零值；
+- `availability=false, count=0`：来源没有该指标，Selector 按 `None` / missing 处理；
+- availability 未知：只用于兼容旧记录，继续按原有 count 值解释。
+
+Profile、结构化 JSON/CSV、安全 handoff 和 Case 导入都会在仍能观察字段存在性的边界写入 availability。序列化只允许点赞、评论、分享、收藏四个固定 key，任意额外 key 会被丢弃。
+
+旧版 `samples.json` 没有 availability 元数据，无法可靠恢复过去的 0 究竟是明确零值还是字段缺失。此类记录不会迁移失败或要求删除；系统保持 legacy interpretation，并以一条有界 warning 说明“现有计数按旧版已观测值解释”。
 
 ## 本地内容差异
 
@@ -117,4 +140,5 @@ POST /api/creator-clone/sample-recommendations
 - 中文差异判断使用轻量 n-gram，无法替代语义 embedding。
 - 小素材池或稀疏数据无法保证六类角色全部覆盖。
 - 相对百分位只表示当前导入素材池内的位置，不代表全平台水平。
+- 历史 `samples.json` 可能无法区分过去的 0 与 missing，因此旧数据保持 legacy interpretation，不进行推测性重写。
 - 未来 Login State / Cookie 分支可能修改素材池 UI；合并时需要人工检查模板和 `app.js` 冲突，本功能不提前修改那些分支。

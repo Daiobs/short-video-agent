@@ -5,6 +5,7 @@ import math
 import socket
 import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +14,16 @@ from app.config import settings
 from app.database import SessionLocal
 from app.main import app
 from app.models import Job
-from app.services.creator_clone import CloneSample, CloneSampleSet, load_sample_set, save_sample_set
+from app.services.creator_clone import (
+    CloneSample,
+    CloneSampleSet,
+    load_sample_set,
+    sample_from_case_artifact,
+    sample_from_handoff_item,
+    sample_from_profile_item,
+    sample_from_structured_row,
+    save_sample_set,
+)
 from app.services.creator_sample_selector import (
     ALGORITHM_VERSION,
     MAX_INPUT_COUNT,
@@ -21,6 +31,7 @@ from app.services.creator_sample_selector import (
     RepresentativeSampleSelectorError,
     recommend_representative_samples,
 )
+from app.services.profile_scan import normalize_profile_video_item
 
 
 client = TestClient(app)
@@ -61,6 +72,21 @@ def _sample(
 
 def _role_ids(selection, role: RepresentativeRole) -> list[str]:
     return [item.sample_id for item in selection.recommendations if role.value in item.roles]
+
+
+def _recommendation(selection, sample_id: str):
+    return next(item for item in selection.recommendations if item.sample_id == sample_id)
+
+
+def _availability(**overrides: bool) -> dict[str, bool]:
+    values = {
+        "like_count": True,
+        "comment_count": True,
+        "share_count": True,
+        "collect_count": True,
+    }
+    values.update(overrides)
+    return values
 
 
 def _representative_pool(count: int = 24) -> list[dict]:
@@ -237,6 +263,246 @@ def test_stable_tie_break_prefers_newer_then_sample_id() -> None:
 
     assert first.recommended_sample_ids == second.recommended_sample_ids
     assert first.recommended_sample_ids.index("sample_006") < first.recommended_sample_ids.index("sample_007")
+
+
+def test_structured_metric_availability_survives_full_round_trip() -> None:
+    rows = [
+        {
+            "aweme_id": "7622653084993647601",
+            "title": "评论字段缺失",
+            "like_count": 100,
+            "share_count": 10,
+            "collect_count": 5,
+        },
+        {
+            "aweme_id": "7622653084993647602",
+            "title": "评论明确为零",
+            "like_count": 90,
+            "comment_count": 0,
+            "share_count": 8,
+            "collect_count": 4,
+        },
+        {
+            "aweme_id": "7622653084993647603",
+            "title": "评论高值",
+            "like_count": 80,
+            "comment_count": 100,
+            "share_count": 7,
+            "collect_count": 3,
+        },
+    ]
+    samples = [sample_from_structured_row(row) for row in rows]
+    missing_id, zero_id, high_id = [sample.sample_id for sample in samples]
+
+    assert samples[0].metric_availability["comment_count"] is False
+    assert samples[1].metric_availability["comment_count"] is True
+    assert samples[1].comment_count == 0
+
+    sample_set = CloneSampleSet(set_id="clone_metric_round_trip", samples=samples)
+    save_sample_set(sample_set)
+    persisted = json.loads(
+        (settings.creator_clones_dir / sample_set.set_id / "samples.json").read_text(encoding="utf-8")
+    )
+    assert persisted["samples"][0]["metric_availability"]["comment_count"] is False
+    assert persisted["samples"][1]["metric_availability"]["comment_count"] is True
+
+    loaded = load_sample_set(sample_set.set_id)
+    selection = recommend_representative_samples(loaded.samples, 3)
+    assert _recommendation(selection, missing_id).metrics["comment_percentile"] is None
+    assert _recommendation(selection, zero_id).metrics["comment_percentile"] == 0.0
+    assert _recommendation(selection, high_id).metrics["comment_percentile"] == 1.0
+
+
+def test_structured_literal_nested_alias_preserves_observed_zero() -> None:
+    sample = sample_from_structured_row(
+        {
+            "aweme_id": "7622653084993647604",
+            "statistics.comment_count": 0,
+        }
+    )
+
+    assert sample.comment_count == 0
+    assert sample.metric_availability["comment_count"] is True
+
+
+def test_missing_share_does_not_reduce_collect_only_role_score() -> None:
+    samples = [
+        {
+            **_sample(
+                index,
+                likes=(1000, 500, 400, 300, 200, 100)[index],
+                comments=(10, 100, 20, 15, 10, 5)[index],
+                shares=None,
+                collects=(1, 2, 100, 4, 3, 2)[index],
+                days_ago=6 - index,
+            ),
+            "metric_availability": _availability(share_count=False),
+        }
+        for index in range(6)
+    ]
+
+    selection = recommend_representative_samples(samples, 6)
+    save_share_ids = _role_ids(selection, RepresentativeRole.SAVE_SHARE_VALUE)
+
+    assert "sample_002" in save_share_ids
+    recommendation = _recommendation(selection, "sample_002")
+    assert recommendation.metrics["share_percentile"] is None
+    assert recommendation.metrics["collect_percentile"] == 1.0
+
+
+def test_all_comment_missing_is_unavailable_with_one_bounded_warning() -> None:
+    samples = [
+        {
+            **_sample(index, likes=100 + index, shares=20 + index, collects=30 + index, days_ago=8 - index),
+            "metric_availability": _availability(comment_count=False),
+        }
+        for index in range(6)
+    ]
+
+    selection = recommend_representative_samples(samples, 6)
+    comment_warnings = [warning for warning in selection.warnings if warning.startswith("评论数据")]
+
+    assert selection.coverage[RepresentativeRole.COMMENT_MAGNET.value] is False
+    assert comment_warnings == ["评论数据全部缺失，已从表现权重中移除。"]
+    assert all(
+        item.metrics["comment_percentile"] is None
+        for item in selection.recommendations
+    )
+
+
+def test_all_observed_comment_zero_remains_distinct_but_non_informative() -> None:
+    samples = [
+        {
+            **_sample(index, likes=100 + index, comments=0, shares=20 + index, collects=30 + index),
+            "metric_availability": _availability(comment_count=True),
+        }
+        for index in range(6)
+    ]
+
+    selection = recommend_representative_samples(samples, 6)
+
+    assert all(sample["metric_availability"]["comment_count"] is True for sample in samples)
+    assert selection.coverage[RepresentativeRole.COMMENT_MAGNET.value] is False
+    assert "评论数据全部为 0，已从表现权重中移除。" in selection.warnings
+
+
+def test_profile_ingress_preserves_missing_and_observed_zero() -> None:
+    observed_item = normalize_profile_video_item(
+        {
+            "aweme_id": "7622653084993647611",
+            "statistics": {"digg_count": 10, "comment_count": 0},
+        }
+    )
+    missing_item = normalize_profile_video_item(
+        {
+            "aweme_id": "7622653084993647612",
+            "statistics": {"digg_count": 10},
+        }
+    )
+
+    assert observed_item is not None
+    assert missing_item is not None
+    assert observed_item.metric_availability["comment_count"] is True
+    assert missing_item.metric_availability["comment_count"] is False
+    assert sample_from_profile_item(observed_item).metric_availability["comment_count"] is True
+    assert sample_from_profile_item(missing_item).metric_availability["comment_count"] is False
+
+
+def test_handoff_ingress_preserves_missing_and_observed_zero() -> None:
+    from app.services.local_chrome import _handoff_sample
+
+    missing = sample_from_handoff_item(
+        {"sample_id": "handoff_missing", "title": "缺失评论", "like_count": 10}
+    )
+    observed_zero = sample_from_handoff_item(
+        {
+            "sample_id": "handoff_zero",
+            "title": "评论为零",
+            "like_count": 10,
+            "comment_count": 0,
+        }
+    )
+
+    assert missing.metric_availability["comment_count"] is False
+    assert observed_zero.metric_availability["comment_count"] is True
+    assert observed_zero.comment_count == 0
+    assert sample_from_handoff_item(_handoff_sample(missing)).metric_availability["comment_count"] is False
+    assert sample_from_handoff_item(_handoff_sample(observed_zero)).metric_availability["comment_count"] is True
+
+
+def test_case_ingress_uses_metadata_field_presence(tmp_path) -> None:
+    def build_case(case_id: str, metadata: dict):
+        case_dir = tmp_path / case_id
+        case_dir.mkdir()
+        metadata_path = case_dir / "metadata.json"
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        ffprobe_path = case_dir / "ffprobe.json"
+        ffprobe_path.write_text("{}", encoding="utf-8")
+        return SimpleNamespace(
+            case_id=case_id,
+            aweme_id="",
+            metadata_path=str(metadata_path),
+            ffprobe_path=str(ffprobe_path),
+            prompt_path=str(case_dir / "prompt.md"),
+            video_path=str(case_dir / "video.mp4"),
+            contact_sheet_path=str(case_dir / "contact_sheet.jpg"),
+            keyframes_dir=str(case_dir / "keyframes"),
+        )
+
+    missing = sample_from_case_artifact(build_case("case_collect_missing", {"title": "缺失收藏"}))
+    observed_zero = sample_from_case_artifact(
+        build_case("case_collect_zero", {"title": "收藏为零", "collect_count": 0})
+    )
+
+    assert missing.metric_availability["collect_count"] is False
+    assert observed_zero.metric_availability["collect_count"] is True
+    assert observed_zero.collect_count == 0
+
+
+def test_legacy_samples_keep_unknown_availability_and_old_zero_semantics() -> None:
+    set_id = "clone_metric_legacy"
+    output_dir = settings.creator_clones_dir / set_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "samples.json").write_text(
+        json.dumps(
+            {
+                "set_id": set_id,
+                "samples": [
+                    {"sample_id": "legacy_zero", "comment_count": 0},
+                    {"sample_id": "legacy_high", "comment_count": 100},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_sample_set(set_id)
+    assert [sample.metric_availability for sample in loaded.samples] == [{}, {}]
+
+    selection = recommend_representative_samples(loaded.samples, 3)
+    assert _recommendation(selection, "legacy_zero").metrics["comment_percentile"] == 0.0
+    assert _recommendation(selection, "legacy_high").metrics["comment_percentile"] == 1.0
+    assert sum("metric availability" in warning for warning in selection.warnings) == 1
+
+    save_sample_set(loaded)
+    reloaded = load_sample_set(set_id)
+    assert [sample.metric_availability for sample in reloaded.samples] == [{}, {}]
+
+
+def test_metric_availability_serialization_uses_fixed_allowlist() -> None:
+    sample = CloneSample(
+        sample_id="sample_metric_allowlist",
+        metric_availability={
+            "like_count": True,
+            "comment_count": "false",
+            "arbitrary_secret_metric": True,
+        },
+    )
+
+    assert sample.to_dict()["metric_availability"] == {
+        "like_count": True,
+        "comment_count": False,
+    }
 
 
 def test_recommendation_api_is_local_read_only_and_persists_safe_audit(monkeypatch) -> None:

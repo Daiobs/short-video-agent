@@ -11,6 +11,8 @@ from enum import Enum
 from statistics import median
 from typing import Any
 
+from app.metric_availability import METRIC_AVAILABILITY_KEYS, metric_availability_state
+
 
 ALGORITHM_VERSION = "representative-v1"
 DEFAULT_TARGET_COUNT = 6
@@ -116,6 +118,7 @@ class _SampleRecord:
     tags: tuple[str, ...]
     created_timestamp: float | None
     metrics: dict[str, float | None]
+    unknown_metric_availability: tuple[str, ...] = ()
     fingerprint: frozenset[str] = field(default_factory=frozenset)
     percentiles: dict[str, float | None] = field(default_factory=dict)
     relative_strengths: dict[str, float | None] = field(default_factory=dict)
@@ -159,6 +162,8 @@ def recommend_representative_samples(
         warnings.append(f"已忽略 {invalid_count} 条缺少安全 sample_id 的记录。")
     if duplicate_count:
         warnings.append(f"已忽略 {duplicate_count} 条重复 sample_id。")
+    if any(record.unknown_metric_availability for record in records):
+        warnings.append("部分样本缺少 metric availability 元数据；为兼容历史数据，现有计数按旧版已观测值解释。")
 
     coverage = {role.value: False for role in ROLE_ORDER}
     if not records:
@@ -286,6 +291,10 @@ def recommend_representative_samples(
 
     for role in ROLE_ORDER:
         if not coverage[role.value] and not role_scores.get(role):
+            if role == RepresentativeRole.COMMENT_MAGNET and any(
+                warning.startswith("评论数据全部") for warning in warnings
+            ):
+                continue
             warnings.append(_unavailable_role_warning(role))
 
     return RepresentativeSampleSelection(
@@ -322,8 +331,14 @@ def _record_from_sample(sample: Any) -> _SampleRecord | None:
     tags_value = _value(sample, "tags")
     tags = tuple(_text(item, 80) for item in tags_value if _text(item, 80)) if isinstance(tags_value, (list, tuple, set)) else ()
     create_time = _value(sample, "create_time", "created_at", "publish_time")
+    availability = {
+        key: metric_availability_state(sample, key)
+        for key in METRIC_AVAILABILITY_KEYS
+    }
     metrics = {
-        key: _optional_non_negative_number(_metric_value(sample, key))
+        key: None
+        if availability[key] is False
+        else _optional_non_negative_number(_metric_value(sample, key))
         for key in METRIC_WEIGHTS
     }
     record = _SampleRecord(
@@ -336,6 +351,9 @@ def _record_from_sample(sample: Any) -> _SampleRecord | None:
         tags=tags,
         created_timestamp=_timestamp(create_time),
         metrics=metrics,
+        unknown_metric_availability=tuple(
+            key for key in METRIC_AVAILABILITY_KEYS if availability[key] is None
+        ),
     )
     record.fingerprint = _content_fingerprint(record)
     return record
@@ -352,7 +370,9 @@ def _prepare_record_scores(records: list[_SampleRecord], warnings: list[str]) ->
             sample_id: None for sample_id in values
         }
         if not informative:
-            warnings.append(f"{_metric_label(metric_key)}数据全部缺失或为 0，已从表现权重中移除。")
+            observed_values = [value for value in values.values() if value is not None]
+            availability_note = "全部缺失" if not observed_values else "全部为 0"
+            warnings.append(f"{_metric_label(metric_key)}数据{availability_note}，已从表现权重中移除。")
 
     recency_values = {record.sample_id: record.created_timestamp for record in records}
     recency_percentiles, _ = _percentiles(recency_values, require_positive=False)
