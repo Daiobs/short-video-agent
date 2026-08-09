@@ -194,6 +194,7 @@ function currentCreatorCloneSetId() { return "clone_test"; }
 function normalizeItems(value) { return Array.isArray(value) ? value : []; }
 let renderCount = 0;
 function renderCreatorExecutionPack(pack) { renderCount += 1; return Boolean(pack && pack.topic); }
+async function hydrateCreatorExecutionRecord() { return null; }
 async function readJsonResponse(response) { return response.payload; }
 let resolveFetch;
 let fetchMode = "success";
