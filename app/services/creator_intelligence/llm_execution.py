@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.errors import AppError, ErrorCode, is_retryable_llm_error
 from app.services.llm_budget import DistillDeadline
@@ -45,6 +45,14 @@ class LLMExecutionResult:
             "errors": list(self.errors),
         }
         return payload
+
+
+@dataclass
+class StructuredLLMExecutionResult:
+    payload: dict[str, Any]
+    attempts: int
+    repaired: bool = False
+    errors: list[dict[str, str]] = field(default_factory=list)
 
 
 class LLMExecutionEngine:
@@ -99,6 +107,60 @@ class LLMExecutionEngine:
                     )
                 current_prompt = prompt + SCHEMA_REPAIR_INSTRUCTION
                 repaired = True
+        raise AppError(ErrorCode.LLM_RESPONSE_INVALID)
+
+    def execute_structured(
+        self,
+        prompt: str,
+        *,
+        validator: Callable[[dict[str, Any]], dict[str, Any]],
+        repair_instruction: str,
+        image_paths: list[Path] | None = None,
+    ) -> StructuredLLMExecutionResult:
+        """Run one bounded structured-generation path through the shared provider.
+
+        The first provider call is the main logical request. The existing LLM
+        error classification permits at most one compact schema/upstream retry
+        when ``max_retries=2``; authentication, quota, and rate-limit failures
+        remain terminal.
+        """
+
+        errors: list[dict[str, str]] = []
+        current_prompt = prompt
+        for attempt in range(1, self.max_retries + 1):
+            if self.deadline is not None:
+                self.deadline.require_remaining(
+                    0.1,
+                    phase="structured_execution",
+                    attempt_index=attempt,
+                    provider=str(getattr(self.provider, "public_diagnostics", lambda: {})().get("provider") or ""),
+                )
+            try:
+                raw = self.provider.analyze(current_prompt, list(image_paths or []))
+                payload = self._repair_raw_payload(raw)
+                try:
+                    normalized = validator(payload)
+                except ValueError as error:
+                    raise AppError(ErrorCode.LLM_RESPONSE_INVALID, str(error)[:240]) from error
+                if not isinstance(normalized, dict) or not normalized:
+                    raise AppError(ErrorCode.LLM_RESPONSE_INVALID, "结构化输出内容为空。")
+                return StructuredLLMExecutionResult(
+                    payload=normalized,
+                    attempts=attempt,
+                    repaired=attempt > 1 or not isinstance(raw, dict),
+                    errors=errors,
+                )
+            except AppError as error:
+                errors.append({"error_code": error.code, "message": error.message})
+                if not is_retryable_llm_error(error.code) or attempt >= self.max_retries:
+                    raise
+                if self.deadline is not None:
+                    self.deadline.require_remaining(
+                        5.0,
+                        phase="structured_execution_retry",
+                        attempt_index=attempt + 1,
+                    )
+                current_prompt = prompt + repair_instruction
         raise AppError(ErrorCode.LLM_RESPONSE_INVALID)
 
     def _extract_strategy(self, payload: dict[str, Any]) -> dict[str, Any]:

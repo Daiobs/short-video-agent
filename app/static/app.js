@@ -848,6 +848,10 @@ const creatorStrategyPlanCard = document.getElementById("creator-strategy-plan-c
 const generateCreatorStrategyButton = document.getElementById("generate-creator-strategy-button");
 const creatorStrategyPlanStatus = document.getElementById("creator-strategy-plan-status");
 const creatorStrategyPlanResult = document.getElementById("creator-strategy-plan-result");
+const creatorExecutionPackCard = document.getElementById("creator-execution-pack-card");
+const creatorExecutionPackStatus = document.getElementById("creator-execution-pack-status");
+const creatorExecutionPackResult = document.getElementById("creator-execution-pack-result");
+const copyCreatorExecutionPackButton = document.getElementById("copy-creator-execution-pack-button");
 const PROFILE_BUILD_MAX_ITEMS = Math.max(1, Number(document.body.dataset.profileBuildMaxItems || 10));
 const CREATOR_CLONE_MAX_DISTILL_SAMPLES = Math.max(1, Number(document.body.dataset.creatorCloneMaxDistillSamples || 20));
 const HANDOFF_MANIFEST_MAX_BYTES = 2 * 1024 * 1024;
@@ -895,6 +899,9 @@ let currentCreatorIntelligenceProject = null;
 let currentCreatorIntelligenceStrategy = null;
 let currentCreatorIntelligenceResult = null;
 let currentCreatorRuntimeState = null;
+let currentCreatorStrategyPlan = null;
+let currentCreatorExecutionPack = null;
+let creatorExecutionPackRunning = false;
 let currentRepresentativeSampleSelection = null;
 let representativeRecommendationState = "idle";
 let representativeRecommendationMessage = "";
@@ -947,6 +954,7 @@ const creatorReportView = window.CreatorReportView?.createRenderer({
   renderTopicBuckets,
   cleanPublicReportText,
 }) || null;
+const creatorExecutionPackView = window.CreatorExecutionPackView || null;
 
 function renderSingleItemStatus({job = currentSingleJob, caseData = loadedHomeCase, flow = singleItemFlow} = {}) {
   const statusView = window.SingleItemJobStatus?.derive({job, caseData, flow});
@@ -1468,6 +1476,22 @@ function clearCreatorCloneRenderedReport({clearPrompt = true} = {}) {
   creatorCloneResultCard?.classList.add("hidden");
 }
 
+function resetCreatorExecutionPackUi({hide = true} = {}) {
+  currentCreatorExecutionPack = null;
+  creatorExecutionPackRunning = false;
+  if (creatorExecutionPackResult) {
+    creatorExecutionPackResult.innerHTML = "";
+  }
+  if (creatorExecutionPackStatus) {
+    creatorExecutionPackStatus.textContent = "请先从上方选择一个选题。";
+  }
+  if (copyCreatorExecutionPackButton) {
+    copyCreatorExecutionPackButton.disabled = true;
+    copyCreatorExecutionPackButton.textContent = "复制完整执行方案";
+  }
+  creatorExecutionPackCard?.classList.toggle("hidden", hide);
+}
+
 function resetCreatorClonePoolForNewProfile({clearInput = true} = {}) {
   currentCloneSetId = "";
   currentCloneProfileFingerprint = "";
@@ -1479,6 +1503,8 @@ function resetCreatorClonePoolForNewProfile({clearInput = true} = {}) {
   currentCreatorIntelligenceProject = null;
   currentCreatorIntelligenceStrategy = null;
   currentCreatorRuntimeState = null;
+  currentCreatorStrategyPlan = null;
+  resetCreatorExecutionPackUi();
   currentRepresentativeSampleSelection = null;
   representativeRecommendationState = "idle";
   representativeRecommendationMessage = "";
@@ -5847,6 +5873,8 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
   if (creatorStrategyPlanResult) {
     creatorStrategyPlanResult.innerHTML = "";
   }
+  currentCreatorStrategyPlan = null;
+  resetCreatorExecutionPackUi();
   if (creatorStrategyPlanStatus) {
     creatorStrategyPlanStatus.textContent = result
       ? "基于当前创作者蒸馏报告生成，不重新扫描、不重新富化。"
@@ -6001,16 +6029,116 @@ function renderCreatorStrategyPlan(plan = {}) {
       "warning wide",
     )
     : "";
+  const topicChoices = creatorExecutionPackView?.renderTopicChoices(plan.next_topics)
+    || renderStrategyPlanItemList(plan.next_topics, "暂无选题。");
   return `
     <div class="public-report-grid creator-strategy-plan-grid">
       ${warning}
-      ${renderPublicCard("1. 下一批选题", renderStrategyPlanItemList(plan.next_topics, "暂无选题。"), "featured")}
+      ${renderPublicCard("1. 下一批选题", topicChoices, "featured wide")}
       ${renderPublicCard("2. 脚本结构", renderStrategyPlanItemList(plan.script_templates, "暂无脚本结构。"), "featured")}
       ${renderPublicCard("3. 镜头 / 画面模板", renderStrategyPlanItemList(plan.shot_templates, "暂无镜头模板。"), "featured")}
       ${renderPublicCard("4. 标题 / 封面建议", renderStrategyPlanItemList(plan.title_cover_suggestions, "暂无标题封面建议。"))}
       ${renderPublicCard("5. 发布前自检", renderStrategyPlanItemList(plan.pre_publish_checklist, "暂无自检项。"))}
     </div>
   `;
+}
+
+function renderCreatorExecutionPack(pack = {}, options = {}) {
+  if (!creatorExecutionPackView || !creatorExecutionPackResult || !pack || typeof pack !== "object") {
+    return false;
+  }
+  currentCreatorExecutionPack = pack;
+  creatorExecutionPackResult.innerHTML = creatorExecutionPackView.renderPack(pack);
+  creatorExecutionPackCard?.classList.remove("hidden");
+  if (copyCreatorExecutionPackButton) {
+    copyCreatorExecutionPackButton.disabled = false;
+    copyCreatorExecutionPackButton.textContent = "复制完整执行方案";
+  }
+  if (creatorExecutionPackStatus) {
+    creatorExecutionPackStatus.textContent = pack.confidence === "low" || normalizeItems(pack.warnings).length
+      ? "执行方案已生成 · 建议人工复核后拍摄"
+      : "执行方案已生成 · 可直接修改后进入拍摄";
+  }
+  if (options.scroll) {
+    creatorExecutionPackCard?.scrollIntoView({behavior: "smooth", block: "start"});
+  }
+  return creatorExecutionPackView.hasPack(creatorExecutionPackResult);
+}
+
+function setExecutionTopicButtonsBusy(running, activeTopicIndex = -1) {
+  creatorStrategyPlanResult?.querySelectorAll("[data-execution-topic-index]").forEach((button) => {
+    const isActive = Number(button.dataset.executionTopicIndex) === Number(activeTopicIndex);
+    button.disabled = Boolean(running);
+    button.textContent = running && isActive ? "正在生成..." : "用这个选题生成";
+  });
+}
+
+async function hydrateCreatorExecutionPack(setId, options = {}) {
+  if (!setId) {
+    return null;
+  }
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/execution-pack`, {
+      cache: "no-store",
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      if (payload.error_code === "EXECUTION_PACK_NOT_READY") {
+        resetCreatorExecutionPackUi();
+        return null;
+      }
+      throw payload;
+    }
+    renderCreatorExecutionPack(payload.execution_pack || {}, {scroll: options.scroll === true});
+    return payload.execution_pack || null;
+  } catch (error) {
+    if (!options.silent && creatorExecutionPackStatus) {
+      creatorExecutionPackCard?.classList.remove("hidden");
+      creatorExecutionPackStatus.textContent = `${error.error_code || "EXECUTION_PACK_LOAD_FAILED"}：${error.message || "执行方案读取失败。"}`;
+    }
+    return null;
+  }
+}
+
+async function generateCreatorExecutionPack(topicIndex) {
+  const setId = currentCreatorCloneSetId();
+  const topics = normalizeItems(currentCreatorStrategyPlan?.next_topics);
+  if (!setId || !topics[topicIndex] || creatorExecutionPackRunning) {
+    if (creatorExecutionPackStatus && !creatorExecutionPackRunning) {
+      creatorExecutionPackCard?.classList.remove("hidden");
+      creatorExecutionPackStatus.textContent = "选题不存在或已失效，请重新生成 Strategy Plan 后选择。";
+    }
+    return false;
+  }
+  creatorExecutionPackRunning = true;
+  creatorExecutionPackCard?.classList.remove("hidden");
+  if (creatorExecutionPackStatus) {
+    creatorExecutionPackStatus.textContent = `正在生成执行方案：${topics[topicIndex].title || `选题 ${topicIndex + 1}`}...`;
+  }
+  setExecutionTopicButtonsBusy(true, topicIndex);
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/generate-execution-pack`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({topic_index: topicIndex}),
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      throw payload;
+    }
+    if (!renderCreatorExecutionPack(payload.execution_pack || {}, {scroll: true})) {
+      throw {error_code: "EXECUTION_PACK_RENDER_FAILED", message: "执行方案已生成，但页面渲染失败。"};
+    }
+    return true;
+  } catch (error) {
+    if (creatorExecutionPackStatus) {
+      creatorExecutionPackStatus.textContent = `${error.error_code || "EXECUTION_PACK_GENERATION_FAILED"}：${error.message || "执行方案生成失败。"}`;
+    }
+    return false;
+  } finally {
+    creatorExecutionPackRunning = false;
+    setExecutionTopicButtonsBusy(false);
+  }
 }
 
 async function generateCreatorStrategyPlan() {
@@ -6037,8 +6165,10 @@ async function generateCreatorStrategyPlan() {
     if (!payload.ok) {
       throw payload;
     }
+    currentCreatorStrategyPlan = payload.strategy_plan || null;
+    resetCreatorExecutionPackUi();
     if (creatorStrategyPlanResult) {
-      creatorStrategyPlanResult.innerHTML = renderCreatorStrategyPlan(payload.strategy_plan || {});
+      creatorStrategyPlanResult.innerHTML = renderCreatorStrategyPlan(currentCreatorStrategyPlan || {});
     }
     if (creatorStrategyPlanStatus) {
       const score = payload.source?.report_quality_score;
@@ -6088,6 +6218,7 @@ async function hydrateCreatorCloneReportFromSet(setId, options = {}) {
     error.error_code = "REPORT_RENDER_FAILED";
     throw error;
   }
+  await hydrateCreatorExecutionPack(payload.set?.set_id || setId, {silent: true});
   return payload;
 }
 
@@ -7522,6 +7653,26 @@ creatorCloneBatchDistillButton?.addEventListener("click", async () => {
 
 generateCreatorStrategyButton?.addEventListener("click", async () => {
   await generateCreatorStrategyPlan();
+});
+
+creatorStrategyPlanResult?.addEventListener("click", async (event) => {
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  const button = target?.closest("[data-execution-topic-index]");
+  if (!button) {
+    return;
+  }
+  await generateCreatorExecutionPack(Number(button.dataset.executionTopicIndex));
+});
+
+copyCreatorExecutionPackButton?.addEventListener("click", async () => {
+  if (!currentCreatorExecutionPack || !creatorExecutionPackView) {
+    return;
+  }
+  await navigator.clipboard.writeText(creatorExecutionPackView.packText(currentCreatorExecutionPack));
+  copyCreatorExecutionPackButton.textContent = "已复制";
+  window.setTimeout(() => {
+    copyCreatorExecutionPackButton.textContent = "复制完整执行方案";
+  }, 1600);
 });
 
 copyCreatorCloneSpecButton.addEventListener("click", async () => {
