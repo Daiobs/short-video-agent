@@ -115,6 +115,7 @@ class LLMExecutionEngine:
         *,
         validator: Callable[[dict[str, Any]], dict[str, Any]],
         repair_instruction: str,
+        retry_min_remaining_seconds: float,
         image_paths: list[Path] | None = None,
     ) -> StructuredLLMExecutionResult:
         """Run one bounded structured-generation path through the shared provider.
@@ -156,7 +157,7 @@ class LLMExecutionEngine:
                     raise
                 if self.deadline is not None:
                     self.deadline.require_remaining(
-                        5.0,
+                        retry_min_remaining_seconds,
                         phase="structured_execution_retry",
                         attempt_index=attempt + 1,
                     )

@@ -9,12 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.services.creator_clone import CloneSample, CloneSampleSet, creator_clone_dir, load_sample_set
 from app.services.creator_intelligence.generator import validate_creator_strategy_plan
 from app.services.creator_intelligence.llm_execution import LLMExecutionEngine
 from app.services.llm_budget import DistillDeadline
 from app.services.llm_provider import BaseLLMProvider, get_llm_provider
+from app.services.runtime_settings import effective_llm_settings
 
 
 EXECUTION_PACK_VERSION = "1.0"
@@ -148,9 +150,27 @@ def generate_creator_execution_pack(
         selected_topic=selected_topic,
         topic_index=topic_index,
     )
+    runtime_llm = effective_llm_settings()
+    request_timeout_seconds = min(
+        float(EXECUTION_PACK_TIMEOUT_SECONDS),
+        max(
+            0.1,
+            float(
+                runtime_llm.get("creator_distill_request_timeout_seconds")
+                or settings.llm_creator_distill_request_timeout_seconds
+            ),
+        ),
+    )
+    retry_min_remaining_seconds = max(
+        0.1,
+        float(
+            runtime_llm.get("compact_retry_min_remaining_seconds")
+            or settings.llm_compact_retry_min_remaining_seconds
+        ),
+    )
     deadline = DistillDeadline.start(EXECUTION_PACK_TIMEOUT_SECONDS)
     llm = provider or get_llm_provider(
-        timeout_seconds=EXECUTION_PACK_TIMEOUT_SECONDS,
+        timeout_seconds=request_timeout_seconds,
         deadline=deadline,
     )
     result = LLMExecutionEngine(
@@ -161,6 +181,7 @@ def generate_creator_execution_pack(
         prompt,
         validator=lambda payload: validate_creator_execution_pack(payload, context=context),
         repair_instruction=_execution_pack_repair_instruction(selected_topic),
+        retry_min_remaining_seconds=retry_min_remaining_seconds,
     )
 
     final_source = {

@@ -14,6 +14,7 @@ from app.errors import AppError, ErrorCode
 from app.main import app
 from app.models import Job
 from app.services.creator_clone import CloneSample, CloneSampleSet, creator_clone_dir, save_sample_set
+from app.services.creator_intelligence import execution_pack as execution_pack_module
 from app.services.creator_intelligence.execution_pack import (
     EXECUTION_PACK_FILENAME,
     ExecutionPackValidationContext,
@@ -21,6 +22,8 @@ from app.services.creator_intelligence.execution_pack import (
     generate_creator_execution_pack,
     validate_creator_execution_pack,
 )
+from app.services.creator_intelligence.llm_execution import LLMExecutionEngine
+from app.services.llm_budget import DistillDeadline
 
 
 client = TestClient(app)
@@ -42,6 +45,29 @@ class FakeProvider:
 
     def public_diagnostics(self) -> dict[str, str]:
         return {"provider": "mock"}
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += float(seconds)
+
+
+class ClockedProvider(FakeProvider):
+    def __init__(self, outcomes: list[Any], *, clock: FakeClock, first_attempt_seconds: float) -> None:
+        super().__init__(outcomes)
+        self.clock = clock
+        self.first_attempt_seconds = first_attempt_seconds
+
+    def analyze(self, prompt: str, image_paths: list[Path]) -> Any:
+        if self.calls == 0:
+            self.clock.advance(self.first_attempt_seconds)
+        return super().analyze(prompt, image_paths)
 
 
 def _sample_set(*, partial: bool = False) -> CloneSampleSet:
@@ -537,12 +563,18 @@ def test_low_quality_report_allows_generation_but_caps_confidence() -> None:
 
 
 @pytest.mark.parametrize(
-    "error_code",
-    [ErrorCode.LLM_AUTH_FAILED, ErrorCode.LLM_RATE_LIMITED, ErrorCode.LLM_QUOTA_EXCEEDED],
+    ("error_code", "status_code"),
+    [
+        (ErrorCode.LLM_AUTH_FAILED, 401),
+        (ErrorCode.LLM_AUTH_FAILED, 403),
+        (ErrorCode.LLM_RATE_LIMITED, 429),
+        (ErrorCode.LLM_QUOTA_EXCEEDED, 429),
+    ],
+    ids=("http-401", "http-403", "http-429", "quota"),
 )
-def test_terminal_llm_errors_are_not_retried(error_code: str) -> None:
+def test_terminal_llm_errors_are_not_retried(error_code: str, status_code: int) -> None:
     sample_set, _ = _write_upstream()
-    provider = FakeProvider([AppError(error_code)])
+    provider = FakeProvider([AppError(error_code, details={"status_code": status_code})])
 
     with pytest.raises(AppError) as captured:
         generate_creator_execution_pack(sample_set.set_id, 0, provider=provider)
@@ -568,6 +600,117 @@ def test_retryable_llm_failures_use_at_most_one_compact_retry(first_outcome: Any
     assert result["source"]["llm_attempts"] == 2
     assert result["source"]["llm_repaired"] is True
     assert "紧凑修复" in provider.prompts[1]
+
+
+def test_structured_retry_is_rejected_with_59_seconds_remaining() -> None:
+    clock = FakeClock()
+    deadline = DistillDeadline.start(180, clock=clock)
+    provider = ClockedProvider(
+        [AppError(ErrorCode.LLM_UPSTREAM_UNAVAILABLE), {"ok": True}],
+        clock=clock,
+        first_attempt_seconds=121,
+    )
+
+    with pytest.raises(AppError) as captured:
+        LLMExecutionEngine(provider, max_retries=2, deadline=deadline).execute_structured(
+            "main prompt",
+            validator=lambda payload: payload,
+            repair_instruction="compact retry",
+            retry_min_remaining_seconds=60,
+        )
+
+    assert captured.value.code == ErrorCode.LLM_GATEWAY_TIMEOUT
+    assert captured.value.details["phase"] == "structured_execution_retry"
+    assert provider.calls == 1
+
+
+def test_structured_retry_is_allowed_with_61_seconds_remaining() -> None:
+    clock = FakeClock()
+    deadline = DistillDeadline.start(180, clock=clock)
+    provider = ClockedProvider(
+        [AppError(ErrorCode.LLM_UPSTREAM_UNAVAILABLE), {"ok": True}],
+        clock=clock,
+        first_attempt_seconds=119,
+    )
+
+    result = LLMExecutionEngine(provider, max_retries=2, deadline=deadline).execute_structured(
+        "main prompt",
+        validator=lambda payload: payload,
+        repair_instruction="compact retry",
+        retry_min_remaining_seconds=60,
+    )
+
+    assert result.payload == {"ok": True}
+    assert result.attempts == 2
+    assert provider.calls == 2
+
+
+def test_execution_pack_uses_runtime_compact_retry_threshold(monkeypatch) -> None:
+    sample_set, _ = _write_upstream()
+    clock = FakeClock()
+    deadline = DistillDeadline.start(180, clock=clock)
+    provider = ClockedProvider(
+        [AppError(ErrorCode.LLM_UPSTREAM_UNAVAILABLE), _execution_payload()],
+        clock=clock,
+        first_attempt_seconds=91,
+    )
+
+    class DeadlineFactory:
+        @staticmethod
+        def start(total_budget_seconds: float) -> DistillDeadline:
+            assert total_budget_seconds == 180
+            return deadline
+
+    monkeypatch.setattr(execution_pack_module, "DistillDeadline", DeadlineFactory)
+    monkeypatch.setattr(
+        execution_pack_module,
+        "effective_llm_settings",
+        lambda: {
+            "creator_distill_request_timeout_seconds": 180,
+            "compact_retry_min_remaining_seconds": 90,
+        },
+    )
+
+    with pytest.raises(AppError) as captured:
+        generate_creator_execution_pack(sample_set.set_id, 0, provider=provider)
+
+    assert captured.value.code == ErrorCode.LLM_GATEWAY_TIMEOUT
+    assert provider.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("runtime_timeout", "expected_timeout"),
+    [(120, 120), (300, 180)],
+)
+def test_execution_pack_provider_timeout_respects_runtime_cap(
+    monkeypatch,
+    runtime_timeout: int,
+    expected_timeout: int,
+) -> None:
+    sample_set, _ = _write_upstream()
+    captured: dict[str, Any] = {}
+    provider = FakeProvider([_execution_payload()])
+
+    monkeypatch.setattr(
+        execution_pack_module,
+        "effective_llm_settings",
+        lambda: {
+            "creator_distill_request_timeout_seconds": runtime_timeout,
+            "compact_retry_min_remaining_seconds": 60,
+        },
+    )
+
+    def provider_factory(**kwargs):
+        captured.update(kwargs)
+        return provider
+
+    monkeypatch.setattr(execution_pack_module, "get_llm_provider", provider_factory)
+
+    result = generate_creator_execution_pack(sample_set.set_id, 0)
+
+    assert result["source"]["llm_attempts"] == 1
+    assert captured["timeout_seconds"] == expected_timeout
+    assert captured["deadline"].total_budget_seconds == 180
 
 
 def test_prompt_is_create_only_and_excludes_sensitive_upstream_data() -> None:
