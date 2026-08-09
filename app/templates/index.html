@@ -80,7 +80,7 @@
                 <div>
                     <div class="entry-label">Settings</div>
                     <h2 id="settings-title">本地能力与数据源设置</h2>
-                    <p class="muted">Douyin Cookie 与 API Key 均由用户主动配置，仅保存在本机运行时配置中，不上传云端、不提交 Git。</p>
+                    <p class="muted">Douyin Cookie 保存在用户目录的安全凭据文件；API Key 保存在本机运行时配置。两者都不上传云端、不提交 Git。</p>
                 </div>
                 <button type="button" id="settings-close" class="ghost-button">关闭</button>
             </div>
@@ -96,13 +96,28 @@
                 <div class="notice compact-notice data-source-safety-note">
                     <strong>Cookie 本机安全边界</strong>
                     <ul>
-                        <li>Douyin Cookie 由用户主动配置，仅保存在本机。</li>
+                        <li>Douyin Cookie 由用户主动配置，仅保存在本机安全凭据文件。</li>
                         <li>已保存 Cookie 不回显原文。</li>
                         <li>Cookie 不进入数据库、素材包、Prompt 或日志。</li>
                         <li>本机 Chrome 辅助不读取 Cookie。</li>
                     </ul>
                 </div>
                 <div id="data-source-status-list" class="compact-dl"></div>
+                <section class="notice compact-notice" id="douyin-login-state-settings">
+                    <div class="settings-panel-header">
+                        <div>
+                            <strong>Douyin 登录状态</strong>
+                            <p class="muted compact-copy">独立插件通过一次性配对码向本机 Receiver 主动同步。Cookie 原文不会返回网页，也不会进入浏览器存储。</p>
+                        </div>
+                        <span id="login-state-status-badge" class="status-badge">读取中</span>
+                    </div>
+                    <div id="login-state-status-list" class="compact-dl"></div>
+                    <div class="settings-actions">
+                        <button type="button" id="start-login-state-pair-button">生成配对码</button>
+                        <button type="button" id="refresh-login-state-button" class="ghost-button">刷新状态</button>
+                    </div>
+                    <div id="login-state-pair-result" class="settings-test-result muted"></div>
+                </section>
                 <form id="douyin-settings-form" class="settings-form">
                     <label>Douyin Cookie
                         <textarea name="douyin_cookie" id="douyin-cookie-input" rows="3" autocomplete="off" placeholder="留空表示保留当前 Cookie"></textarea>
@@ -115,7 +130,7 @@
                     </label>
                     <label class="settings-checkbox">
                         <input type="checkbox" id="douyin-clear-cookie-input">
-                        清空本机保存的 Douyin Cookie
+                        清空本机手动保存的 Douyin Cookie
                     </label>
                     <div class="settings-actions">
                         <button type="submit" id="save-douyin-settings-button">保存数据源设置</button>

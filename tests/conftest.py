@@ -8,6 +8,10 @@ from sqlalchemy.orm import close_all_sessions
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine as application_engine
+from app.services import local_login_state
+
+
+TEST_EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop"
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +36,18 @@ def isolate_application_runtime(monkeypatch, tmp_path: Path):
         "app.services.runtime_settings.LOCAL_SETTINGS_PATH",
         runtime_root / ".local_settings.json",
     )
+    monkeypatch.setattr(
+        local_login_state,
+        "CREDENTIALS_PATH",
+        runtime_root / ".short-video-agent" / "credentials.json",
+    )
+    monkeypatch.setattr(
+        local_login_state,
+        "NONCE_LEDGER_PATH",
+        runtime_root / ".short-video-agent" / "nonce-ledger.sqlite3",
+    )
+    monkeypatch.setattr(settings, "douyin_login_extension_ids", (TEST_EXTENSION_ID,))
+    local_login_state.reset_ephemeral_state_for_tests()
     settings.ensure_directories()
 
     test_engine = create_engine(
@@ -45,6 +61,7 @@ def isolate_application_runtime(monkeypatch, tmp_path: Path):
     try:
         yield
     finally:
+        local_login_state.reset_ephemeral_state_for_tests()
         close_all_sessions()
         SessionLocal.configure(bind=application_engine)
         test_engine.dispose()

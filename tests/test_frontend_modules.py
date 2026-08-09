@@ -237,7 +237,7 @@ async function emit(target, type, event = {{}}) {{
   const payload = {{preventDefault() {{}}, target, ...event}};
   for (const listener of target.listeners[type] || []) await listener(payload);
 }}
-const e = {{
+  const e = {{
   toggle: element(), modal: element(["hidden"]), close: element(),
   llmStatusBadge: element(), llmStatusList: element(), llmConfigHint: element(), llmForm: element(),
   llmProviderInput: element(), llmApiBaseInput: element(), llmModelInput: element(), llmApiKeyInput: element(),
@@ -249,8 +249,10 @@ const e = {{
   dataSourceStatusList: element(), douyinForm: element(), douyinCookieInput: element(), douyinUserAgentInput: element(),
   douyinRefererInput: element(), douyinClearCookieInput: element(), saveDouyinButton: element(), douyinSaveResult: element(),
   testDouyinButton: element(), douyinCookieTestResult: element(), refreshPreflightButton: element(),
-  preflightSummary: element(), preflightList: element(),
-}};
+    preflightSummary: element(), preflightList: element(),
+    loginStateStatusBadge: element(), loginStateStatusList: element(), startLoginStatePairButton: element(),
+    refreshLoginStateButton: element(), loginStatePairResult: element(),
+  }};
 const requests = [];
 async function requestJson(url, options = {{}}) {{
   requests.push([url, options.method || "GET", options.body || ""]);
@@ -266,6 +268,8 @@ async function requestJson(url, options = {{}}) {{
   if (url === "/api/settings/data-sources/douyin/test") return {{test: {{status: "ok", message: "通过", cookie_diagnostics: {{has_cookie: true, pair_count: 5, login_key_count: 2}}, api_checked: true, status_code: 200, is_json: true, aweme_count: 3}}}};
   if (url === "/api/settings/data-sources/douyin") return {{data_sources: {{has_cookie: true, masked_cookie: "sessionid=****abcd", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
   if (url === "/api/settings/data-sources") return {{data_sources: {{has_cookie: true, masked_cookie: "sessionid=****abcd", user_agent_configured: true, user_agent: "UA", referer: "https://www.douyin.com/"}}}};
+  if (url === "/api/local-login-state/status") return {{login_state: {{paired: true, configured: true, source: "chrome_extension", masked_cookie: "********", pair_count: 5, login_key_count: 2, extension_version: "1.0.0", health: {{status: "success"}}}}}};
+  if (url === "/api/local-login-state/pair/start") return {{pairing: {{pairing_code: "ABCD2345", expires_in_seconds: 600}}}};
   throw {{error_code: "UNEXPECTED", message: url}};
 }}
 let preflightCalls = 0;
@@ -285,6 +289,7 @@ const first = context.SettingsPanel.init(options);
 const second = context.SettingsPanel.init(options);
 await first.loadLlmStatus();
 await first.loadDataSourceStatus();
+await first.loadLoginStateStatus();
 await emit(e.toggle, "click");
 const opened = !e.modal.classList.contains("hidden");
 await emit(e.close, "click");
@@ -295,6 +300,8 @@ e.douyinCookieInput.value = "sessionid=raw-cookie-never-render";
 await emit(e.douyinForm, "submit");
 await emit(e.testLlmButton, "click");
 await emit(e.testDouyinButton, "click");
+await emit(e.startLoginStatePairButton, "click");
+await emit(e.refreshLoginStateButton, "click");
 first.renderLlmStatus(null);
 first.renderDataSourceStatus("bad");
 first.renderCookieTestResult([]);
@@ -314,7 +321,8 @@ process.stdout.write(JSON.stringify({{
   requestPairs: requests.map((item) => item.slice(0, 2)),
   llmPutBody: JSON.parse(llmPutRequest[2]),
   leakedKey: visible.includes("sk-live-secret-never-render"),
-  leakedCookie: visible.includes("raw-cookie-never-render"),
+      leakedCookie: visible.includes("raw-cookie-never-render"),
+      pairingCodeShown: e.loginStatePairResult.innerHTML.includes("ABCD2345"),
   noDomOpen: noDom.open(),
   api: Object.keys(first).sort(),
 }}));
@@ -336,6 +344,8 @@ process.stdout.write(JSON.stringify({{
     assert ["/api/settings/llm/test", "POST"] in result["requestPairs"]
     assert ["/api/settings/data-sources/douyin", "PUT"] in result["requestPairs"]
     assert ["/api/settings/data-sources/douyin/test", "POST"] in result["requestPairs"]
+    assert ["/api/local-login-state/status", "GET"] in result["requestPairs"]
+    assert ["/api/local-login-state/pair/start", "POST"] in result["requestPairs"]
     assert result["llmPutBody"]["timeout_seconds"] == 90
     assert result["llmPutBody"]["creator_distill_request_timeout_seconds"] == 180
     assert result["llmPutBody"]["quick_distill_budget_seconds"] == 240
@@ -346,13 +356,16 @@ process.stdout.write(JSON.stringify({{
     assert result["llmPutBody"]["compact_retry_min_remaining_seconds"] == 60
     assert result["leakedKey"] is False
     assert result["leakedCookie"] is False
+    assert result["pairingCodeShown"] is True
     assert result["noDomOpen"] is False
     assert result["api"] == [
         "close",
         "loadDataSourceStatus",
         "loadLlmStatus",
+        "loadLoginStateStatus",
         "open",
         "renderCookieTestResult",
         "renderDataSourceStatus",
         "renderLlmStatus",
+        "renderLoginStateStatus",
     ]

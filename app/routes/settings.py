@@ -86,20 +86,29 @@ def get_preflight_settings():
 
 @router.get("/data-sources")
 def get_data_source_settings():
-    return {"ok": True, "data_sources": data_source_settings.data_source_status_payload()}
+    try:
+        return {"ok": True, "data_sources": data_source_settings.data_source_status_payload()}
+    except AppError as error:
+        return error_response(error, 409 if error.code == "LEGACY_CREDENTIAL_MIGRATION_REQUIRED" else 400)
 
 
 @router.put("/data-sources/douyin")
 def update_douyin_data_source_settings(payload: DouyinSettingsUpdate):
-    return {
-        "ok": True,
-        "data_sources": data_source_settings.update_douyin_settings_payload(_payload_dict(payload)),
-    }
+    try:
+        return {
+            "ok": True,
+            "data_sources": data_source_settings.update_douyin_settings_payload(_payload_dict(payload)),
+        }
+    except AppError as error:
+        return error_response(error, 400)
 
 
 @router.post("/data-sources/douyin/test")
 def test_douyin_data_source_settings(payload: DouyinSettingsTest):
-    return {
-        "ok": True,
-        "test": data_source_settings.test_douyin_settings_payload(_payload_dict(payload)),
-    }
+    try:
+        return {
+            "ok": True,
+            "test": data_source_settings.test_douyin_settings_payload(_payload_dict(payload)),
+        }
+    except AppError as error:
+        return error_response(error, 409 if error.code == "LEGACY_CREDENTIAL_MIGRATION_REQUIRED" else 400)

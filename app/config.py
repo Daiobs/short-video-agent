@@ -30,6 +30,14 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _tuple_env(name: str) -> tuple[str, ...]:
+    return tuple(
+        value.strip().lower()
+        for value in os.getenv(name, "").split(",")
+        if value.strip()
+    )
+
+
 class Settings:
     project_root: Path = PROJECT_ROOT
     output_dir: Path = PROJECT_ROOT / os.getenv("OUTPUT_DIR", "outputs")
@@ -46,6 +54,7 @@ class Settings:
     douyin_cookie: str = os.getenv("DOUYIN_COOKIE", "")
     douyin_user_agent: str = os.getenv("DOUYIN_USER_AGENT", "").strip()
     douyin_referer: str = os.getenv("DOUYIN_REFERER", "https://www.douyin.com/").strip()
+    douyin_login_extension_ids: tuple[str, ...] = _tuple_env("DOUYIN_LOGIN_EXTENSION_IDS")
     max_video_size_mb: int = _int_env("MAX_VIDEO_SIZE_MB", 500)
     allowed_cdn_hosts: tuple[str, ...] = tuple(
         host.strip().lower()

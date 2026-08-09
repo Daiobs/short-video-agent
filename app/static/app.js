@@ -737,6 +737,11 @@ const preflightSummary = document.getElementById("preflight-summary");
 const preflightList = document.getElementById("preflight-list");
 const dataSourceStatusBadge = document.getElementById("data-source-status-badge");
 const dataSourceStatusList = document.getElementById("data-source-status-list");
+const loginStateStatusBadge = document.getElementById("login-state-status-badge");
+const loginStateStatusList = document.getElementById("login-state-status-list");
+const startLoginStatePairButton = document.getElementById("start-login-state-pair-button");
+const refreshLoginStateButton = document.getElementById("refresh-login-state-button");
+const loginStatePairResult = document.getElementById("login-state-pair-result");
 const douyinSettingsForm = document.getElementById("douyin-settings-form");
 const douyinCookieInput = document.getElementById("douyin-cookie-input");
 const douyinUserAgentInput = document.getElementById("douyin-user-agent-input");
@@ -7832,6 +7837,11 @@ const settingsPanelController = window.SettingsPanel?.init({
     llmTestResult,
     dataSourceStatusBadge,
     dataSourceStatusList,
+    loginStateStatusBadge,
+    loginStateStatusList,
+    startLoginStatePairButton,
+    refreshLoginStateButton,
+    loginStatePairResult,
     douyinForm: douyinSettingsForm,
     douyinCookieInput,
     douyinUserAgentInput,
@@ -7867,6 +7877,7 @@ const settingsPanelController = window.SettingsPanel?.init({
 
 settingsPanelController?.loadLlmStatus();
 settingsPanelController?.loadDataSourceStatus();
+settingsPanelController?.loadLoginStateStatus();
 loadPreflightStatus().catch(() => {
   markWorkbenchPreflightFailed();
 });

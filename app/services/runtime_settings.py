@@ -45,6 +45,17 @@ def update_local_section(section: str, values: dict[str, Any]) -> dict[str, Any]
         return payload
 
 
+def replace_local_section(section: str, values: dict[str, Any]) -> dict[str, Any]:
+    with _LOCK:
+        payload = load_local_settings()
+        payload[section] = dict(values)
+        LOCAL_SETTINGS_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return payload
+
+
 def _local_value(section: str, key: str, fallback):
     payload = load_local_settings()
     section_payload = payload.get(section)
@@ -174,15 +185,48 @@ def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
     return effective_llm_settings()
 
 
-def effective_douyin_settings() -> dict[str, str]:
+def effective_douyin_settings() -> dict[str, Any]:
+    from app.errors import AppError, ErrorCode
+    from app.services.local_login_state import (
+        extension_douyin_credentials,
+        manual_douyin_credentials,
+        migrate_legacy_douyin_credentials,
+    )
+
+    payload = load_local_settings()
+    legacy = payload.get("douyin")
+    legacy = legacy if isinstance(legacy, dict) else {}
+    if str(legacy.get("cookie") or ""):
+        try:
+            migrate_legacy_douyin_credentials(legacy)
+        except (AppError, OSError, ValueError) as error:
+            raise AppError(ErrorCode.LEGACY_CREDENTIAL_MIGRATION_REQUIRED) from error
+
+    extension = extension_douyin_credentials()
+    if extension.get("cookie"):
+        return {**extension, "source": "chrome_extension"}
+
+    manual = manual_douyin_credentials()
+    if manual.get("cookie"):
+        return {**manual, "source": "manual_secure"}
+
+    environment_cookie = str(settings.douyin_cookie or "")
     return {
-        "cookie": str(_local_value("douyin", "cookie", settings.douyin_cookie) or ""),
-        "user_agent": str(_local_value("douyin", "user_agent", settings.douyin_user_agent) or "").strip(),
-        "referer": str(_local_value("douyin", "referer", settings.douyin_referer) or "https://www.douyin.com/").strip(),
+        "cookie": environment_cookie,
+        "user_agent": str(settings.douyin_user_agent or "").strip(),
+        "referer": str(settings.douyin_referer or "https://www.douyin.com/").strip(),
+        "source": "environment" if environment_cookie else "",
+        "last_synced_at": "",
+        "captured_at": "",
+        "pair_count": 0,
+        "login_key_count": 0,
+        "extension_version": "",
     }
 
 
-def update_douyin_runtime_settings(values: dict[str, Any]) -> dict[str, str]:
+def update_douyin_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
+    from app.services.local_login_state import store_manual_douyin_credentials
+
     cleaned: dict[str, str] = {}
     for source_key, target_key in (
         ("cookie", "cookie"),
@@ -192,5 +236,5 @@ def update_douyin_runtime_settings(values: dict[str, Any]) -> dict[str, str]:
     ):
         if source_key in values:
             cleaned[target_key] = str(values.get(source_key) or "").strip()
-    update_local_section("douyin", cleaned)
+    store_manual_douyin_credentials(cleaned)
     return effective_douyin_settings()

@@ -312,10 +312,14 @@ class DataSourceManager:
             return self._scan_explicit_external(normalized)
 
         failures: list[AppError] = []
-        if provider_name == "cookie_api" or bool((effective_douyin_settings()["cookie"] or "").strip()):
+        douyin_settings = effective_douyin_settings()
+        credential_source = str(douyin_settings.get("source") or "")
+        if provider_name == "cookie_api" or bool((douyin_settings["cookie"] or "").strip()):
             try:
                 return self._finalize(self.cookie_provider.scan(normalized), normalized, failures)
             except AppError as error:
+                if credential_source == "chrome_extension":
+                    raise
                 failures.append(error)
 
         try:

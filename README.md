@@ -1,5 +1,7 @@
 # short-video-agent
 
+Douyin Login State Receiver 的本机协议、安全存储和插件边界见 [docs/douyin-login-state-integration.md](docs/douyin-login-state-integration.md)。
+
 本项目是一个本地短视频爆款分析素材包生成器，不是抖音下载器。
 
 当前目标是把已授权的本地视频、单条作品或一组对标素材整理成稳定、可复用、可扩展的分析输入包：解析作品元数据、下载视频用于抽帧、生成素材包；配置大模型后，可在 case 页面或 Creator Clone Lab 中自动拆解并输出选题/脚本/分镜/创作者克隆规则所需的结构化结果。

@@ -4,7 +4,7 @@ import math
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from urllib.parse import urlparse
 
@@ -18,6 +18,7 @@ from app.routes import (
     jobs,
     library,
     local_helper,
+    local_login_state,
     pages,
     profile,
     settings as settings_routes,
@@ -25,10 +26,13 @@ from app.routes import (
     workbench,
 )
 from app.services.local_chrome import is_loopback_client
+from app.services.local_login_state import MAX_REQUEST_BODY_BYTES, require_allowed_extension_origin
+from app.errors import AppError, ErrorCode
 
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 LOCAL_TEST_HOSTS = {"testserver"}
+LOCAL_LOGIN_STATE_PREFIX = "/api/local-login-state/"
 
 
 def _host_without_port(value: str) -> str:
@@ -98,6 +102,29 @@ def _local_forbidden_response(message: str) -> JSONResponse:
             "error_code": "LOCAL_HELPER_FORBIDDEN",
             "message": message,
         },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _extension_cors_headers(origin: str) -> dict[str, str]:
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": (
+            "Content-Type, X-SVA-Timestamp, X-SVA-Nonce, X-SVA-Signature, "
+            "X-SVA-Schema-Version, X-SVA-Extension-Version"
+        ),
+        "Access-Control-Max-Age": "600",
+        "Vary": "Origin",
+    }
+
+
+def _extension_origin_error(error: AppError) -> JSONResponse:
+    status_code = 400 if error.code == ErrorCode.EXTENSION_ID_CONFIGURATION_REQUIRED else 403
+    return JSONResponse(
+        status_code=status_code,
+        content=error.as_dict(),
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -136,14 +163,51 @@ def create_app() -> FastAPI:
             return _local_forbidden_response("short-video-agent 自用版拒绝经公网代理转发的访问。")
         if not _is_allowed_local_host(request.headers.get("host", "")):
             return _local_forbidden_response("short-video-agent 自用版只接受 127.0.0.1 / localhost Host。")
+        origin = request.headers.get("origin", "")
+        referer = request.headers.get("referer", "")
+        is_login_state_api = request.url.path.startswith(LOCAL_LOGIN_STATE_PREFIX)
+        is_extension_request = False
+        if is_login_state_api and origin.lower().startswith("chrome-extension://"):
+            try:
+                require_allowed_extension_origin(origin)
+                is_extension_request = True
+            except AppError as error:
+                return _extension_origin_error(error)
+        if request.method.upper() == "OPTIONS" and is_extension_request:
+            return Response(
+                status_code=204,
+                headers={**_extension_cors_headers(origin), "Cache-Control": "no-store"},
+            )
+        if is_login_state_api and request.method.upper() not in SAFE_METHODS:
+            content_length = request.headers.get("content-length", "")
+            try:
+                declared_size = int(content_length) if content_length else 0
+            except ValueError:
+                declared_size = MAX_REQUEST_BODY_BYTES + 1
+            if declared_size > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content=AppError(ErrorCode.LOCAL_LOGIN_STATE_PAYLOAD_TOO_LARGE).as_dict(),
+                    headers={"Cache-Control": "no-store"},
+                )
+            if len(await request.body()) > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content=AppError(ErrorCode.LOCAL_LOGIN_STATE_PAYLOAD_TOO_LARGE).as_dict(),
+                    headers={"Cache-Control": "no-store"},
+                )
         if request.method.upper() not in SAFE_METHODS:
-            origin = request.headers.get("origin", "")
-            referer = request.headers.get("referer", "")
-            if origin and not _is_allowed_local_url(origin):
+            if origin and not _is_allowed_local_url(origin) and not is_extension_request:
                 return _local_forbidden_response("本地网页拒绝非本机 Origin 发起的写操作。")
-            if referer and not _is_allowed_local_url(referer):
+            if referer and not _is_allowed_local_url(referer) and not is_extension_request:
                 return _local_forbidden_response("本地网页拒绝非本机 Referer 发起的写操作。")
-        return await call_next(request)
+        response = await call_next(request)
+        if is_login_state_api:
+            response.headers["Cache-Control"] = "no-store"
+        if is_extension_request:
+            for key, value in _extension_cors_headers(origin).items():
+                response.headers[key] = value
+        return response
 
     app.mount("/static", StaticFiles(directory="app/static"), name="static")
     app.include_router(pages.router)
@@ -154,6 +218,7 @@ def create_app() -> FastAPI:
     app.include_router(creator_clone.router)
     app.include_router(creator_intelligence.router)
     app.include_router(local_helper.router)
+    app.include_router(local_login_state.router)
     app.include_router(downloads.router)
     app.include_router(settings_routes.router)
     app.include_router(workbench.router)
