@@ -1587,6 +1587,9 @@ def test_workbench_profile_recovery_uses_safe_status_without_auto_distill() -> N
     recovery_fetch = source[
         source.index("function safeWorkbenchJobId") : source.index("function renderWorkbenchRestoredJobStatus")
     ]
+    timestamp_staleness = source[
+        source.index("function parseBackendJobTimestampMilliseconds") : source.index("function setActiveProfileBuildJob")
+    ]
     queue_polling = source[
         source.index("async function refreshProfilePoolFromPersistedSet") : source.index("// Creator Clone: enrichment queue")
     ]
@@ -1603,6 +1606,9 @@ let distillCalls = 0;
 let refreshedSampleCounts = [];
 const requestedUrls = [];
 let activeHomeRoute = "profile";
+let activeProfileBuildJobUpdatedAt = "";
+let activeProfileBuildJobStatus = "";
+const WORKBENCH_TASK_STALE_SECONDS = 1800;
 const profileAutoDistill = {checked: true};
 const profileScanStatus = {textContent: ""};
 const jobMessage = {className: "", textContent: ""};
@@ -1615,7 +1621,6 @@ function clearActiveProfileBuildJob() {}
 function renderJobStatus() {}
 function renderProfileQueue() {}
 function updateCreatorCloneSelectionStatus() {}
-function isProfileBuildJobStale() { return false; }
 function selectedCreatorSampleViewItems() { return [{sample_id: "sample_1"}]; }
 function setProfileStageView() {}
 function formatNumber(value) { return String(value); }
@@ -1643,8 +1648,16 @@ async function fetch(url, options = {}) {
   }
   if (String(url).startsWith("/api/jobs/")) {
     rawCalls += 1;
+    const isFreshRunning = scenario === "fresh-running" && rawCalls === 1;
+    const isTrueStale = scenario === "true-stale";
+    const status = isFreshRunning || isTrueStale ? "running" : "success";
+    const ageSeconds = isTrueStale ? WORKBENCH_TASK_STALE_SECONDS + 1 : 30;
     return {payload: {job: {
-      id: "job_demo", type: "profile-build-cases", status: "success", progress: 100,
+      id: "job_demo", type: "profile-build-cases", status, progress: status === "success" ? 100 : 1,
+      message: status === "success" ? "完成" : "正在解析清晰度候选",
+      updated_at: status === "running"
+        ? new Date(Date.now() - ageSeconds * 1000).toISOString().replace(/Z$/, "")
+        : new Date().toISOString(),
       result_json: {set: {set_id: SET_ID, samples: [{sample_id: "normal"}]}, items: []},
     }}};
   }
@@ -1652,6 +1665,7 @@ async function fetch(url, options = {}) {
 }
 """
         + recovery_fetch
+        + timestamp_staleness
         + queue_polling
         + """
 function reset(nextScenario) {
@@ -1670,7 +1684,15 @@ function reset(nextScenario) {
   reset("normal-success");
   await pollProfileQueue("job_demo");
   const normalFlow = {safeCalls, rawCalls, postCalls, persistedCalls, distillCalls, requestedUrls: [...requestedUrls]};
-  process.stdout.write(JSON.stringify({safeSuccess, staleRecovery, normalFlow}));
+
+  reset("fresh-running");
+  await pollProfileQueue("job_demo", {allowAutoDistill: false});
+  const freshRunning = {rawCalls, distillCalls, requestedUrls: [...requestedUrls], status: profileScanStatus.textContent};
+
+  reset("true-stale");
+  await pollProfileQueue("job_demo", {allowAutoDistill: false});
+  const trueStale = {rawCalls, distillCalls, requestedUrls: [...requestedUrls], status: profileScanStatus.textContent};
+  process.stdout.write(JSON.stringify({safeSuccess, staleRecovery, normalFlow, freshRunning, trueStale}));
 })().catch((error) => { console.error(error); process.exit(1); });
 """
     )
@@ -1707,6 +1729,84 @@ function reset(nextScenario) {
     assert normal_flow["rawCalls"] == 1
     assert normal_flow["distillCalls"] == 1
     assert normal_flow["requestedUrls"] == ["/api/jobs/job_demo"]
+
+    fresh_running = result["freshRunning"]
+    assert fresh_running["rawCalls"] == 2
+    assert fresh_running["distillCalls"] == 0
+    assert fresh_running["requestedUrls"] == ["/api/jobs/job_demo", "/api/jobs/job_demo"]
+    assert "样本富化队列完成" in fresh_running["status"]
+
+    true_stale = result["trueStale"]
+    assert true_stale["rawCalls"] == 1
+    assert true_stale["distillCalls"] == 0
+    assert true_stale["requestedUrls"] == ["/api/jobs/job_demo"]
+    assert "任务可能已停止更新" in true_stale["status"]
+
+
+def test_profile_job_age_treats_naive_backend_timestamp_as_utc() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; timestamp parsing is covered by static review.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    timestamp_parser = source[
+        source.index("function parseBackendJobTimestampMilliseconds") : source.index("function profileBuildJobAgeSeconds")
+    ]
+    job_age = source[
+        source.index("function profileBuildJobAgeSeconds") : source.index("function isProfileBuildJobStale")
+    ]
+    stale_detection = source[
+        source.index("function isProfileBuildJobStale") : source.index("function setActiveProfileBuildJob")
+    ]
+    runner = f"""
+const activeProfileBuildJobUpdatedAt = "";
+const activeProfileBuildJobStatus = "";
+const WORKBENCH_TASK_STALE_SECONDS = 1800;
+{timestamp_parser}
+{job_age}
+{stale_detection}
+const now = parseBackendJobTimestampMilliseconds("2026-08-09T06:03:00Z");
+process.stdout.write(JSON.stringify({{
+  utcZ: parseBackendJobTimestampMilliseconds("2026-08-09T06:00:00Z"),
+  utcOffset: parseBackendJobTimestampMilliseconds("2026-08-09T06:00:00+00:00"),
+  shanghaiOffset: parseBackendJobTimestampMilliseconds("2026-08-09T14:00:00+08:00"),
+  naiveIso: parseBackendJobTimestampMilliseconds("2026-08-09T06:00:00"),
+  naiveSpace: parseBackendJobTimestampMilliseconds("2026-08-09 06:00:00"),
+  invalid: parseBackendJobTimestampMilliseconds("not-a-time"),
+  empty: parseBackendJobTimestampMilliseconds(""),
+  nullValue: parseBackendJobTimestampMilliseconds(null),
+  freshAge: profileBuildJobAgeSeconds({{updated_at: "2026-08-09T06:02:30"}}, now),
+  freshStale: isProfileBuildJobStale({{status: "running", updated_at: "2026-08-09T06:02:30"}}, now),
+  trueStale: isProfileBuildJobStale({{status: "running", updated_at: "2026-08-09T05:32:59"}}, now),
+}}));
+"""
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    equivalent = {
+        result["utcZ"],
+        result["utcOffset"],
+        result["shanghaiOffset"],
+        result["naiveIso"],
+        result["naiveSpace"],
+    }
+    assert len(equivalent) == 1
+    assert result["invalid"] == 0
+    assert result["empty"] == 0
+    assert result["nullValue"] == 0
+    assert result["freshAge"] == 30
+    assert result["freshStale"] is False
+    assert result["trueStale"] is True
 
 
 def test_workbench_resource_less_recovery_and_profile_scan_observation_run_in_javascript() -> None:

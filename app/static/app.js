@@ -1777,18 +1777,33 @@ function isProfileBuildJobActive() {
   return Boolean(activeProfileBuildJobId && ["pending", "running"].includes(activeProfileBuildJobStatus));
 }
 
-function profileBuildJobAgeSeconds(job = {}) {
-  const updatedAt = job.updated_at || activeProfileBuildJobUpdatedAt || "";
-  const updatedTime = updatedAt ? Date.parse(updatedAt) : 0;
-  if (!updatedTime || Number.isNaN(updatedTime)) {
+function parseBackendJobTimestampMilliseconds(value) {
+  const candidate = String(value || "").trim();
+  if (!candidate) {
     return 0;
   }
-  return Math.max(0, Math.floor((Date.now() - updatedTime) / 1000));
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(candidate);
+  const isNaiveBackendTimestamp = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(candidate);
+  const normalized = hasExplicitTimezone || !isNaiveBackendTimestamp
+    ? candidate
+    : `${candidate.replace(" ", "T")}Z`;
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function isProfileBuildJobStale(job = {}) {
+function profileBuildJobAgeSeconds(job = {}, nowMilliseconds = Date.now()) {
+  const updatedAt = job.updated_at || activeProfileBuildJobUpdatedAt || "";
+  const updatedTime = parseBackendJobTimestampMilliseconds(updatedAt);
+  if (!updatedTime) {
+    return 0;
+  }
+  const currentTime = Number.isFinite(nowMilliseconds) ? nowMilliseconds : Date.now();
+  return Math.max(0, Math.floor((currentTime - updatedTime) / 1000));
+}
+
+function isProfileBuildJobStale(job = {}, nowMilliseconds = Date.now()) {
   return ["pending", "running"].includes(job.status || activeProfileBuildJobStatus)
-    && profileBuildJobAgeSeconds(job) >= WORKBENCH_TASK_STALE_SECONDS;
+    && profileBuildJobAgeSeconds(job, nowMilliseconds) >= WORKBENCH_TASK_STALE_SECONDS;
 }
 
 function setActiveProfileBuildJob(job = {}) {
