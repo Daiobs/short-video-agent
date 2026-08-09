@@ -11,6 +11,11 @@ import httpx
 
 from app.config import settings
 from app.errors import AppError, ErrorCode
+from app.metric_availability import (
+    PUBLIC_METRIC_ALIASES,
+    metric_availability_from_mapping,
+    unavailable_metric_availability,
+)
 from app.providers.profile_base import (
     ProfileScanRequest,
     ProfileScanResult,
@@ -76,6 +81,7 @@ class ManualLinksProfileProvider:
                     webpage_url=source_url,
                     media_type=media_type,
                     source_provider=self.name,
+                    metric_availability=unavailable_metric_availability(),
                 )
             )
         if not items:
@@ -658,6 +664,8 @@ def _field(row: dict, *names: str, default=""):
 
 
 def _nested_field(row: dict, name: str):
+    if name in row:
+        return row.get(name)
     current = row
     for part in name.split("."):
         if not isinstance(current, dict):
@@ -694,6 +702,7 @@ def _profile_item_from_structured_row(row: dict) -> ProfileVideoItem:
         webpage_url=source_url,
         media_type=media_type,
         source_provider="structured_items",
+        metric_availability=metric_availability_from_mapping(row, PUBLIC_METRIC_ALIASES),
     )
 
 
@@ -747,15 +756,16 @@ def normalize_profile_video_item(raw: dict, sec_user_id: str = "") -> ProfileVid
         sec_user_id=item_sec_user_id,
         cover_url=cover_url,
         create_time=str(raw.get("create_time") or raw.get("createTime") or ""),
-        like_count=_safe_int(statistics.get("digg_count") or raw.get("digg_count")),
-        comment_count=_safe_int(statistics.get("comment_count") or raw.get("comment_count")),
-        share_count=_safe_int(statistics.get("share_count") or raw.get("share_count")),
-        collect_count=_safe_int(statistics.get("collect_count") or raw.get("collect_count")),
+        like_count=_safe_int(_field(raw, "statistics.digg_count", "digg_count", default=0)),
+        comment_count=_safe_int(_field(raw, "statistics.comment_count", "comment_count", default=0)),
+        share_count=_safe_int(_field(raw, "statistics.share_count", "share_count", default=0)),
+        collect_count=_safe_int(_field(raw, "statistics.collect_count", "collect_count", default=0)),
         view_count=_safe_int(statistics.get("play_count") or raw.get("play_count")),
         duration=_safe_int(video.get("duration") or raw.get("duration")),
         webpage_url=f"https://www.douyin.com/{'note' if media_type == 'image' else 'video'}/{aweme_id}",
         media_type=media_type,
         source_provider=DouyinPublicProfileProvider.name,
+        metric_availability=metric_availability_from_mapping(raw, PUBLIC_METRIC_ALIASES),
     )
 
 
@@ -812,6 +822,7 @@ def _extract_profile_items_from_links(text: str, sec_user_id: str = "") -> list[
                     webpage_url=f"https://www.douyin.com/{'note' if media_type == 'image' else 'video'}/{aweme_id}",
                     media_type=media_type,
                     source_provider=DouyinPublicProfileProvider.name,
+                    metric_availability=unavailable_metric_availability(),
                 )
             )
     return items

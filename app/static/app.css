@@ -1537,9 +1537,8 @@ button:disabled {
 }
 
 .profile-selection-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px;
     margin: 10px 0 12px;
     padding: 10px 12px;
@@ -1568,8 +1567,10 @@ button:disabled {
 }
 
 .creator-clone-recommendation {
-    margin: 10px 0;
+    width: 100%;
+    margin: 0;
     padding: 12px;
+    box-sizing: border-box;
     border: 1px solid rgba(124, 58, 237, .14);
     border-radius: 8px;
     background: #fff;
@@ -1590,6 +1591,105 @@ button:disabled {
     display: block;
     color: var(--text);
     font-size: 18px;
+}
+
+.recommendation-heading p {
+    margin: 4px 0 0;
+}
+
+.recommendation-heading small {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+}
+
+.representative-actions,
+.representative-coverage-list,
+.representative-row-badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.representative-actions {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+}
+
+.representative-coverage-list {
+    margin-top: 8px;
+}
+
+.representative-coverage,
+.representative-role-badge,
+.representative-role-more,
+.representative-score {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1.2;
+}
+
+.representative-coverage.covered,
+.representative-role-badge {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.representative-coverage.unavailable {
+    background: #f1f5f9;
+    color: #64748b;
+}
+
+.representative-score-note {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.representative-warnings {
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.representative-warnings > summary,
+.representative-row-note details > summary {
+    cursor: pointer;
+    color: #475569;
+    font-weight: 800;
+}
+
+.representative-warnings ul,
+.representative-row-note ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+}
+
+.representative-row-note {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.representative-role-more {
+    background: #f5f3ff;
+    color: #7c3aed;
+}
+
+.representative-score {
+    background: #eef2ff;
+    color: #3730a3;
+}
+
+.representative-row-note details {
+    color: var(--muted);
+    font-size: 12px;
 }
 
 .recommended-sample-grid {
@@ -5888,6 +5988,26 @@ footer {
 
     .public-report-grid {
         column-count: 1;
+    }
+
+    .recommendation-heading {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .representative-actions {
+        justify-content: flex-start;
+    }
+
+    .representative-actions .primary-button {
+        order: -1;
+        flex: 1 1 150px;
+        width: auto;
+        min-width: 150px;
+    }
+
+    .representative-actions .text-button {
+        flex: 0 0 auto;
     }
 
     .profile-queue-item {

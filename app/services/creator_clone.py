@@ -27,6 +27,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.errors import AppError, ErrorCode
+from app.metric_availability import (
+    PUBLIC_METRIC_ALIASES,
+    metric_availability_from_mapping,
+    sanitize_metric_availability,
+    unavailable_metric_availability,
+)
 from app.models import CaseArtifact
 from app.providers.profile_base import ProfileScanResult, ProfileVideoItem, profile_engagement_score
 from app.services.douyin_url_parser import extract_aweme_id, extract_first_url
@@ -153,10 +159,13 @@ class CloneSample:
     author: str = ""
     cover_url: str = ""
     media_type: str = "unknown"
+    duration: float = 0.0
+    content_category: str = ""
     like_count: int = 0
     comment_count: int = 0
     share_count: int = 0
     collect_count: int = 0
+    metric_availability: dict[str, bool] = field(default_factory=dict)
     view_count: int = 0
     create_time: str = ""
     case_id: str = ""
@@ -189,10 +198,13 @@ class CloneSample:
             "author": self.author,
             "cover_url": self.cover_url,
             "media_type": self.media_type,
+            "duration": self.duration,
+            "content_category": self.content_category,
             "like_count": self.like_count,
             "comment_count": self.comment_count,
             "share_count": self.share_count,
             "collect_count": self.collect_count,
+            "metric_availability": sanitize_metric_availability(self.metric_availability),
             "view_count": self.view_count,
             "create_time": self.create_time,
             "case_id": self.case_id,
@@ -392,10 +404,12 @@ def sample_from_profile_item(item: ProfileVideoItem) -> CloneSample:
         author=_safe_public_metadata_text(item.author, 120),
         cover_url=_safe_public_metadata_url(item.cover_url),
         media_type=media_type,
+        duration=max(0.0, float(item.duration or 0)) / 1000.0,
         like_count=int(item.like_count or 0),
         comment_count=int(item.comment_count or 0),
         share_count=int(item.share_count or 0),
         collect_count=int(item.collect_count or 0),
+        metric_availability=sanitize_metric_availability(item.metric_availability),
         view_count=int(getattr(item, "view_count", 0) or 0),
         create_time=_safe_public_metadata_text(item.create_time, 80),
         understanding_level="metadata_only",
@@ -428,6 +442,7 @@ def samples_from_manual_text(text: str) -> list[CloneSample]:
                 title=line[:120] if not raw_id else f"抖音作品 {raw_id}",
                 desc=line[:260],
                 media_type="video" if raw_id or source_type in {"douyin", "bili"} else "unknown",
+                metric_availability=unavailable_metric_availability(),
                 understanding_level="metadata_only",
                 notes="来自手动链接导入，尚未生成素材包。",
             )
@@ -495,10 +510,13 @@ def sample_from_handoff_item(item: dict) -> CloneSample:
         author=_safe_handoff_text(str(item.get("author") or ""), 120),
         cover_url=cover_url,
         media_type=normalize_media_type(str(item.get("media_type") or "unknown")),
+        duration=_safe_float(item.get("duration")),
+        content_category=_safe_handoff_text(str(item.get("content_category") or ""), 120),
         like_count=_safe_int(item.get("like_count")),
         comment_count=_safe_int(item.get("comment_count")),
         share_count=_safe_int(item.get("share_count")),
         collect_count=_safe_int(item.get("collect_count")),
+        metric_availability=metric_availability_from_mapping(item),
         view_count=_safe_int(item.get("view_count")),
         create_time=_safe_handoff_text(str(item.get("create_time") or ""), 80),
         case_id=_safe_handoff_text(str(item.get("case_id") or ""), 120),
@@ -545,10 +563,16 @@ def sample_from_structured_row(row: dict) -> CloneSample:
         author=_safe_public_metadata_text(str(_row_field(row, "author", "nickname", default="")).strip(), 120),
         cover_url=_safe_public_metadata_url(str(_row_field(row, "cover_url", "cover", default="")).strip()),
         media_type=media_type,
+        duration=_safe_float(_row_field(row, "duration", "duration_seconds", default=0)),
+        content_category=_safe_public_metadata_text(
+            str(_row_field(row, "content_category", "category", default="")).strip(),
+            120,
+        ),
         like_count=_safe_int(_row_field(row, "like_count", "likes", "digg_count", "statistics.digg_count", default=0)),
         comment_count=_safe_int(_row_field(row, "comment_count", "comments", "statistics.comment_count", default=0)),
         share_count=_safe_int(_row_field(row, "share_count", "shares", "statistics.share_count", default=0)),
         collect_count=_safe_int(_row_field(row, "collect_count", "collects", "statistics.collect_count", default=0)),
+        metric_availability=metric_availability_from_mapping(row, PUBLIC_METRIC_ALIASES),
         view_count=_safe_int(_row_field(row, "view_count", "play_count", "statistics.play_count", default=0)),
         create_time=_safe_public_metadata_text(str(_row_field(row, "create_time", "publish_time", default="")).strip(), 80),
         case_id=_safe_public_metadata_text(str(_row_field(row, "case_id", default="")).strip(), 120),
@@ -582,6 +606,7 @@ def samples_from_case_ids(db: Session, case_ids_text: str) -> list[CloneSample]:
 
 def sample_from_case_artifact(artifact: CaseArtifact) -> CloneSample:
     metadata = _read_json(Path(artifact.metadata_path))
+    ffprobe = _read_json(Path(artifact.ffprobe_path))
     analysis_result_path = Path(artifact.prompt_path).parent / "analysis_result.json"
     case_dir = Path(artifact.prompt_path).parent
     asr_dir = case_dir / "enrichment" / "asr"
@@ -602,9 +627,13 @@ def sample_from_case_artifact(artifact: CaseArtifact) -> CloneSample:
         desc=str(metadata.get("notes") or ""),
         author=str(metadata.get("author") or ""),
         media_type="video",
+        duration=_safe_float(ffprobe.get("duration")),
+        content_category=_safe_public_metadata_text(str(metadata.get("content_category") or ""), 120),
         like_count=_safe_int(metadata.get("like_count")),
         comment_count=_safe_int(metadata.get("comment_count")),
         share_count=_safe_int(metadata.get("share_count")),
+        collect_count=_safe_int(metadata.get("collect_count")),
+        metric_availability=metric_availability_from_mapping(metadata),
         create_time=str(metadata.get("create_time") or ""),
         case_id=artifact.case_id,
         understanding_level="full" if analysis_result_path.is_file() else "partial",
@@ -754,6 +783,12 @@ def save_sample_set(sample_set: CloneSampleSet) -> None:
     _write_json(output_dir / "samples.json", sample_set.to_dict())
 
 
+def save_sample_recommendations(set_id: str, payload: dict) -> Path:
+    output_path = creator_clone_dir(set_id) / "sample_recommendations.json"
+    _write_json(output_path, payload)
+    return output_path
+
+
 def load_sample_set(set_id: str) -> CloneSampleSet:
     payload = _read_json(creator_clone_dir(set_id) / "samples.json")
     samples = [sample_from_dict(item) for item in payload.get("samples", []) if isinstance(item, dict)]
@@ -782,10 +817,13 @@ def sample_from_dict(item: dict) -> CloneSample:
         author=_safe_public_metadata_text(str(item.get("author") or ""), 120),
         cover_url=_safe_public_metadata_url(str(item.get("cover_url") or "")),
         media_type=normalize_media_type(str(item.get("media_type") or "unknown")),
+        duration=_safe_float(item.get("duration")),
+        content_category=_safe_public_metadata_text(str(item.get("content_category") or ""), 120),
         like_count=_safe_int(item.get("like_count")),
         comment_count=_safe_int(item.get("comment_count")),
         share_count=_safe_int(item.get("share_count")),
         collect_count=_safe_int(item.get("collect_count")),
+        metric_availability=sanitize_metric_availability(item.get("metric_availability")),
         view_count=_safe_int(item.get("view_count")),
         create_time=_safe_public_metadata_text(str(item.get("create_time") or ""), 80),
         case_id=_safe_public_metadata_text(str(item.get("case_id") or ""), 120),
@@ -4447,6 +4485,8 @@ def _write_json(path: Path, payload: dict | list) -> None:
 
 def _row_field(row: dict, *names: str, default=""):
     for name in names:
+        if name in row and row.get(name) not in (None, ""):
+            return row.get(name)
         current = row
         for part in name.split("."):
             if not isinstance(current, dict):
@@ -4494,3 +4534,12 @@ def _safe_int(value) -> int:
         return int(float(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_float(value) -> float:
+    try:
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        return max(0.0, float(value or 0))
+    except (TypeError, ValueError):
+        return 0.0

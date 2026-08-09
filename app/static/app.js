@@ -890,6 +890,10 @@ let currentCreatorIntelligenceProject = null;
 let currentCreatorIntelligenceStrategy = null;
 let currentCreatorIntelligenceResult = null;
 let currentCreatorRuntimeState = null;
+let currentRepresentativeSampleSelection = null;
+let representativeRecommendationState = "idle";
+let representativeRecommendationMessage = "";
+let representativeRecommendationGeneration = 0;
 let chromeHelperStatusLoaded = false;
 let profileLastChromeProfileValue = "";
 let profileChromeLaunchCommand = "";
@@ -911,6 +915,16 @@ let recentCreatorCloneRestoreAttempted = false;
 const RECENT_CREATOR_CLONE_SET_STORAGE_KEY = "shortVideoAgent.recentCreatorCloneSetId";
 const RECENT_PROFILE_BUILD_STATE_STORAGE_KEY = "shortVideoAgent.recentProfileBuildState";
 const RECENT_PROFILE_STAGE_STORAGE_KEY = "shortVideoAgent.recentProfileStage";
+const REPRESENTATIVE_SAMPLE_TARGET_COUNT = 6;
+const REPRESENTATIVE_ROLE_LABELS = Object.freeze({
+  BREAKOUT_HIT: "爆款代表",
+  COMMENT_MAGNET: "高讨论",
+  SAVE_SHARE_VALUE: "收藏/转发",
+  RECENT_WINNER: "近期高表现",
+  DIVERSITY_ANCHOR: "内容差异",
+  BASELINE_TYPICAL: "普通基线",
+});
+const representativeSampleSelectorUi = window.RepresentativeSampleSelectorUI || null;
 
 const creatorReportView = window.CreatorReportView?.createRenderer({
   compactReportList,
@@ -1460,6 +1474,10 @@ function resetCreatorClonePoolForNewProfile({clearInput = true} = {}) {
   currentCreatorIntelligenceProject = null;
   currentCreatorIntelligenceStrategy = null;
   currentCreatorRuntimeState = null;
+  currentRepresentativeSampleSelection = null;
+  representativeRecommendationState = "idle";
+  representativeRecommendationMessage = "";
+  representativeRecommendationGeneration += 1;
   profileLastChromeProfileValue = "";
   if (clearInput) {
     clearCreatorCloneUnifiedInput();
@@ -1482,6 +1500,7 @@ function resetCreatorClonePoolForNewProfile({clearInput = true} = {}) {
   if (creatorCloneSelectionStatus) {
     creatorCloneSelectionStatus.textContent = "已选 0 条。";
   }
+  renderCreatorCloneRecommendation();
   if (profileProviderBadge) {
     profileProviderBadge.textContent = "未导入";
   }
@@ -1827,6 +1846,8 @@ function sampleViewItemFromCreatorSample(sample = {}) {
     author: sample.author || raw.author || "",
     cover_url: sample.cover_url || raw.cover_url || "",
     media_type: sample.media_kind || raw.media_type || "unknown",
+    duration: Number(raw.duration || 0),
+    content_category: raw.content_category || "",
     like_count: Number(metrics.like_count || raw.like_count || 0),
     comment_count: Number(metrics.comment_count || raw.comment_count || 0),
     share_count: Number(metrics.share_count || raw.share_count || 0),
@@ -3011,8 +3032,162 @@ function renderCreatorCloneRecommendation() {
   if (!creatorCloneRecommendation) {
     return;
   }
-  creatorCloneRecommendation.classList.add("hidden");
-  creatorCloneRecommendation.innerHTML = "";
+  if (!activeCreatorSampleViewItems().length && representativeRecommendationState === "idle") {
+    creatorCloneRecommendation.classList.add("hidden");
+    creatorCloneRecommendation.innerHTML = "";
+    return;
+  }
+  creatorCloneRecommendation.classList.remove("hidden");
+  if (representativeRecommendationState === "loading") {
+    creatorCloneRecommendation.innerHTML = `
+      <div class="recommendation-heading">
+        <div><strong>代表样本推荐</strong><p>正在本地计算，不调用大模型或外部服务...</p></div>
+      </div>
+    `;
+    return;
+  }
+  if (representativeRecommendationState === "error") {
+    creatorCloneRecommendation.innerHTML = `
+      <div class="recommendation-heading">
+        <div><strong>代表样本推荐</strong><p>${escapeHtml(representativeRecommendationMessage || "推荐计算失败，可继续手动选样。")}</p></div>
+        <button type="button" class="secondary-button" data-representative-action="refresh">重新计算</button>
+      </div>
+    `;
+    return;
+  }
+  const selection = currentRepresentativeSampleSelection;
+  if (!selection?.recommendations?.length) {
+    creatorCloneRecommendation.innerHTML = `
+      <div class="recommendation-heading">
+        <div><strong>代表样本推荐</strong><p>当前素材缺少可用于推荐的安全元数据，可继续手动选择。</p></div>
+        <button type="button" class="secondary-button" data-representative-action="refresh">重新计算</button>
+      </div>
+    `;
+    return;
+  }
+  const coverage = Object.entries(REPRESENTATIVE_ROLE_LABELS)
+    .map(([role, label]) => {
+      const covered = Boolean(selection.coverage?.[role]);
+      return `<span class="representative-coverage ${covered ? "covered" : "unavailable"}">${escapeHtml(label)} ${covered ? "✓" : "数据不足"}</span>`;
+    })
+    .join("");
+  const warningMarkup = normalizeItems(selection.warnings).length
+    ? `<details class="representative-warnings"><summary>数据说明</summary><ul>${normalizeItems(selection.warnings).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>`
+    : "";
+  creatorCloneRecommendation.innerHTML = `
+    <div class="recommendation-heading">
+      <div>
+        <strong>代表样本推荐</strong>
+        <p>系统从 ${formatNumber(selection.available_count)} 条作品中推荐 ${formatNumber(selection.recommended_count)} 条作为 Creator 蒸馏样本。</p>
+        <small>算法：代表性 v1 · 本地确定性计算 · 不调用 LLM</small>
+      </div>
+      <div class="representative-actions">
+        <button type="button" class="text-button" data-representative-action="refresh">重新计算</button>
+        <button type="button" class="primary-button" data-representative-action="apply">使用推荐组合</button>
+      </div>
+    </div>
+    <div class="representative-coverage-list" aria-label="推荐角色覆盖">${coverage}</div>
+    <p class="representative-score-note">代表性评分表示“适合进入分析样本集”的程度，不是爆款概率或内容质量分。</p>
+    ${warningMarkup}
+  `;
+}
+
+function representativeRecommendationForItem(item) {
+  if (!representativeSampleSelectorUi || !currentRepresentativeSampleSelection) {
+    return null;
+  }
+  return representativeSampleSelectorUi.recommendationById(
+    currentRepresentativeSampleSelection,
+    sampleViewItemKey(item),
+  );
+}
+
+function representativeSampleMarkup(item) {
+  const recommendation = representativeRecommendationForItem(item);
+  if (!recommendation) {
+    return "";
+  }
+  const label = REPRESENTATIVE_ROLE_LABELS[recommendation.primary_role] || "代表样本";
+  const secondaryRoleCount = Math.max(0, normalizeItems(recommendation.roles).length - 1);
+  const reasons = normalizeItems(recommendation.reasons).slice(0, 3);
+  return `
+    <div class="representative-row-note">
+      <div class="representative-row-badges">
+        <span class="representative-role-badge">${escapeHtml(label)}</span>
+        ${secondaryRoleCount ? `<span class="representative-role-more">+${formatNumber(secondaryRoleCount)}</span>` : ""}
+        <span class="representative-score">代表性评分 ${formatNumber(recommendation.score)}</span>
+      </div>
+      ${reasons.length ? `<details><summary>推荐理由</summary><ul>${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></details>` : ""}
+    </div>
+  `;
+}
+
+async function refreshRepresentativeSampleRecommendations() {
+  const items = activeCreatorSampleViewItems();
+  if (!items.length) {
+    currentRepresentativeSampleSelection = null;
+    representativeRecommendationState = "idle";
+    renderCreatorCloneRecommendation();
+    return null;
+  }
+  const requestGeneration = ++representativeRecommendationGeneration;
+  const sampleSetId = currentCloneSetId;
+  representativeRecommendationState = "loading";
+  representativeRecommendationMessage = "";
+  renderCreatorCloneRecommendation();
+  try {
+    const response = await fetch("/api/creator-clone/sample-recommendations", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        sample_set_id: sampleSetId,
+        samples: sampleSetId ? [] : items.slice(0, 200).map(creatorCloneSamplePayload),
+        target_count: REPRESENTATIVE_SAMPLE_TARGET_COUNT,
+      }),
+    });
+    const payload = await readJsonResponse(response);
+    if (requestGeneration !== representativeRecommendationGeneration || sampleSetId !== currentCloneSetId) {
+      return null;
+    }
+    currentRepresentativeSampleSelection = representativeSampleSelectorUi
+      ? representativeSampleSelectorUi.normalizeSelection(payload)
+      : payload;
+    representativeRecommendationState = "ready";
+    renderCreatorCloneRecommendation();
+    renderProfileTable();
+    return currentRepresentativeSampleSelection;
+  } catch (error) {
+    if (requestGeneration !== representativeRecommendationGeneration || sampleSetId !== currentCloneSetId) {
+      return null;
+    }
+    currentRepresentativeSampleSelection = null;
+    representativeRecommendationState = "error";
+    representativeRecommendationMessage = `${error.error_code || "RECOMMENDATION_FAILED"}：${error.message || "代表样本推荐计算失败"}`;
+    renderCreatorCloneRecommendation();
+    return null;
+  }
+}
+
+function applyRepresentativeSampleSelection() {
+  if (!representativeSampleSelectorUi || !currentRepresentativeSampleSelection) {
+    profileScanStatus.textContent = "代表样本推荐尚未生成，请先重新计算。";
+    return false;
+  }
+  const items = representativeSampleSelectorUi.matchingItems(
+    currentRepresentativeSampleSelection,
+    activeCreatorSampleViewItems(),
+    sampleViewItemKey,
+  );
+  if (!items.length) {
+    profileScanStatus.textContent = "推荐样本已不在当前素材池，请重新计算。";
+    return false;
+  }
+  setProfileSelection(items);
+  if (profilePresetKind) {
+    profilePresetKind.value = "recommended_mix";
+  }
+  profileScanStatus.textContent = `已应用代表样本推荐：${items.length} 条。你仍可手动增删，系统不会自动勾回。`;
+  return true;
 }
 
 function renderWizardPrimaryAction(state = creatorCloneActionStateForCurrentView()) {
@@ -3571,6 +3746,10 @@ function renderProfileSegmentColumn(title, metricKey, items, preset) {
 
 function renderProfileResults(payload) {
   profileScanPayload = payload;
+  currentRepresentativeSampleSelection = null;
+  representativeRecommendationState = "idle";
+  representativeRecommendationMessage = "";
+  representativeRecommendationGeneration += 1;
   clearCreatorCloneRenderedReport();
   currentCreatorIntelligenceStrategy = null;
   applyCreatorIntelligencePayload(payload);
@@ -3600,6 +3779,7 @@ function renderProfileResults(payload) {
   renderProfileSegmentsPreview(payload.performance_segments || cloneSet?.performance_segments || null);
   renderProfileTable();
   updateCreatorCloneSelectionStatus();
+  void refreshRepresentativeSampleRecommendations();
   updateProfileChromeContinueButton();
   commitCreatorCloneUnifiedInput();
   if (profileStageView === "import") {
@@ -4051,6 +4231,7 @@ function renderProfileTableRow(item) {
             <strong>${escapeHtml(titleText)}</strong>
             ${secondaryText ? `<p>${escapeHtml(secondaryText)}</p>` : ""}
             <code>${escapeHtml(awemeLabel)}</code>
+            ${representativeSampleMarkup(item)}
           </div>
         </div>
       </td>
@@ -5069,31 +5250,14 @@ function confirmProfileDistillReadiness(selected) {
   return true;
 }
 
-function dedupeCreatorSampleViewItems(items, limit = 10) {
-  const seen = new Set();
-  const deduped = [];
-  normalizeItems(items).forEach((item) => {
-    const key = sampleViewItemKey(item);
-    if (!key || seen.has(key) || deduped.length >= limit) {
-      return;
-    }
-    seen.add(key);
-    deduped.push(item);
-  });
-  return deduped;
-}
-
 function recommendedProfileSampleMix() {
-  return dedupeCreatorSampleViewItems(
-    [
-      ...topCreatorSampleViewItemsBy("like_count", 3),
-      ...topCreatorSampleViewItemsBy("comment_count", 2),
-      ...topCreatorSampleViewItemsBy("share_count", 2),
-      ...topCreatorSampleViewItemsBy("collect_count", 2),
-      ...topCreatorSampleViewItemsBy("create_time", 2),
-      ...lowPerformanceCreatorSampleViewItems(2),
-    ],
-    10,
+  if (!representativeSampleSelectorUi || !currentRepresentativeSampleSelection) {
+    return [];
+  }
+  return representativeSampleSelectorUi.matchingItems(
+    currentRepresentativeSampleSelection,
+    activeCreatorSampleViewItems(),
+    sampleViewItemKey,
   );
 }
 
@@ -5144,6 +5308,10 @@ function applyProfilePresetSelection(preset) {
     return;
   }
   const items = profilePresetItems(preset);
+  if (preset === "recommended_mix" && !items.length) {
+    profileScanStatus.textContent = "代表样本推荐尚未生成，请稍候或点击“重新计算”。";
+    return;
+  }
   setProfileSelection(items);
   profileScanStatus.textContent = `已选择${profilePresetLabel(preset)}：${items.length} 条。可继续手动勾选补充代表样本。`;
 }
@@ -5159,6 +5327,8 @@ function creatorCloneSamplePayload(item) {
     author: item.author || "",
     cover_url: item.cover_url || "",
     media_type: item.media_type || "unknown",
+    duration: Number(item.duration || 0),
+    content_category: item.content_category || "",
     like_count: Number(item.like_count || 0),
     comment_count: Number(item.comment_count || 0),
     share_count: Number(item.share_count || 0),
@@ -7295,6 +7465,16 @@ function applyProfilePresetSelectValue() {
 }
 
 profilePresetKind?.addEventListener("change", applyProfilePresetSelectValue);
+
+creatorCloneRecommendation?.addEventListener("click", async (event) => {
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  const action = target?.closest("[data-representative-action]")?.dataset.representativeAction || "";
+  if (action === "apply") {
+    applyRepresentativeSampleSelection();
+  } else if (action === "refresh") {
+    await refreshRepresentativeSampleRecommendations();
+  }
+});
 
 profileDecisionBoard?.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target : event.target?.parentElement;

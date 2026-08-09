@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from statistics import median
 from typing import Protocol
 
+from app.metric_availability import sanitize_metric_availability
+
 
 VALID_PROFILE_SORTS = {"like_count", "comment_count", "share_count", "engagement_score", "create_time"}
 
@@ -41,6 +43,7 @@ class ProfileVideoItem:
     webpage_url: str = ""
     media_type: str = "unknown"
     source_provider: str = ""
+    metric_availability: dict[str, bool] = field(default_factory=dict)
 
     @property
     def engagement_score(self) -> int:
@@ -70,6 +73,7 @@ class ProfileVideoItem:
             "can_build_case": self.can_build_case,
             "engagement_score": self.engagement_score,
             "source_provider": self.source_provider,
+            "metric_availability": sanitize_metric_availability(self.metric_availability),
         }
 
 

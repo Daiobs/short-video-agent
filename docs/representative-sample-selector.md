@@ -1,0 +1,144 @@
+# Representative Sample Selector v1
+
+Representative Sample Selector 在 Creator 素材池加载后，从已有公开元数据中推荐一组适合蒸馏的代表样本。它解决的是“应该分析哪些作品”，而不是预测下一条作品能否爆。
+
+## 为什么不能只取 Top N
+
+只按点赞取前 N 条会让偶然爆款主导样本集，也容易漏掉高讨论、高收藏、近期有效和账号常态内容。蒸馏只看到极端成功案例时，可能把一次性事件误判为创作者的长期规律。
+
+v1 默认推荐 6 条，允许 3–10 条，最多处理 200 条输入。作品数不足目标数量时返回全部有效作品。
+
+## 六类代表角色
+
+- `BREAKOUT_HIT`：账号内整体表现和高位互动明显的爆款代表。
+- `COMMENT_MAGNET`：评论百分位或评论相对点赞强度突出的高讨论代表。
+- `SAVE_SHARE_VALUE`：收藏或转发百分位突出的实用/传播价值代表。两项都缺失时不伪造该角色。
+- `RECENT_WINNER`：同时兼顾发布时间与相对表现，不等同于“最新作品”。
+- `DIVERSITY_ANCHOR`：与已选内容明显不同的内容差异代表。
+- `BASELINE_TYPICAL`：接近账号中位表现且内容较典型的普通基线代表，防止只研究异常高点。
+
+样本不足或指标缺失时，一条作品可以承担多个角色。最终作品 ID 不重复，角色覆盖以接口返回的 `coverage` 为准。
+
+## 相对指标与缺失降级
+
+点赞、评论、分享、收藏和发布时间先转换成账号内部 `0.0–1.0` 百分位，再用于角色评分。基础表现只对真实可用的互动指标重新归一化权重；缺失指标不会被当作真实的零表现。
+
+当某项指标全部缺失或全部为零时：
+
+1. 该指标从相关评分中移除；
+2. 可用指标重新分配权重；
+3. 无法可靠判断的角色标记为“数据不足”；
+4. 推荐仍按可用内容特征与稳定排序降级，不抛出除零或 `NaN`。
+
+## Metric Availability
+
+`CloneSample` 保持原有整数 count 字段兼容，同时使用固定 allowlist 的 `metric_availability` 记录来源是否真正提供了互动指标：
+
+```json
+{
+  "metric_availability": {
+    "like_count": true,
+    "comment_count": true,
+    "share_count": false,
+    "collect_count": false
+  }
+}
+```
+
+语义固定为：
+
+- `availability=true, count=0`：来源明确报告为 0，Selector 保留真实零值；
+- `availability=false, count=0`：来源没有该指标，Selector 按 `None` / missing 处理；
+- availability 未知：只用于兼容旧记录，继续按原有 count 值解释。
+
+Profile、结构化 JSON/CSV、安全 handoff 和 Case 导入都会在仍能观察字段存在性的边界写入 availability。序列化只允许点赞、评论、分享、收藏四个固定 key，任意额外 key 会被丢弃。
+
+旧版 `samples.json` 没有 availability 元数据，无法可靠恢复过去的 0 究竟是明确零值还是字段缺失。此类记录不会迁移失败或要求删除；系统保持 legacy interpretation，并以一条有界 warning 说明“现有计数按旧版已观测值解释”。
+
+## 本地内容差异
+
+`DIVERSITY_ANCHOR` 不使用 embedding 或 LLM。算法从以下本地字段建立确定性 fingerprint：
+
+- 标题和描述中的英文 token、中文字符 bigram；
+- `media_type`；
+- 时长分桶；
+- `content_category`（存在时）；
+- 已有安全标签。
+
+它使用 Jaccard 相似度寻找与已选组合不同、同时具备足够信息的作品。无文本时会降级到类型、时长和分类；完全无信息的记录不会因为“看起来不同”而被强行当作差异样本。
+
+## 组合与稳定性
+
+选择过程为：
+
+```text
+角色候选评分
+→ 按角色贪心分配
+→ 抑制重复作品
+→ 补充内容差异
+→ 稳定最终排序
+```
+
+同分使用固定规则：
+
+```text
+score 降序 → create_time 降序 → sample_id 升序
+```
+
+算法不使用随机数。同样的输入和目标数量会得到相同的推荐顺序。
+
+## Representative Score
+
+UI 展示的“代表性评分”范围为 `0–100`，表示作品适合进入本轮分析样本集的程度。
+
+明确边界：
+
+```text
+Representative Score ≠ 爆款概率
+Representative Score ≠ 内容质量
+```
+
+推荐理由只引用实际计算结果，例如账号内互动百分位、评论相对强度、发布时间位置、内容差异度或与中位表现的距离。
+
+## 推荐与选择是两种状态
+
+`recommended_sample_ids` 是系统建议，`selected_sample_ids` 是用户已经确认的真实选择。
+
+素材池加载后可以自动执行本地推荐，但不会自动勾选。只有用户点击“使用推荐组合”后，前端才更新选择；用户随后仍可增删。重新计算推荐也不会覆盖已有人工选择，除非用户再次明确点击应用。
+
+推荐器不会自动：
+
+- 创建 Job；
+- 下载或生成 Case；
+- 运行 ASR/OCR/评论富化；
+- 调用 Provider、外部 HTTP 或 LLM；
+- 启动 Quick/Deep 蒸馏；
+- 修改 Creator 蒸馏 Prompt。
+
+实现使用 Python 标准库，主要成本是 200 条以内样本的本地相似度比较。开发机 200 条、目标 10 条的 20 次 smoke 中位数约 28ms；自动化测试只设置宽松的有界门槛，避免把机器差异变成脆弱 CI 条件。
+
+## API 与审计产物
+
+```http
+POST /api/creator-clone/sample-recommendations
+```
+
+请求可以传 `sample_set_id`，也可以传不超过 200 条的 bounded inline `samples`；`target_count` 必须为 3–10。响应设置 `Cache-Control: no-store`。
+
+对已有素材池计算时，系统在原 Creator 目录写入可重建的 `sample_recommendations.json`，仅包含：
+
+- 算法版本和生成时间；
+- 输入/目标数量；
+- 推荐 ID、角色、评分、理由和百分位；
+- 覆盖与降级警告。
+
+产物不保存 Cookie、Authorization、API Key、本机绝对路径、完整上游响应或签名媒体 URL，也不成为 `selected_sample_ids` 的第二真源。
+
+## v1 限制
+
+- 仅基于已有元数据，不理解视频画面、口播或评论正文。
+- 中文差异判断使用轻量 n-gram，无法替代语义 embedding。
+- 小素材池或稀疏数据无法保证六类角色全部覆盖。
+- 相对百分位只表示当前导入素材池内的位置，不代表全平台水平。
+- 历史 `samples.json` 可能无法区分过去的 0 与 missing，因此旧数据保持 legacy interpretation，不进行推测性重写。
+- 未来 Login State / Cookie 分支可能修改素材池 UI；合并时需要人工检查模板和 `app.js` 冲突，本功能不提前修改那些分支。

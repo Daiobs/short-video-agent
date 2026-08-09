@@ -281,6 +281,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "/static/workbench.js?v=" in response.text
     assert "/static/modules/creator-report-view.js?v=" in response.text
     assert "/static/modules/settings-panel.js?v=" in response.text
+    assert "/static/modules/representative-sample-selector.js?v=" in response.text
     assert "/static/workbench-tasks.js?v=" in response.text
     assert "/static/app.js?v=" in response.text
     assert "/static/app.css?v=" in response.text
@@ -10487,7 +10488,8 @@ def test_creator_clone_lab_home_replaces_profile_scan_copy() -> None:
     assert "page_confirmed: true" not in script
     assert script.count("resetProfileChromeConfirmation();") >= 4
     assert "recommendedProfileSampleMix" in script
-    assert "dedupeCreatorSampleViewItems" in script
+    assert "dedupeCreatorSampleViewItems" not in script
+    assert "/api/creator-clone/sample-recommendations" in script
     assert "function getCreatorCloneWizardState()" not in script
     assert "currentCreatorIntelligenceWorkflow" not in script
     assert "currentCreatorRuntimeState" in script
@@ -10622,6 +10624,7 @@ def test_creator_clone_build_sample_set_passes_profile_max_pages(monkeypatch) ->
                     aweme_id="7622653084993647603",
                     title="分页样本",
                     like_count=1,
+                    duration=12_000,
                     source_provider="cookie_api",
                 )
             ],
@@ -10638,6 +10641,7 @@ def test_creator_clone_build_sample_set_passes_profile_max_pages(monkeypatch) ->
     assert captured["request"].count == 150
     assert captured["request"].max_pages == 15
     assert len(sample_set.samples) == 1
+    assert sample_set.samples[0].duration == 12.0
     assert sample_set.profile_metadata["source_input"] == "https://www.douyin.com/user/MS4wLjABAAAAabc12345"
     assert sample_set.profile_metadata["source_mode"] == "profile"
 
@@ -13378,9 +13382,11 @@ def test_local_chrome_extractor_reads_visible_card_metric_attributes_safely() ->
     assert "metricFromCard(card, ['分享', '转发'])" in script
     assert "metricFromCard(card, ['收藏'])" in script
     assert "metricFromCard(card, ['播放', '观看'])" in script
-    assert "comment_count: metricFromCard(card, ['评论'])" in script
-    assert "share_count: metricFromCard(card, ['分享', '转发'])" in script
-    assert "collect_count: metricFromCard(card, ['收藏'])" in script
+    assert "const commentObservation = metricFromCard(card, ['评论'])" in script
+    assert "const shareObservation = metricFromCard(card, ['分享', '转发'])" in script
+    assert "const collectObservation = metricFromCard(card, ['收藏'])" in script
+    assert "comment_count: commentObservation ?? 0" in script
+    assert "comment_count: commentObservation !== null" in script
     assert "parseCount(countTexts[1]" not in script
     assert "parseCount(countTexts[2]" not in script
     assert "parseCount(countTexts[3]" not in script
@@ -13599,6 +13605,32 @@ def test_local_chrome_sample_preserves_visible_metadata_fields() -> None:
     assert sample.comment_count == 34
     assert sample.share_count == 5
     assert sample.collect_count == 8
+    assert sample.metric_availability == {
+        "like_count": True,
+        "comment_count": True,
+        "share_count": True,
+        "collect_count": True,
+    }
+
+
+def test_local_chrome_sample_prefers_explicit_metric_availability() -> None:
+    from app.services.local_chrome import _sample_from_browser_item
+
+    sample = _sample_from_browser_item(
+        {
+            "aweme_id": "7622653084993647615",
+            "comment_count": 0,
+            "metric_availability": {
+                "like_count": False,
+                "comment_count": False,
+                "share_count": False,
+                "collect_count": False,
+            },
+        }
+    )
+
+    assert sample.comment_count == 0
+    assert sample.metric_availability["comment_count"] is False
 
 
 def test_local_chrome_sample_preserves_douyin_note_source_url() -> None:

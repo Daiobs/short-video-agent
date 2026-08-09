@@ -35,6 +35,72 @@ def run_node(script: str) -> dict:
 
 
 @pytest.mark.skipif(NODE_BINARY is None, reason="Node.js is unavailable")
+def test_representative_sample_selector_ui_preserves_explicit_manual_selection() -> None:
+    source = Path("app/static/modules/representative-sample-selector.js").read_text(encoding="utf-8")
+    assert "fetch(" not in source
+    assert "dispatchEvent" not in source
+    assert "selected_sample_ids" not in source
+
+    script = f"""
+const vm = require("vm");
+const source = {json.dumps(source)};
+const context = {{console}};
+context.window = context;
+const before = Object.keys(context);
+vm.runInNewContext(source, context, {{filename: "representative-sample-selector.js"}});
+const added = Object.keys(context).filter((key) => !before.includes(key));
+const api = context.RepresentativeSampleSelectorUI;
+const raw = {{
+  algorithm_version: "representative-v1",
+  target_count: 6,
+  available_count: 9,
+  coverage: {{BREAKOUT_HIT: true, COMMENT_MAGNET: true}},
+  recommendations: [
+    {{sample_id: "sample_a", rank: 1, score: 92, primary_role: "BREAKOUT_HIT", roles: ["BREAKOUT_HIT"], reasons: ["点赞位于账号 P97"]}},
+    {{sample_id: "sample_b", rank: 2, score: 81, primary_role: "COMMENT_MAGNET", roles: ["COMMENT_MAGNET"], reasons: ["评论位于账号 P95"]}},
+    {{sample_id: "../unsafe", rank: 3, score: 99, primary_role: "BREAKOUT_HIT"}},
+    {{sample_id: "sample_a", rank: 4, score: 75, primary_role: "RECENT_WINNER"}},
+  ],
+}};
+const normalized = api.normalizeSelection(raw);
+const items = [{{sample_id: "sample_a"}}, {{sample_id: "sample_b"}}, {{sample_id: "sample_c"}}];
+const selectedBeforeRecommendation = Object.freeze(["sample_c"]);
+const generatedOnly = api.normalizeSelection({{...raw, recommendations: [...raw.recommendations].reverse()}});
+const selectedAfterGeneration = [...selectedBeforeRecommendation];
+const applied = api.matchingItems(normalized, items, (item) => item.sample_id).map((item) => item.sample_id);
+const afterManualRemove = api.nextManualSelection(applied, "sample_a", false);
+const regeneratedAgain = api.normalizeSelection(raw);
+process.stdout.write(JSON.stringify({{
+  added,
+  namespaceFrozen: Object.isFrozen(api),
+  selectionFrozen: Object.isFrozen(normalized),
+  recommendationFrozen: Object.isFrozen(normalized.recommendations[0]),
+  ids: api.recommendedIds(normalized),
+  applied,
+  selectedBeforeRecommendation,
+  selectedAfterGeneration,
+  generatedIds: api.recommendedIds(generatedOnly),
+  afterManualRemove,
+  regeneratedIds: api.recommendedIds(regeneratedAgain),
+  lookupScore: api.recommendationById(normalized, "sample_a").score,
+}}));
+"""
+    result = run_node(script)
+
+    assert result["added"] == ["RepresentativeSampleSelectorUI"]
+    assert result["namespaceFrozen"] is True
+    assert result["selectionFrozen"] is True
+    assert result["recommendationFrozen"] is True
+    assert result["ids"] == ["sample_a", "sample_b"]
+    assert result["applied"] == ["sample_a", "sample_b"]
+    assert result["selectedBeforeRecommendation"] == ["sample_c"]
+    assert result["selectedAfterGeneration"] == ["sample_c"]
+    assert result["afterManualRemove"] == ["sample_b"]
+    assert result["regeneratedIds"] == ["sample_a", "sample_b"]
+    assert result["lookupScore"] == 92
+
+
+@pytest.mark.skipif(NODE_BINARY is None, reason="Node.js is unavailable")
 def test_creator_report_view_module_is_safe_bounded_and_frozen() -> None:
     source = Path("app/static/modules/creator-report-view.js").read_text(encoding="utf-8")
     assert "fetch(" not in source
