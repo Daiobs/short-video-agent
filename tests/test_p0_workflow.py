@@ -1709,6 +1709,51 @@ function reset(nextScenario) {
     assert normal_flow["requestedUrls"] == ["/api/jobs/job_demo"]
 
 
+def test_profile_job_age_treats_naive_backend_timestamp_as_utc() -> None:
+    candidates = [
+        shutil.which("node"),
+        Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    ]
+    node_binary = next((str(value) for value in candidates if value and Path(value).is_file()), "")
+    if not node_binary:
+        pytest.skip("Node.js is unavailable; timestamp parsing is covered by static review.")
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    timestamp_parser = source[
+        source.index("function parseApiTimestampMilliseconds") : source.index("function profileBuildJobAgeSeconds")
+    ]
+    job_age = source[
+        source.index("function profileBuildJobAgeSeconds") : source.index("function isProfileBuildJobStale")
+    ]
+    runner = f"""
+const activeProfileBuildJobUpdatedAt = "";
+Date.now = () => Date.parse("2026-08-09T06:21:20Z");
+{timestamp_parser}
+{job_age}
+process.stdout.write(JSON.stringify({{
+  naiveUtc: profileBuildJobAgeSeconds({{updated_at: "2026-08-09T06:20:24.528072"}}),
+  explicitUtc: profileBuildJobAgeSeconds({{updated_at: "2026-08-09T06:20:24.528072Z"}}),
+  explicitOffset: profileBuildJobAgeSeconds({{updated_at: "2026-08-09T14:20:24.528072+08:00"}}),
+  invalid: profileBuildJobAgeSeconds({{updated_at: "not-a-time"}}),
+}}));
+"""
+    completed = subprocess.run(
+        [node_binary, "-e", runner],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result == {
+        "naiveUtc": 55,
+        "explicitUtc": 55,
+        "explicitOffset": 55,
+        "invalid": 0,
+    }
+
+
 def test_workbench_resource_less_recovery_and_profile_scan_observation_run_in_javascript() -> None:
     candidates = [
         shutil.which("node"),

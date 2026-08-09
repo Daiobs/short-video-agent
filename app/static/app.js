@@ -1777,10 +1777,22 @@ function isProfileBuildJobActive() {
   return Boolean(activeProfileBuildJobId && ["pending", "running"].includes(activeProfileBuildJobStatus));
 }
 
+function parseApiTimestampMilliseconds(value) {
+  const candidate = String(value || "").trim();
+  if (!candidate) {
+    return 0;
+  }
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(candidate)
+    ? candidate
+    : `${candidate}Z`;
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 function profileBuildJobAgeSeconds(job = {}) {
   const updatedAt = job.updated_at || activeProfileBuildJobUpdatedAt || "";
-  const updatedTime = updatedAt ? Date.parse(updatedAt) : 0;
-  if (!updatedTime || Number.isNaN(updatedTime)) {
+  const updatedTime = parseApiTimestampMilliseconds(updatedAt);
+  if (!updatedTime) {
     return 0;
   }
   return Math.max(0, Math.floor((Date.now() - updatedTime) / 1000));
