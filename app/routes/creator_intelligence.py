@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.errors import AppError, ErrorCode
@@ -18,6 +19,10 @@ from app.services.creator_intelligence import CreatorRuntimeEngine
 from app.services.creator_intelligence import project_from_clone_sample_set
 from app.services.creator_intelligence import WorkflowAction
 from app.services.creator_intelligence.generator import generate_creator_strategy_plan
+from app.services.creator_intelligence.execution_pack import (
+    generate_creator_execution_pack,
+    load_creator_execution_pack,
+)
 
 
 router = APIRouter(prefix="/api/creator-intelligence", tags=["creator-intelligence"])
@@ -26,6 +31,10 @@ router = APIRouter(prefix="/api/creator-intelligence", tags=["creator-intelligen
 class CreatorIntelligenceWorkflowDispatchRequest(BaseModel):
     action: str
     selected_sample_ids: list[str] = Field(default_factory=list)
+
+
+class CreatorExecutionPackGenerateRequest(BaseModel):
+    topic_index: int = Field(ge=0, le=100)
 
 
 def project_payload_for_sample_set(
@@ -101,6 +110,33 @@ def generate_creator_intelligence_strategy(project_id: str):
                 "diagnostics": diagnostics,
             },
         }
+    except AppError as error:
+        return error_response(error)
+
+
+@router.post("/projects/{project_id}/generate-execution-pack")
+def generate_creator_intelligence_execution_pack(
+    project_id: str,
+    payload: CreatorExecutionPackGenerateRequest,
+):
+    try:
+        execution_pack = generate_creator_execution_pack(project_id, payload.topic_index)
+        return JSONResponse(
+            content={"ok": True, "execution_pack": execution_pack},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.get("/projects/{project_id}/execution-pack")
+def get_creator_intelligence_execution_pack(project_id: str):
+    try:
+        execution_pack = load_creator_execution_pack(project_id)
+        return JSONResponse(
+            content={"ok": True, "execution_pack": execution_pack},
+            headers={"Cache-Control": "no-store"},
+        )
     except AppError as error:
         return error_response(error)
 

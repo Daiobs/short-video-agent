@@ -796,6 +796,17 @@ https://v.douyin.com/xxxxxx/
                     </div>
                     <div id="creator-strategy-plan-status" class="inline-status muted">基于当前创作者蒸馏报告生成，不重新扫描、不重新富化。</div>
                     <div id="creator-strategy-plan-result" class="creator-strategy-plan-result"></div>
+                    <section id="creator-execution-pack-card" class="creator-execution-pack-card hidden" aria-live="polite">
+                        <div class="profile-card-heading">
+                            <div>
+                                <span class="entry-label">Execute</span>
+                                <h3>下一条内容</h3>
+                            </div>
+                            <button type="button" id="copy-creator-execution-pack-button" class="secondary-button" disabled>复制完整执行方案</button>
+                        </div>
+                        <div id="creator-execution-pack-status" class="inline-status muted">请先从上方选择一个选题。</div>
+                        <div id="creator-execution-pack-result" class="creator-execution-pack-result"></div>
+                    </section>
                 </section>
                 <details class="profile-action-card report-export-card hidden" id="creator-clone-export-actions" hidden>
                     <summary>后台导出</summary>
@@ -846,6 +857,7 @@ https://v.douyin.com/xxxxxx/
 
 <script src="/static/workbench.js?v={{ static_version }}"></script>
 <script src="/static/modules/creator-report-view.js?v={{ static_version }}"></script>
+<script src="/static/modules/creator-execution-pack.js?v={{ static_version }}"></script>
 <script src="/static/modules/settings-panel.js?v={{ static_version }}"></script>
 <script src="/static/modules/representative-sample-selector.js?v={{ static_version }}"></script>
 <script src="/static/app.js?v={{ static_version }}"></script>
