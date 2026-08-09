@@ -36,14 +36,16 @@
       close: returnsFalse,
       renderLlmStatus: returnsFalse,
       renderDataSourceStatus: returnsFalse,
+      renderLoginStateStatus: returnsFalse,
       renderCookieTestResult: returnsFalse,
       loadLlmStatus: resolvesFalse,
       loadDataSourceStatus: resolvesFalse,
+      loadLoginStateStatus: resolvesFalse,
     });
   }
 
   function init({elements = {}, requestJson, callbacks = {}} = {}) {
-    const root = elements.modal || elements.toggle || elements.llmForm || elements.douyinForm;
+    const root = elements.modal || elements.toggle || elements.llmForm || elements.douyinForm || elements.loginStateStatusList;
     if (!root || typeof requestJson !== "function") {
       return noOpController();
     }
@@ -70,6 +72,7 @@
         }
         callbacks.onPreflightFailure?.();
       });
+      Promise.resolve(loadLoginStateStatus()).catch(() => {});
       return true;
     }
 
@@ -169,19 +172,52 @@
             <dt>User-Agent</dt><dd>${status.user_agent_configured ? "已配置" : "未配置"}</dd>
             <dt>Referer</dt><dd>${escapeHtml(status.referer || "https://www.douyin.com/")}</dd>
             ${cookieDiagnosticsRows(status.cookie_diagnostics || {})}
-            <dt>当前策略</dt><dd>Douyin Cookie / Web API 优先用于主页扫描；失败后回退到公开扫描、手动链接或高级工具。</dd>
+            <dt>当前策略</dt><dd>${status.source === "chrome_extension"
+              ? "扩展登录状态优先用于主页扫描；失败时保留真实错误，不静默切换公开扫描。"
+              : "Douyin Cookie / Web API 优先用于主页扫描；其他来源仍按现有兜底策略运行。"}</dd>
           </dl>
         `;
       }
       if (elements.douyinCookieInput) {
         elements.douyinCookieInput.value = "";
-        elements.douyinCookieInput.placeholder = status.has_cookie
+        elements.douyinCookieInput.placeholder = status.source === "chrome_extension"
+          ? "扩展登录状态优先；此处可保存备用手动 Cookie"
+          : status.has_cookie
           ? `留空保留当前 Cookie（${status.masked_cookie || "已配置"}）`
           : "粘贴 Douyin Cookie";
       }
       if (elements.douyinUserAgentInput) elements.douyinUserAgentInput.value = status.user_agent || "";
       if (elements.douyinRefererInput) elements.douyinRefererInput.value = status.referer || "https://www.douyin.com/";
       if (elements.douyinClearCookieInput) elements.douyinClearCookieInput.checked = false;
+      return true;
+    }
+
+    function renderLoginStateStatus(rawStatus = {}) {
+      const status = rawStatus && typeof rawStatus === "object" ? rawStatus : {};
+      const paired = Boolean(status.paired);
+      const configured = Boolean(status.configured);
+      if (elements.loginStateStatusBadge) {
+        elements.loginStateStatusBadge.textContent = configured ? "已同步" : paired ? "已配对" : "未配对";
+        elements.loginStateStatusBadge.className = `status-badge ${configured ? "success" : "muted-badge"}`;
+      }
+      if (elements.loginStateStatusList) {
+        const healthStatus = status.health?.status || "";
+        elements.loginStateStatusList.innerHTML = `
+          <dl>
+            <dt>配对状态</dt><dd>${paired ? "已配对" : "未配对"}</dd>
+            <dt>同步状态</dt><dd>${configured ? "已同步" : "未同步"}</dd>
+            <dt>来源</dt><dd>${escapeHtml(status.source || "未配置")}</dd>
+            <dt>Cookie</dt><dd>${configured ? "********" : "未配置"}</dd>
+            <dt>最近同步</dt><dd>${escapeHtml(status.last_synced_at || "暂无")}</dd>
+            <dt>字段数</dt><dd>${numberText(status.pair_count)}</dd>
+            <dt>登录态字段数</dt><dd>${numberText(status.login_key_count)}</dd>
+            <dt>扩展版本</dt><dd>${escapeHtml(status.extension_version || "暂无")}</dd>
+          </dl>
+          ${healthStatus === "extension_id_configuration_required"
+            ? '<p class="muted compact-copy">需要在本机配置 DOUYIN_LOGIN_EXTENSION_IDS 后才能生成配对码。</p>'
+            : ""}
+        `;
+      }
       return true;
     }
 
@@ -245,6 +281,23 @@
       } catch (error) {
         if (elements.dataSourceStatusBadge) elements.dataSourceStatusBadge.textContent = "读取失败";
         if (elements.dataSourceStatusList) elements.dataSourceStatusList.textContent = errorText(error, "无法读取数据源设置");
+        return false;
+      }
+    }
+
+    async function loadLoginStateStatus() {
+      if (elements.loginStateStatusList) {
+        elements.loginStateStatusList.textContent = "正在读取本机登录状态...";
+      }
+      try {
+        const payload = await requestJson("/api/local-login-state/status", {cache: "no-store"});
+        renderLoginStateStatus(payload.login_state || {});
+        return true;
+      } catch (error) {
+        if (elements.loginStateStatusBadge) elements.loginStateStatusBadge.textContent = "读取失败";
+        if (elements.loginStateStatusList) {
+          elements.loginStateStatusList.textContent = errorText(error, "无法读取本机登录状态");
+        }
         return false;
       }
     }
@@ -337,6 +390,39 @@
       }
     });
 
+    elements.startLoginStatePairButton?.addEventListener("click", async () => {
+      elements.startLoginStatePairButton.disabled = true;
+      if (elements.loginStatePairResult) elements.loginStatePairResult.textContent = "正在生成一次性配对码...";
+      try {
+        const payload = await requestJson("/api/local-login-state/pair/start", {method: "POST"});
+        const pairing = payload.pairing || {};
+        if (elements.loginStatePairResult) {
+          elements.loginStatePairResult.className = "settings-test-result success";
+          elements.loginStatePairResult.innerHTML = `
+            <strong>配对码：${escapeHtml(pairing.pairing_code || "")}</strong>
+            <p>请在独立 Douyin Login 插件中输入。配对码约 ${numberText(pairing.expires_in_seconds)} 秒后失效，成功使用后立即作废。</p>
+          `;
+        }
+      } catch (error) {
+        if (elements.loginStatePairResult) {
+          elements.loginStatePairResult.className = "settings-test-result warning";
+          elements.loginStatePairResult.textContent = errorText(error, "生成配对码失败");
+        }
+      } finally {
+        elements.startLoginStatePairButton.disabled = false;
+      }
+    });
+
+    elements.refreshLoginStateButton?.addEventListener("click", async () => {
+      elements.refreshLoginStateButton.disabled = true;
+      try {
+        await loadLoginStateStatus();
+        await loadDataSourceStatus();
+      } finally {
+        elements.refreshLoginStateButton.disabled = false;
+      }
+    });
+
     elements.testLlmButton?.addEventListener("click", async () => {
       elements.testLlmButton.disabled = true;
       if (elements.llmTestResult) elements.llmTestResult.textContent = "正在测试...";
@@ -383,9 +469,11 @@
       close,
       renderLlmStatus,
       renderDataSourceStatus,
+      renderLoginStateStatus,
       renderCookieTestResult,
       loadLlmStatus,
       loadDataSourceStatus,
+      loadLoginStateStatus,
     });
     instances.set(root, controller);
     return controller;

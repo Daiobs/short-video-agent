@@ -74,15 +74,12 @@ def douyin_source_health_payload() -> dict:
 
 def mask_cookie(value: str) -> str:
     cleaned = (value or "").strip()
-    if not cleaned:
-        return ""
-    if len(cleaned) <= 10:
-        return "****"
-    return f"{cleaned[:4]}****{cleaned[-4:]}"
+    return "********" if cleaned else ""
 
 
 def data_source_status_payload() -> dict:
     effective = effective_douyin_settings()
+    credential_source = str(effective.get("source") or "")
     has_cookie = bool((effective["cookie"] or "").strip())
     has_user_agent = bool((effective["user_agent"] or "").strip())
     referer = effective["referer"] or "https://www.douyin.com/"
@@ -105,11 +102,15 @@ def data_source_status_payload() -> dict:
         },
         {
             "id": "cookie_api",
-            "label": "Cookie Web API 增强",
-            "role": "enhancement",
+            "label": "Cookie Web API",
+            "role": "main" if credential_source == "chrome_extension" else "enhancement",
             "enabled": has_cookie,
             "status": "configured" if has_cookie else "not_configured",
-            "message": "只用于提高 Web API 成功率；失败会回退到手动链接或浏览器辅助。",
+            "message": (
+                "使用 Douyin Login 扩展主动同步的本机登录状态。扩展来源失败时会保留真实错误。"
+                if credential_source == "chrome_extension"
+                else "使用本机安全凭据或环境配置；失败时可继续使用其他采集入口。"
+            ),
         },
         {
             "id": "external_api",
@@ -122,22 +123,31 @@ def data_source_status_payload() -> dict:
     ]
     return {
         "configured": has_cookie,
+        "source": credential_source,
         "provider": "cookie_api",
         "has_cookie": has_cookie,
         "masked_cookie": mask_cookie(effective["cookie"]),
         "cookie_diagnostics": inspect_douyin_cookie(effective["cookie"]),
+        "pair_count": int(effective.get("pair_count") or 0),
+        "login_key_count": int(effective.get("login_key_count") or 0),
+        "last_synced_at": str(effective.get("last_synced_at") or ""),
+        "captured_at": str(effective.get("captured_at") or ""),
+        "extension_version": str(effective.get("extension_version") or ""),
         "user_agent_configured": has_user_agent,
         "user_agent": effective["user_agent"],
         "referer": referer,
         "profile_scan_provider": settings.profile_scan_provider,
         "sources": sources,
         "status_message": (
-            "已配置 Cookie API 增强层；它只会作为可选加速/补全尝试，失败后仍回到主流程。"
+            "Douyin Login 扩展状态已同步，并作为主页扫描的安全本机登录态。"
+            if has_cookie and credential_source == "chrome_extension"
+            else "已配置 Cookie API 增强层；它只会作为可选加速/补全尝试。"
             if has_cookie
             else "未配置 Cookie API；当前默认使用手动链接和浏览器辅助采集，不影响主流程。"
         ),
         "safety_notes": [
-            "Cookie 不会返回给前端，不会写入 case、prompt 或日志。",
+            "Cookie 只保存在用户目录的 0600 安全凭据文件，不会返回给前端。",
+            "Cookie 不会写入数据库、Job、Case、Creator、prompt、报告或日志。",
             "Cookie 不是默认依赖，也不用于绕验证码或风控。",
             "公开扫描失败时，请使用多作品链接粘贴或浏览器辅助采集。",
         ],

@@ -388,7 +388,14 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'id="profile-segments-preview"' in response.text
     assert "主页扫描优先使用已配置的 Douyin Cookie / Web API" in response.text
     assert "Douyin Cookie / Web API 是当前主页作品扫描的主力数据源" in response.text
-    assert "Douyin Cookie 由用户主动配置，仅保存在本机。" in response.text
+    assert "Douyin Cookie 由用户主动配置，仅保存在本机安全凭据文件。" in response.text
+    assert 'id="douyin-login-state-settings"' in response.text
+    assert 'id="login-state-status-list"' in response.text
+    assert 'id="start-login-state-pair-button"' in response.text
+    assert 'id="refresh-login-state-button"' in response.text
+    assert "查看 Cookie" not in response.text
+    assert "复制 Cookie" not in response.text
+    assert "导出 Cookie" not in response.text
     assert "已保存 Cookie 不回显原文。" in response.text
     assert "Cookie 不进入数据库、素材包、Prompt 或日志。" in response.text
     assert "本机 Chrome 辅助不读取 Cookie。" in response.text
@@ -2513,7 +2520,7 @@ def test_data_source_settings_masks_cookie(monkeypatch) -> None:
     status = payload["data_sources"]
     assert status["configured"] is True
     assert status["has_cookie"] is True
-    assert status["masked_cookie"].startswith("sess")
+    assert status["masked_cookie"] == "********"
     assert secret not in json.dumps(payload, ensure_ascii=False)
     assert {source["id"] for source in status["sources"]} >= {"manual_links", "browser_dom", "cookie_api", "external_api"}
     assert status["cookie_diagnostics"]["has_cookie"] is True
@@ -2713,8 +2720,9 @@ def test_douyin_settings_can_save_local_runtime_cookie_without_leaking(monkeypat
     assert status["user_agent"] == "Browser UA"
     assert secret not in json.dumps(payload, ensure_ascii=False)
     stored = json.loads(runtime_path.read_text(encoding="utf-8"))
-    assert stored["douyin"]["cookie"] == secret
-    assert not stored["douyin"]["cookie"].lower().startswith("cookie:")
+    assert "cookie" not in stored["douyin"]
+    assert stored["douyin"]["source"] == "manual_secure"
+    assert secret not in runtime_path.read_text(encoding="utf-8")
 
 
 def test_douyin_cookie_api_test_reports_safe_config_diagnostics(monkeypatch, tmp_path) -> None:
