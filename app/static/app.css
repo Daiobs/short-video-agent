@@ -6603,6 +6603,161 @@ footer {
     resize: vertical;
 }
 
+.creator-outcome-card {
+    min-width: 0;
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(37, 99, 235, 0.16);
+}
+
+.creator-outcome,
+.creator-outcome-result {
+    min-width: 0;
+}
+
+.creator-outcome {
+    display: grid;
+    gap: 14px;
+    margin-top: 12px;
+}
+
+.creator-outcome > section,
+.creator-outcome-locked,
+.creator-outcome-history-item {
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid rgba(15, 23, 42, 0.11);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.creator-outcome-locked p {
+    margin: 0;
+    color: var(--muted, #6b7280);
+}
+
+.creator-outcome-publication-grid,
+.creator-outcome-snapshot-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin: 12px 0;
+}
+
+.creator-outcome-publication-grid label,
+.creator-outcome-snapshot-grid label {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    color: #334155;
+    font-weight: 700;
+}
+
+.creator-outcome-publication-grid input,
+.creator-outcome-publication-grid select,
+.creator-outcome-snapshot-grid input {
+    width: 100%;
+    min-width: 0;
+}
+
+.creator-outcome-wide-field {
+    grid-column: 1 / -1;
+}
+
+.creator-outcome-expectation {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    background: #f8fbff !important;
+}
+
+.creator-outcome-expectation span {
+    color: var(--muted, #6b7280);
+}
+
+.creator-outcome-expectation strong {
+    overflow-wrap: anywhere;
+    text-align: right;
+}
+
+.creator-outcome-metric-grid,
+.creator-outcome-rate-grid,
+.creator-outcome-history-metrics {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+    min-width: 0;
+    margin: 12px 0 0;
+}
+
+.creator-outcome-metric-grid article,
+.creator-outcome-rate-grid div,
+.creator-outcome-history-metrics div {
+    min-width: 0;
+    padding: 10px;
+    border-radius: 6px;
+    background: #f8fafc;
+}
+
+.creator-outcome-metric-grid span,
+.creator-outcome-rate-grid span,
+.creator-outcome-history-metrics dt {
+    color: var(--muted, #6b7280);
+    font-size: 12px;
+}
+
+.creator-outcome-metric-grid strong,
+.creator-outcome-rate-grid strong,
+.creator-outcome-history-metrics dd {
+    display: block;
+    margin: 4px 0 0;
+    overflow-wrap: anywhere;
+    color: #0f172a;
+}
+
+.creator-outcome-history ol {
+    display: grid;
+    gap: 10px;
+    margin: 12px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.creator-outcome-history-item {
+    padding: 12px;
+    background: #f8fafc;
+}
+
+.creator-outcome-history-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.creator-outcome-history-heading strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.creator-outcome-history-metrics {
+    margin-bottom: 10px;
+}
+
+.creator-outcome-history-metrics dd small {
+    display: block;
+    margin-top: 2px;
+    color: #2563eb;
+    font-size: 11px;
+}
+
+.creator-outcome-edit-details summary {
+    width: fit-content;
+    cursor: pointer;
+    color: #2563eb;
+    font-weight: 750;
+}
+
 @media (max-width: 720px) {
     .execution-topic-list > li,
     .execution-pack-primary-grid,
@@ -6610,8 +6765,16 @@ footer {
     .execution-shot-grid,
     .execution-pack-evidence-grid,
     .execution-record-stage-grid,
-    .execution-record-feedback-grid {
+    .execution-record-feedback-grid,
+    .creator-outcome-publication-grid,
+    .creator-outcome-snapshot-grid {
         grid-template-columns: minmax(0, 1fr);
+    }
+
+    .creator-outcome-metric-grid,
+    .creator-outcome-rate-grid,
+    .creator-outcome-history-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .execution-topic-action {
@@ -6633,6 +6796,19 @@ footer {
 
     .execution-record-notes-field {
         grid-column: auto;
+    }
+
+    .creator-outcome-wide-field {
+        grid-column: auto;
+    }
+
+    .creator-outcome-expectation,
+    .creator-outcome-history-heading {
+        display: grid;
+    }
+
+    .creator-outcome-expectation strong {
+        text-align: left;
     }
 }
 

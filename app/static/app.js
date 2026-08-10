@@ -856,6 +856,9 @@ const startCreatorExecutionRecordButton = document.getElementById("start-creator
 const creatorExecutionRecordCard = document.getElementById("creator-execution-record-card");
 const creatorExecutionRecordStatus = document.getElementById("creator-execution-record-status");
 const creatorExecutionRecordResult = document.getElementById("creator-execution-record-result");
+const creatorOutcomeCard = document.getElementById("creator-outcome-card");
+const creatorOutcomeStatus = document.getElementById("creator-outcome-status");
+const creatorOutcomeResult = document.getElementById("creator-outcome-result");
 const PROFILE_BUILD_MAX_ITEMS = Math.max(1, Number(document.body.dataset.profileBuildMaxItems || 10));
 const CREATOR_CLONE_MAX_DISTILL_SAMPLES = Math.max(1, Number(document.body.dataset.creatorCloneMaxDistillSamples || 20));
 const HANDOFF_MANIFEST_MAX_BYTES = 2 * 1024 * 1024;
@@ -908,6 +911,8 @@ let currentCreatorExecutionPack = null;
 let creatorExecutionPackRunning = false;
 let currentCreatorExecutionRecord = null;
 let creatorExecutionRecordRunning = false;
+let currentCreatorOutcome = null;
+let creatorOutcomeRunning = false;
 let currentRepresentativeSampleSelection = null;
 let representativeRecommendationState = "idle";
 let representativeRecommendationMessage = "";
@@ -962,6 +967,7 @@ const creatorReportView = window.CreatorReportView?.createRenderer({
 }) || null;
 const creatorExecutionPackView = window.CreatorExecutionPackView || null;
 const creatorExecutionRecordView = window.CreatorExecutionRecordView || null;
+const creatorOutcomeView = window.CreatorOutcomeSnapshotView || null;
 
 function renderSingleItemStatus({job = currentSingleJob, caseData = loadedHomeCase, flow = singleItemFlow} = {}) {
   const statusView = window.SingleItemJobStatus?.derive({job, caseData, flow});
@@ -1486,6 +1492,7 @@ function clearCreatorCloneRenderedReport({clearPrompt = true} = {}) {
 function resetCreatorExecutionRecordUi({showStart = false} = {}) {
   currentCreatorExecutionRecord = null;
   creatorExecutionRecordRunning = false;
+  resetCreatorOutcomeUi();
   if (creatorExecutionRecordResult) {
     creatorExecutionRecordResult.innerHTML = "";
   }
@@ -1498,6 +1505,18 @@ function resetCreatorExecutionRecordUi({showStart = false} = {}) {
     startCreatorExecutionRecordButton.disabled = false;
     startCreatorExecutionRecordButton.textContent = "开始执行";
   }
+}
+
+function resetCreatorOutcomeUi() {
+  currentCreatorOutcome = null;
+  creatorOutcomeRunning = false;
+  if (creatorOutcomeResult) {
+    creatorOutcomeResult.innerHTML = "";
+  }
+  if (creatorOutcomeStatus) {
+    creatorOutcomeStatus.textContent = "完成“发布”后即可记录真实表现。";
+  }
+  creatorOutcomeCard?.classList.add("hidden");
 }
 
 function resetCreatorExecutionPackUi({hide = true} = {}) {
@@ -6106,7 +6125,198 @@ function renderCreatorExecutionRecord(record = {}) {
         ? "执行记录已归档，反馈仍可修改。"
         : "执行记录已保存，可随时继续。";
   }
+  configureCreatorOutcomeUi(record);
   return creatorExecutionRecordView.hasRecord(creatorExecutionRecordResult);
+}
+
+function creatorExecutionPublishingCompleted(record = currentCreatorExecutionRecord) {
+  return record?.production_status?.publishing === "completed";
+}
+
+function configureCreatorOutcomeUi(record = currentCreatorExecutionRecord) {
+  if (!creatorOutcomeView || !creatorOutcomeResult || !record || typeof record !== "object") {
+    resetCreatorOutcomeUi();
+    return false;
+  }
+  creatorOutcomeCard?.classList.remove("hidden");
+  if (!creatorExecutionPublishingCompleted(record)) {
+    currentCreatorOutcome = null;
+    creatorOutcomeResult.innerHTML = creatorOutcomeView.renderLocked();
+    if (creatorOutcomeStatus) {
+      creatorOutcomeStatus.textContent = "完成“发布”后即可记录真实表现。";
+    }
+    return false;
+  }
+  if (currentCreatorOutcome) {
+    creatorOutcomeResult.innerHTML = creatorOutcomeView.renderOutcome(currentCreatorOutcome);
+    if (creatorOutcomeStatus) {
+      creatorOutcomeStatus.textContent = "发布结果已保存，可继续记录不同时间点的数据。";
+    }
+    return creatorOutcomeView.hasOutcome(creatorOutcomeResult);
+  }
+  creatorOutcomeResult.innerHTML = creatorOutcomeView.renderPublicationOnly();
+  if (creatorOutcomeStatus) {
+    creatorOutcomeStatus.textContent = "发布已完成，请先保存作品信息。";
+  }
+  return false;
+}
+
+function renderCreatorOutcome(outcome = {}) {
+  if (!creatorOutcomeView || !creatorOutcomeResult || !outcome || typeof outcome !== "object") {
+    return false;
+  }
+  currentCreatorOutcome = outcome;
+  creatorOutcomeCard?.classList.remove("hidden");
+  creatorOutcomeResult.innerHTML = creatorOutcomeView.renderOutcome(outcome);
+  if (creatorOutcomeStatus) {
+    creatorOutcomeStatus.textContent = "发布结果已保存，可继续记录不同时间点的数据。";
+  }
+  return creatorOutcomeView.hasOutcome(creatorOutcomeResult);
+}
+
+function setCreatorOutcomeBusy(running, message = "") {
+  creatorOutcomeRunning = Boolean(running);
+  creatorOutcomeResult?.querySelectorAll("button, input, select, textarea").forEach((control) => {
+    control.disabled = Boolean(running);
+  });
+  if (message && creatorOutcomeStatus) {
+    creatorOutcomeStatus.textContent = message;
+  }
+}
+
+async function hydrateCreatorOutcome(setId, options = {}) {
+  if (!setId || !creatorExecutionPublishingCompleted()) {
+    configureCreatorOutcomeUi(currentCreatorExecutionRecord);
+    return null;
+  }
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/outcome`, {
+      cache: "no-store",
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      if (payload.error_code === "OUTCOME_NOT_READY") {
+        currentCreatorOutcome = null;
+        configureCreatorOutcomeUi(currentCreatorExecutionRecord);
+        return null;
+      }
+      throw payload;
+    }
+    renderCreatorOutcome(payload.outcome || {});
+    return payload.outcome || null;
+  } catch (error) {
+    if (!options.silent && creatorOutcomeStatus) {
+      creatorOutcomeCard?.classList.remove("hidden");
+      creatorOutcomeStatus.textContent = `${error.error_code || "OUTCOME_LOAD_FAILED"}：${error.message || "发布结果读取失败。"}`;
+    }
+    return null;
+  }
+}
+
+async function saveCreatorOutcomePublication() {
+  const setId = currentCreatorCloneSetId();
+  if (!setId || !creatorExecutionPublishingCompleted() || creatorOutcomeRunning || !creatorOutcomeView) {
+    return false;
+  }
+  const publication = creatorOutcomeView.publicationPayload(creatorOutcomeResult);
+  setCreatorOutcomeBusy(true, "正在保存发布信息...");
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/outcome`, {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(publication),
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      throw payload;
+    }
+    if (!renderCreatorOutcome(payload.outcome || {})) {
+      throw {error_code: "OUTCOME_RENDER_FAILED", message: "发布信息已保存，但页面渲染失败。"};
+    }
+    return true;
+  } catch (error) {
+    if (creatorOutcomeStatus) {
+      creatorOutcomeStatus.textContent = `${error.error_code || "OUTCOME_SAVE_FAILED"}：${error.message || "发布信息保存失败。"}`;
+    }
+    return false;
+  } finally {
+    setCreatorOutcomeBusy(false);
+  }
+}
+
+async function addCreatorOutcomeSnapshot() {
+  const setId = currentCreatorCloneSetId();
+  if (!setId || !currentCreatorOutcome || creatorOutcomeRunning || !creatorOutcomeView) {
+    return false;
+  }
+  const metrics = creatorOutcomeView.metricsPayload(creatorOutcomeResult, "new");
+  if (!metrics) {
+    if (creatorOutcomeStatus) {
+      creatorOutcomeStatus.textContent = "数据只能填写大于等于 0 的整数；未知项请留空。";
+    }
+    return false;
+  }
+  setCreatorOutcomeBusy(true, "正在记录当前数据...");
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/outcome/snapshots`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(metrics),
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      throw payload;
+    }
+    if (!renderCreatorOutcome(payload.outcome || {})) {
+      throw {error_code: "OUTCOME_RENDER_FAILED", message: "数据已保存，但页面渲染失败。"};
+    }
+    return true;
+  } catch (error) {
+    if (creatorOutcomeStatus) {
+      creatorOutcomeStatus.textContent = `${error.error_code || "OUTCOME_SNAPSHOT_FAILED"}：${error.message || "数据快照保存失败。"}`;
+    }
+    return false;
+  } finally {
+    setCreatorOutcomeBusy(false);
+  }
+}
+
+async function patchCreatorOutcomeSnapshot(snapshotElement) {
+  const setId = currentCreatorCloneSetId();
+  const snapshotId = String(snapshotElement?.dataset?.outcomeSnapshotId || "").trim();
+  if (!setId || !currentCreatorOutcome || !snapshotId || creatorOutcomeRunning || !creatorOutcomeView) {
+    return false;
+  }
+  const metrics = creatorOutcomeView.metricsPayload(snapshotElement, "edit");
+  if (!metrics) {
+    if (creatorOutcomeStatus) {
+      creatorOutcomeStatus.textContent = "数据只能填写大于等于 0 的整数；未知项请留空。";
+    }
+    return false;
+  }
+  setCreatorOutcomeBusy(true, "正在修正数据快照...");
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/outcome/snapshots/${encodeURIComponent(snapshotId)}`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(metrics),
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      throw payload;
+    }
+    if (!renderCreatorOutcome(payload.outcome || {})) {
+      throw {error_code: "OUTCOME_RENDER_FAILED", message: "修正已保存，但页面渲染失败。"};
+    }
+    return true;
+  } catch (error) {
+    if (creatorOutcomeStatus) {
+      creatorOutcomeStatus.textContent = `${error.error_code || "OUTCOME_SNAPSHOT_UPDATE_FAILED"}：${error.message || "数据快照修正失败。"}`;
+    }
+    return false;
+  } finally {
+    setCreatorOutcomeBusy(false);
+  }
 }
 
 function setCreatorExecutionRecordBusy(running, message = "") {
@@ -6142,6 +6352,7 @@ async function hydrateCreatorExecutionRecord(setId, options = {}) {
       throw payload;
     }
     renderCreatorExecutionRecord(payload.execution_record || {});
+    await hydrateCreatorOutcome(setId, {silent: true});
     return payload.execution_record || null;
   } catch (error) {
     if (!options.silent && creatorExecutionRecordStatus) {
@@ -6201,6 +6412,7 @@ async function patchCreatorExecutionRecord(changes, message = "正在保存执�
     if (!renderCreatorExecutionRecord(payload.execution_record || {})) {
       throw {error_code: "EXECUTION_RECORD_RENDER_FAILED", message: "执行记录已保存，但页面渲染失败。"};
     }
+    await hydrateCreatorOutcome(setId, {silent: true});
     return true;
   } catch (error) {
     if (creatorExecutionRecordStatus) {
@@ -7849,6 +8061,18 @@ creatorExecutionRecordResult?.addEventListener("click", async (event) => {
     }
   } else if (action === "archive") {
     await patchCreatorExecutionRecord({status: "archived"}, "正在归档执行记录...");
+  }
+});
+
+creatorOutcomeResult?.addEventListener("click", async (event) => {
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  const action = target?.closest("[data-outcome-action]")?.dataset.outcomeAction || "";
+  if (action === "save-publication") {
+    await saveCreatorOutcomePublication();
+  } else if (action === "add-snapshot") {
+    await addCreatorOutcomeSnapshot();
+  } else if (action === "save-snapshot") {
+    await patchCreatorOutcomeSnapshot(target?.closest("[data-outcome-snapshot-id]"));
   }
 });
 

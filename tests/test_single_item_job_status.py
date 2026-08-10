@@ -1183,7 +1183,7 @@ def test_template_keeps_exactly_four_read_only_accessible_status_stages() -> Non
 
 def test_app_request_and_polling_baselines_do_not_drift() -> None:
     source = APP_JS.read_text(encoding="utf-8")
-    assert source.count("fetch(") == 34
+    assert source.count("fetch(") == 38
     assert source.count("/execution-pack`") == 1
     assert source.count("/generate-execution-pack`") == 1
     assert len(re.findall(r"window\.setTimeout\(resolve,\s*700\)", source)) == 1
