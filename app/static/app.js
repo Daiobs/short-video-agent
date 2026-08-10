@@ -852,6 +852,10 @@ const creatorExecutionPackCard = document.getElementById("creator-execution-pack
 const creatorExecutionPackStatus = document.getElementById("creator-execution-pack-status");
 const creatorExecutionPackResult = document.getElementById("creator-execution-pack-result");
 const copyCreatorExecutionPackButton = document.getElementById("copy-creator-execution-pack-button");
+const startCreatorExecutionRecordButton = document.getElementById("start-creator-execution-record-button");
+const creatorExecutionRecordCard = document.getElementById("creator-execution-record-card");
+const creatorExecutionRecordStatus = document.getElementById("creator-execution-record-status");
+const creatorExecutionRecordResult = document.getElementById("creator-execution-record-result");
 const PROFILE_BUILD_MAX_ITEMS = Math.max(1, Number(document.body.dataset.profileBuildMaxItems || 10));
 const CREATOR_CLONE_MAX_DISTILL_SAMPLES = Math.max(1, Number(document.body.dataset.creatorCloneMaxDistillSamples || 20));
 const HANDOFF_MANIFEST_MAX_BYTES = 2 * 1024 * 1024;
@@ -902,6 +906,8 @@ let currentCreatorRuntimeState = null;
 let currentCreatorStrategyPlan = null;
 let currentCreatorExecutionPack = null;
 let creatorExecutionPackRunning = false;
+let currentCreatorExecutionRecord = null;
+let creatorExecutionRecordRunning = false;
 let currentRepresentativeSampleSelection = null;
 let representativeRecommendationState = "idle";
 let representativeRecommendationMessage = "";
@@ -955,6 +961,7 @@ const creatorReportView = window.CreatorReportView?.createRenderer({
   cleanPublicReportText,
 }) || null;
 const creatorExecutionPackView = window.CreatorExecutionPackView || null;
+const creatorExecutionRecordView = window.CreatorExecutionRecordView || null;
 
 function renderSingleItemStatus({job = currentSingleJob, caseData = loadedHomeCase, flow = singleItemFlow} = {}) {
   const statusView = window.SingleItemJobStatus?.derive({job, caseData, flow});
@@ -1476,9 +1483,27 @@ function clearCreatorCloneRenderedReport({clearPrompt = true} = {}) {
   creatorCloneResultCard?.classList.add("hidden");
 }
 
+function resetCreatorExecutionRecordUi({showStart = false} = {}) {
+  currentCreatorExecutionRecord = null;
+  creatorExecutionRecordRunning = false;
+  if (creatorExecutionRecordResult) {
+    creatorExecutionRecordResult.innerHTML = "";
+  }
+  if (creatorExecutionRecordStatus) {
+    creatorExecutionRecordStatus.textContent = "点击开始执行后记录拍摄、剪辑和发布进度。";
+  }
+  creatorExecutionRecordCard?.classList.add("hidden");
+  startCreatorExecutionRecordButton?.classList.toggle("hidden", !showStart);
+  if (startCreatorExecutionRecordButton) {
+    startCreatorExecutionRecordButton.disabled = false;
+    startCreatorExecutionRecordButton.textContent = "开始执行";
+  }
+}
+
 function resetCreatorExecutionPackUi({hide = true} = {}) {
   currentCreatorExecutionPack = null;
   creatorExecutionPackRunning = false;
+  resetCreatorExecutionRecordUi();
   if (creatorExecutionPackResult) {
     creatorExecutionPackResult.innerHTML = "";
   }
@@ -6048,6 +6073,7 @@ function renderCreatorExecutionPack(pack = {}, options = {}) {
     return false;
   }
   currentCreatorExecutionPack = pack;
+  resetCreatorExecutionRecordUi({showStart: true});
   creatorExecutionPackResult.innerHTML = creatorExecutionPackView.renderPack(pack);
   creatorExecutionPackCard?.classList.remove("hidden");
   if (copyCreatorExecutionPackButton) {
@@ -6063,6 +6089,127 @@ function renderCreatorExecutionPack(pack = {}, options = {}) {
     creatorExecutionPackCard?.scrollIntoView({behavior: "smooth", block: "start"});
   }
   return creatorExecutionPackView.hasPack(creatorExecutionPackResult);
+}
+
+function renderCreatorExecutionRecord(record = {}) {
+  if (!creatorExecutionRecordView || !creatorExecutionRecordResult || !record || typeof record !== "object") {
+    return false;
+  }
+  currentCreatorExecutionRecord = record;
+  creatorExecutionRecordResult.innerHTML = creatorExecutionRecordView.renderRecord(record);
+  creatorExecutionRecordCard?.classList.remove("hidden");
+  startCreatorExecutionRecordButton?.classList.add("hidden");
+  if (creatorExecutionRecordStatus) {
+    creatorExecutionRecordStatus.textContent = record.status === "completed"
+      ? "执行已完成，仍可继续补充反馈。"
+      : record.status === "archived"
+        ? "执行记录已归档，反馈仍可修改。"
+        : "执行记录已保存，可随时继续。";
+  }
+  return creatorExecutionRecordView.hasRecord(creatorExecutionRecordResult);
+}
+
+function setCreatorExecutionRecordBusy(running, message = "") {
+  creatorExecutionRecordRunning = Boolean(running);
+  if (startCreatorExecutionRecordButton) {
+    startCreatorExecutionRecordButton.disabled = Boolean(running);
+    startCreatorExecutionRecordButton.textContent = running ? "正在开始..." : "开始执行";
+  }
+  const archived = currentCreatorExecutionRecord?.status === "archived";
+  creatorExecutionRecordResult?.querySelectorAll("button, input, select, textarea").forEach((control) => {
+    const isStageControl = Boolean(control.dataset?.executionStage);
+    control.disabled = Boolean(running) || (archived && isStageControl);
+  });
+  if (message && creatorExecutionRecordStatus) {
+    creatorExecutionRecordStatus.textContent = message;
+  }
+}
+
+async function hydrateCreatorExecutionRecord(setId, options = {}) {
+  if (!setId || !currentCreatorExecutionPack) {
+    return null;
+  }
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/execution-record`, {
+      cache: "no-store",
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      if (payload.error_code === "EXECUTION_RECORD_NOT_READY") {
+        resetCreatorExecutionRecordUi({showStart: true});
+        return null;
+      }
+      throw payload;
+    }
+    renderCreatorExecutionRecord(payload.execution_record || {});
+    return payload.execution_record || null;
+  } catch (error) {
+    if (!options.silent && creatorExecutionRecordStatus) {
+      creatorExecutionRecordCard?.classList.remove("hidden");
+      creatorExecutionRecordStatus.textContent = `${error.error_code || "EXECUTION_RECORD_LOAD_FAILED"}：${error.message || "执行记录读取失败。"}`;
+    }
+    return null;
+  }
+}
+
+async function startCreatorExecutionRecord() {
+  const setId = currentCreatorCloneSetId();
+  if (!setId || !currentCreatorExecutionPack || creatorExecutionRecordRunning) {
+    return false;
+  }
+  setCreatorExecutionRecordBusy(true, "正在创建执行记录...");
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/execution-record/start`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      throw payload;
+    }
+    if (!renderCreatorExecutionRecord(payload.execution_record || {})) {
+      throw {error_code: "EXECUTION_RECORD_RENDER_FAILED", message: "执行记录已创建，但页面渲染失败。"};
+    }
+    return true;
+  } catch (error) {
+    if (creatorExecutionRecordStatus) {
+      creatorExecutionRecordCard?.classList.remove("hidden");
+      creatorExecutionRecordStatus.textContent = `${error.error_code || "EXECUTION_RECORD_START_FAILED"}：${error.message || "执行记录创建失败。"}`;
+    }
+    return false;
+  } finally {
+    setCreatorExecutionRecordBusy(false);
+  }
+}
+
+async function patchCreatorExecutionRecord(changes, message = "正在保存执行进度...") {
+  const setId = currentCreatorCloneSetId();
+  if (!setId || !currentCreatorExecutionRecord || creatorExecutionRecordRunning) {
+    return false;
+  }
+  setCreatorExecutionRecordBusy(true, message);
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/execution-record`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(changes || {}),
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      throw payload;
+    }
+    if (!renderCreatorExecutionRecord(payload.execution_record || {})) {
+      throw {error_code: "EXECUTION_RECORD_RENDER_FAILED", message: "执行记录已保存，但页面渲染失败。"};
+    }
+    return true;
+  } catch (error) {
+    if (creatorExecutionRecordStatus) {
+      creatorExecutionRecordStatus.textContent = `${error.error_code || "EXECUTION_RECORD_UPDATE_FAILED"}：${error.message || "执行记录保存失败。"}`;
+    }
+    return false;
+  } finally {
+    setCreatorExecutionRecordBusy(false);
+  }
 }
 
 function setExecutionTopicButtonsBusy(running, activeTopicIndex = -1) {
@@ -6090,6 +6237,7 @@ async function hydrateCreatorExecutionPack(setId, options = {}) {
       throw payload;
     }
     renderCreatorExecutionPack(payload.execution_pack || {}, {scroll: options.scroll === true});
+    await hydrateCreatorExecutionRecord(setId, {silent: true});
     return payload.execution_pack || null;
   } catch (error) {
     if (!options.silent && creatorExecutionPackStatus) {
@@ -6129,6 +6277,7 @@ async function generateCreatorExecutionPack(topicIndex) {
     if (!renderCreatorExecutionPack(payload.execution_pack || {}, {scroll: true})) {
       throw {error_code: "EXECUTION_PACK_RENDER_FAILED", message: "执行方案已生成，但页面渲染失败。"};
     }
+    await hydrateCreatorExecutionRecord(setId, {silent: true});
     return true;
   } catch (error) {
     if (creatorExecutionPackStatus) {
@@ -7673,6 +7822,34 @@ copyCreatorExecutionPackButton?.addEventListener("click", async () => {
   window.setTimeout(() => {
     copyCreatorExecutionPackButton.textContent = "复制完整执行方案";
   }, 1600);
+});
+
+startCreatorExecutionRecordButton?.addEventListener("click", async () => {
+  await startCreatorExecutionRecord();
+});
+
+creatorExecutionRecordResult?.addEventListener("click", async (event) => {
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  const stageButton = target?.closest("[data-execution-stage]");
+  if (stageButton) {
+    const patch = creatorExecutionRecordView?.stagePatch(
+      stageButton.dataset.executionStage || "",
+      stageButton.dataset.executionStageValue || "",
+    );
+    if (patch) {
+      await patchCreatorExecutionRecord(patch, "正在保存制作阶段...");
+    }
+    return;
+  }
+  const action = target?.closest("[data-execution-record-action]")?.dataset.executionRecordAction || "";
+  if (action === "save-feedback") {
+    const patch = creatorExecutionRecordView?.feedbackPatch(creatorExecutionRecordResult);
+    if (patch) {
+      await patchCreatorExecutionRecord(patch, "正在保存执行反馈...");
+    }
+  } else if (action === "archive") {
+    await patchCreatorExecutionRecord({status: "archived"}, "正在归档执行记录...");
+  }
 });
 
 copyCreatorCloneSpecButton.addEventListener("click", async () => {

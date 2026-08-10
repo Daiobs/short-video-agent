@@ -802,10 +802,17 @@ https://v.douyin.com/xxxxxx/
                                 <span class="entry-label">Execute</span>
                                 <h3>下一条内容</h3>
                             </div>
-                            <button type="button" id="copy-creator-execution-pack-button" class="secondary-button" disabled>复制完整执行方案</button>
+                            <div class="profile-secondary-actions">
+                                <button type="button" id="start-creator-execution-record-button" class="hidden">开始执行</button>
+                                <button type="button" id="copy-creator-execution-pack-button" class="secondary-button" disabled>复制完整执行方案</button>
+                            </div>
                         </div>
                         <div id="creator-execution-pack-status" class="inline-status muted">请先从上方选择一个选题。</div>
                         <div id="creator-execution-pack-result" class="creator-execution-pack-result"></div>
+                        <section id="creator-execution-record-card" class="creator-execution-record-card hidden" aria-live="polite">
+                            <div id="creator-execution-record-status" class="inline-status muted">点击开始执行后记录拍摄、剪辑和发布进度。</div>
+                            <div id="creator-execution-record-result" class="creator-execution-record-result"></div>
+                        </section>
                     </section>
                 </section>
                 <details class="profile-action-card report-export-card hidden" id="creator-clone-export-actions" hidden>
@@ -858,6 +865,7 @@ https://v.douyin.com/xxxxxx/
 <script src="/static/workbench.js?v={{ static_version }}"></script>
 <script src="/static/modules/creator-report-view.js?v={{ static_version }}"></script>
 <script src="/static/modules/creator-execution-pack.js?v={{ static_version }}"></script>
+<script src="/static/modules/creator-execution-record.js?v={{ static_version }}"></script>
 <script src="/static/modules/settings-panel.js?v={{ static_version }}"></script>
 <script src="/static/modules/representative-sample-selector.js?v={{ static_version }}"></script>
 <script src="/static/app.js?v={{ static_version }}"></script>

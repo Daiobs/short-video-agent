@@ -79,6 +79,7 @@ class ErrorCode:
     STRATEGY_PLAN_NOT_READY = "STRATEGY_PLAN_NOT_READY"
     EXECUTION_PACK_NOT_READY = "EXECUTION_PACK_NOT_READY"
     EXECUTION_TOPIC_INVALID = "EXECUTION_TOPIC_INVALID"
+    EXECUTION_RECORD_NOT_READY = "EXECUTION_RECORD_NOT_READY"
 
 
 ERROR_MESSAGES = {
@@ -156,6 +157,7 @@ ERROR_MESSAGES = {
     ErrorCode.STRATEGY_PLAN_NOT_READY: "请先生成 Creator Strategy Plan，再选择一个选题生成执行方案。",
     ErrorCode.EXECUTION_PACK_NOT_READY: "当前还没有可用的 Creator Execution Pack。",
     ErrorCode.EXECUTION_TOPIC_INVALID: "选题不存在或已失效，请重新从 Strategy Plan 选择。",
+    ErrorCode.EXECUTION_RECORD_NOT_READY: "当前还没有执行记录，请先在 Execution Pack 中点击开始执行。",
 }
 
 

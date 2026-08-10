@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -23,6 +24,11 @@ from app.services.creator_intelligence.execution_pack import (
     generate_creator_execution_pack,
     load_creator_execution_pack,
 )
+from app.services.creator_intelligence.execution_record import (
+    load_creator_execution_record,
+    start_creator_execution_record,
+    update_creator_execution_record,
+)
 
 
 router = APIRouter(prefix="/api/creator-intelligence", tags=["creator-intelligence"])
@@ -35,6 +41,26 @@ class CreatorIntelligenceWorkflowDispatchRequest(BaseModel):
 
 class CreatorExecutionPackGenerateRequest(BaseModel):
     topic_index: int = Field(ge=0, le=100)
+
+
+class CreatorExecutionProductionStatusPatch(BaseModel):
+    shooting: Literal["pending", "completed", "skipped"] | None = None
+    editing: Literal["pending", "completed", "skipped"] | None = None
+    publishing: Literal["pending", "completed", "skipped"] | None = None
+
+
+class CreatorExecutionFeedbackPatch(BaseModel):
+    was_used: bool | None = None
+    difficulty: Literal["", "easy", "normal", "hard"] | None = None
+    quality_rating: int | None = Field(default=None, ge=1, le=5)
+    result_rating: int | None = Field(default=None, ge=1, le=5)
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class CreatorExecutionRecordPatchRequest(BaseModel):
+    status: Literal["draft", "in_progress", "completed", "archived"] | None = None
+    production_status: CreatorExecutionProductionStatusPatch | None = None
+    feedback: CreatorExecutionFeedbackPatch | None = None
 
 
 def project_payload_for_sample_set(
@@ -135,6 +161,48 @@ def get_creator_intelligence_execution_pack(project_id: str):
         execution_pack = load_creator_execution_pack(project_id)
         return JSONResponse(
             content={"ok": True, "execution_pack": execution_pack},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.post("/projects/{project_id}/execution-record/start")
+def start_creator_intelligence_execution_record(project_id: str):
+    try:
+        execution_record = start_creator_execution_record(project_id)
+        return JSONResponse(
+            content={"ok": True, "execution_record": execution_record},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.get("/projects/{project_id}/execution-record")
+def get_creator_intelligence_execution_record(project_id: str):
+    try:
+        execution_record = load_creator_execution_record(project_id)
+        return JSONResponse(
+            content={"ok": True, "execution_record": execution_record},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.patch("/projects/{project_id}/execution-record")
+def patch_creator_intelligence_execution_record(
+    project_id: str,
+    payload: CreatorExecutionRecordPatchRequest,
+):
+    try:
+        execution_record = update_creator_execution_record(
+            project_id,
+            payload.model_dump(exclude_unset=True),
+        )
+        return JSONResponse(
+            content={"ok": True, "execution_record": execution_record},
             headers={"Cache-Control": "no-store"},
         )
     except AppError as error:
