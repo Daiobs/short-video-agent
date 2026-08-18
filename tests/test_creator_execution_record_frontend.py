@@ -163,9 +163,22 @@ const creatorExecutionRecordCard = {classList: classList()};
 const startCreatorExecutionRecordButton = {classList: classList(), disabled: false, textContent: "开始执行"};
 const creatorExecutionRecordStatus = {textContent: ""};
 const creatorExecutionRecordView = {renderRecord(record) { return `<section class="creator-execution-record">${record.status}</section>`; }, hasRecord() { return true; }};
+const creatorOutcomeResult = {innerHTML: "", querySelectorAll() { return []; }};
+const creatorOutcomeCard = {classList: classList()};
+const creatorOutcomeStatus = {textContent: ""};
+const creatorOutcomeView = {
+  renderLocked() { return '<div data-outcome-state="locked"></div>'; },
+  renderPublicationOnly() { return '<div data-outcome-state="publication"></div>'; },
+  renderOutcome() { return '<div data-outcome-state="ready"></div>'; },
+  hasOutcome() { return true; },
+  publicationPayload() { return {}; },
+  metricsPayload() { return {}; },
+};
 let currentCreatorExecutionPack = {topic: {title: "测试选题"}};
 let currentCreatorExecutionRecord = null;
 let creatorExecutionRecordRunning = false;
+let currentCreatorOutcome = null;
+let creatorOutcomeRunning = false;
 function currentCreatorCloneSetId() { return "clone_frontend_test"; }
 function resetCreatorExecutionRecordUi() { currentCreatorExecutionRecord = null; }
 async function readJsonResponse(response) { return response.payload; }

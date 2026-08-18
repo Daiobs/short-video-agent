@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
+from pydantic_core import PydanticCustomError
 
 from app.errors import AppError, ErrorCode
 from app.routes.common import error_response
@@ -28,6 +29,14 @@ from app.services.creator_intelligence.execution_record import (
     load_creator_execution_record,
     start_creator_execution_record,
     update_creator_execution_record,
+)
+from app.services.creator_intelligence.outcome_snapshot import (
+    append_creator_outcome_snapshot,
+    load_creator_outcome_timeline,
+    normalize_optional_outcome_timestamp,
+    normalize_outcome_publication_url,
+    update_creator_outcome_snapshot,
+    upsert_creator_outcome_timeline,
 )
 
 
@@ -61,6 +70,40 @@ class CreatorExecutionRecordPatchRequest(BaseModel):
     status: Literal["draft", "in_progress", "completed", "archived"] | None = None
     production_status: CreatorExecutionProductionStatusPatch | None = None
     feedback: CreatorExecutionFeedbackPatch | None = None
+
+
+OutcomeMetricValue = Annotated[StrictInt, Field(ge=0)] | None
+
+
+class CreatorOutcomePublicationRequest(BaseModel):
+    platform: Literal["douyin", "xhs", "bili", "other"] = "douyin"
+    platform_item_id: StrictStr = Field(default="", max_length=160)
+    published_url: StrictStr = Field(default="", max_length=2048)
+    published_at: StrictStr | None = None
+
+    @field_validator("published_url")
+    @classmethod
+    def validate_published_url(cls, value: str) -> str:
+        try:
+            return normalize_outcome_publication_url(value)
+        except ValueError as error:
+            raise PydanticCustomError("outcome_url_invalid", str(error)) from error
+
+    @field_validator("published_at")
+    @classmethod
+    def validate_published_at(cls, value: str | None) -> str | None:
+        try:
+            return normalize_optional_outcome_timestamp(value, "publication.published_at")
+        except ValueError as error:
+            raise PydanticCustomError("outcome_timestamp_invalid", str(error)) from error
+
+
+class CreatorOutcomeMetricsRequest(BaseModel):
+    views: OutcomeMetricValue = None
+    likes: OutcomeMetricValue = None
+    comments: OutcomeMetricValue = None
+    shares: OutcomeMetricValue = None
+    collects: OutcomeMetricValue = None
 
 
 def project_payload_for_sample_set(
@@ -203,6 +246,68 @@ def patch_creator_intelligence_execution_record(
         )
         return JSONResponse(
             content={"ok": True, "execution_record": execution_record},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.put("/projects/{project_id}/outcome")
+def put_creator_intelligence_outcome(
+    project_id: str,
+    payload: CreatorOutcomePublicationRequest,
+):
+    try:
+        outcome = upsert_creator_outcome_timeline(project_id, payload.model_dump())
+        return JSONResponse(
+            content={"ok": True, "outcome": outcome},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.get("/projects/{project_id}/outcome")
+def get_creator_intelligence_outcome(project_id: str):
+    try:
+        outcome = load_creator_outcome_timeline(project_id)
+        return JSONResponse(
+            content={"ok": True, "outcome": outcome},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.post("/projects/{project_id}/outcome/snapshots")
+def post_creator_intelligence_outcome_snapshot(
+    project_id: str,
+    payload: CreatorOutcomeMetricsRequest,
+):
+    try:
+        snapshot, outcome = append_creator_outcome_snapshot(project_id, payload.model_dump())
+        return JSONResponse(
+            content={"ok": True, "snapshot": snapshot, "outcome": outcome},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.patch("/projects/{project_id}/outcome/snapshots/{snapshot_id}")
+def patch_creator_intelligence_outcome_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    payload: CreatorOutcomeMetricsRequest,
+):
+    try:
+        snapshot, outcome = update_creator_outcome_snapshot(
+            project_id,
+            snapshot_id,
+            payload.model_dump(exclude_unset=True),
+        )
+        return JSONResponse(
+            content={"ok": True, "snapshot": snapshot, "outcome": outcome},
             headers={"Cache-Control": "no-store"},
         )
     except AppError as error:
