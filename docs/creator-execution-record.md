@@ -24,7 +24,7 @@ The Record consumes the existing validated `creator_execution_pack.json`. At cre
 - `execution_pack_topic_index`
 - `selected_topic`
 
-If the Execution Pack is regenerated later, the existing Record remains bound to the original values. v1 stores one current Record per Creator project and does not create history automatically.
+If the Execution Pack is regenerated later, the existing Record remains bound to the original values. One Record is current per Creator iteration; closed iterations remain available through Creator Iteration History.
 
 ## Schema
 
@@ -134,10 +134,16 @@ All successful Record responses use `Cache-Control: no-store`.
 
 ## Persistence
 
-The Record is stored beside the existing Creator artifacts:
+Without an iteration index, the Record remains beside the existing Creator artifacts:
 
 ```text
 outputs/creator_clones/{project_id}/creator_execution_record.json
+```
+
+After the user starts a new iteration, the current Record is stored at:
+
+```text
+outputs/creator_clones/{project_id}/iterations/{iteration_id}/creator_execution_record.json
 ```
 
 Writes use a UTF-8 temporary file in the same directory, followed by `flush`, `fsync`, and `os.replace`. Updating a Record atomically replaces only that file. It does not modify:
@@ -185,7 +191,8 @@ Creator Execution Record v1 does not:
 
 ## Known limitations
 
-- v1 stores one current Record per Creator project rather than a historical list.
+- v1 stores one current Record per Creator iteration; historical Records are
+  read-only and selected through the iteration index.
 - It records user-entered execution feedback but does not verify publishing or collect platform metrics.
 - A Record stays bound to the Pack used at Start; regenerating a Pack does not offer automatic migration.
 - CDN redirect allowlisting, Douyin Provider hardening, and standalone Login Plugin host-only Cookie work remain deferred.
