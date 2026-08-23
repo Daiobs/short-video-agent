@@ -10,9 +10,15 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.services.creator_intelligence.execution_pack import load_creator_execution_pack
+from app.services.creator_intelligence.iteration_storage import (
+    IterationStorageContext,
+    assert_iteration_context_current,
+    iteration_artifact_path,
+    iteration_write_lock,
+    resolve_current_iteration_context,
+)
 
 
 EXECUTION_RECORD_VERSION = "1.0"
@@ -23,6 +29,7 @@ PRODUCTION_STATUSES = frozenset({"pending", "completed", "skipped"})
 PRODUCTION_STAGES = ("shooting", "editing", "publishing")
 DIFFICULTY_VALUES = frozenset({"", "easy", "normal", "hard"})
 _RECORD_LOCK = Lock()
+_DEFAULT_EXECUTION_PACK_LOADER = load_creator_execution_pack
 
 
 @dataclass(frozen=True)
@@ -55,12 +62,15 @@ class CreatorExecutionRecordV1:
 
 def start_creator_execution_record(project_id: str) -> dict[str, Any]:
     project_id = _validated_project_id(project_id, ErrorCode.EXECUTION_PACK_NOT_READY)
-    path = execution_record_path(project_id)
+    storage_context = resolve_current_iteration_context(project_id)
+    path = execution_record_path(project_id, storage_context=storage_context)
     with _RECORD_LOCK:
         if path.is_file():
-            return _load_record_file(path, project_id)
+            with iteration_write_lock():
+                assert_iteration_context_current(storage_context)
+                return _load_record_file(path, project_id)
 
-        execution_pack = load_creator_execution_pack(project_id)
+        execution_pack = _load_execution_pack_for_context(project_id, storage_context)
         topic = execution_pack.get("topic") if isinstance(execution_pack.get("topic"), dict) else {}
         now = _now_iso()
         record = CreatorExecutionRecordV1(
@@ -82,13 +92,19 @@ def start_creator_execution_record(project_id: str) -> dict[str, Any]:
             updated_at=now,
         )
         payload = validate_creator_execution_record(record.to_dict(), expected_project_id=project_id)
-        _write_json_atomic(path, payload)
+        with iteration_write_lock():
+            assert_iteration_context_current(storage_context)
+            _write_json_atomic(path, payload)
         return payload
 
 
-def load_creator_execution_record(project_id: str) -> dict[str, Any]:
+def load_creator_execution_record(
+    project_id: str,
+    *,
+    storage_context: IterationStorageContext | None = None,
+) -> dict[str, Any]:
     project_id = _validated_project_id(project_id, ErrorCode.EXECUTION_RECORD_NOT_READY)
-    path = execution_record_path(project_id)
+    path = execution_record_path(project_id, storage_context=storage_context)
     if not path.is_file():
         raise AppError(ErrorCode.EXECUTION_RECORD_NOT_READY)
     return _load_record_file(path, project_id)
@@ -96,7 +112,8 @@ def load_creator_execution_record(project_id: str) -> dict[str, Any]:
 
 def update_creator_execution_record(project_id: str, changes: dict[str, Any]) -> dict[str, Any]:
     project_id = _validated_project_id(project_id, ErrorCode.EXECUTION_RECORD_NOT_READY)
-    path = execution_record_path(project_id)
+    storage_context = resolve_current_iteration_context(project_id)
+    path = execution_record_path(project_id, storage_context=storage_context)
     with _RECORD_LOCK:
         current = _load_record_file(path, project_id)
         status = current["status"]
@@ -155,13 +172,32 @@ def update_creator_execution_record(project_id: str, changes: dict[str, Any]) ->
             "updated_at": _now_iso(),
         }
         payload = validate_creator_execution_record(updated, expected_project_id=project_id)
-        _write_json_atomic(path, payload)
+        with iteration_write_lock():
+            assert_iteration_context_current(storage_context)
+            _write_json_atomic(path, payload)
         return payload
 
 
-def execution_record_path(project_id: str) -> Path:
+def execution_record_path(
+    project_id: str,
+    *,
+    storage_context: IterationStorageContext | None = None,
+) -> Path:
     project_id = _validated_project_id(project_id, ErrorCode.EXECUTION_RECORD_NOT_READY)
-    return settings.creator_clones_dir / project_id / EXECUTION_RECORD_FILENAME
+    context = storage_context or resolve_current_iteration_context(project_id)
+    if context.project_id != project_id:
+        raise AppError(ErrorCode.ITERATION_CONTEXT_CHANGED)
+    return iteration_artifact_path(context, EXECUTION_RECORD_FILENAME)
+
+
+def _load_execution_pack_for_context(
+    project_id: str,
+    storage_context: IterationStorageContext,
+) -> dict[str, Any]:
+    if load_creator_execution_pack is _DEFAULT_EXECUTION_PACK_LOADER:
+        return load_creator_execution_pack(project_id, storage_context=storage_context)
+    # Preserve the narrow monkeypatch contract used by existing isolated tests.
+    return load_creator_execution_pack(project_id)
 
 
 def validate_creator_execution_record(

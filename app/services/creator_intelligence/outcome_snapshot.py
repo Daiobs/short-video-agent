@@ -13,10 +13,16 @@ from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 from uuid import uuid4
 
-from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.services.creator_intelligence.execution_pack import load_creator_execution_pack
 from app.services.creator_intelligence.execution_record import load_creator_execution_record
+from app.services.creator_intelligence.iteration_storage import (
+    IterationStorageContext,
+    assert_iteration_context_current,
+    iteration_artifact_path,
+    iteration_write_lock,
+    resolve_current_iteration_context,
+)
 
 
 OUTCOME_TIMELINE_VERSION = "1.0"
@@ -28,6 +34,8 @@ OUTCOME_METRIC_FIELDS = ("views", "likes", "comments", "shares", "collects")
 OUTCOME_INTERACTION_FIELDS = ("likes", "comments", "shares", "collects")
 OUTCOME_SNAPSHOT_SOURCE = "manual"
 _OUTCOME_LOCK = Lock()
+_DEFAULT_EXECUTION_PACK_LOADER = load_creator_execution_pack
+_DEFAULT_EXECUTION_RECORD_LOADER = load_creator_execution_record
 _SENSITIVE_QUERY_KEYS = frozenset(
     {
         "access_token",
@@ -127,8 +135,9 @@ class CreatorOutcomeTimelineV1:
 
 def upsert_creator_outcome_timeline(project_id: str, publication: dict[str, Any]) -> dict[str, Any]:
     project_id = _validated_project_id(project_id, ErrorCode.EXECUTION_RECORD_NOT_READY)
+    storage_context = resolve_current_iteration_context(project_id)
     normalized_publication = normalize_outcome_publication(publication)
-    path = creator_outcome_timeline_path(project_id)
+    path = creator_outcome_timeline_path(project_id, storage_context=storage_context)
     with _OUTCOME_LOCK:
         if path.is_file():
             current = _load_outcome_file(path, project_id)
@@ -140,16 +149,22 @@ def upsert_creator_outcome_timeline(project_id: str, publication: dict[str, Any]
                 },
                 expected_project_id=project_id,
             )
-            _write_json_atomic(path, updated)
+            with iteration_write_lock():
+                assert_iteration_context_current(storage_context)
+                _write_json_atomic(path, updated)
             return updated
 
-        execution_record = load_creator_execution_record(project_id)
+        execution_record = _load_execution_record_for_context(project_id, storage_context)
         production_status = execution_record.get("production_status")
         publishing_status = production_status.get("publishing") if isinstance(production_status, dict) else None
         if publishing_status != "completed":
             raise AppError(ErrorCode.EXECUTION_NOT_PUBLISHED)
 
-        expected_metric, warnings = _expected_metric_for_record(project_id, execution_record)
+        expected_metric, warnings = _expected_metric_for_record(
+            project_id,
+            execution_record,
+            storage_context=storage_context,
+        )
         now = _now_iso()
         outcome = validate_creator_outcome_timeline(
             {
@@ -168,13 +183,22 @@ def upsert_creator_outcome_timeline(project_id: str, publication: dict[str, Any]
             },
             expected_project_id=project_id,
         )
-        _write_json_atomic(path, outcome)
+        with iteration_write_lock():
+            assert_iteration_context_current(storage_context)
+            _write_json_atomic(path, outcome)
         return outcome
 
 
-def load_creator_outcome_timeline(project_id: str) -> dict[str, Any]:
+def load_creator_outcome_timeline(
+    project_id: str,
+    *,
+    storage_context: IterationStorageContext | None = None,
+) -> dict[str, Any]:
     project_id = _validated_project_id(project_id, ErrorCode.OUTCOME_NOT_READY)
-    return _load_outcome_file(creator_outcome_timeline_path(project_id), project_id)
+    return _load_outcome_file(
+        creator_outcome_timeline_path(project_id, storage_context=storage_context),
+        project_id,
+    )
 
 
 def append_creator_outcome_snapshot(
@@ -182,7 +206,8 @@ def append_creator_outcome_snapshot(
     metrics: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     project_id = _validated_project_id(project_id, ErrorCode.OUTCOME_NOT_READY)
-    path = creator_outcome_timeline_path(project_id)
+    storage_context = resolve_current_iteration_context(project_id)
+    path = creator_outcome_timeline_path(project_id, storage_context=storage_context)
     normalized_metrics = normalize_outcome_metrics(metrics)
     with _OUTCOME_LOCK:
         current = _load_outcome_file(path, project_id)
@@ -203,7 +228,9 @@ def append_creator_outcome_snapshot(
             },
             expected_project_id=project_id,
         )
-        _write_json_atomic(path, updated)
+        with iteration_write_lock():
+            assert_iteration_context_current(storage_context)
+            _write_json_atomic(path, updated)
         created = next(
             item for item in updated["snapshots"] if item["snapshot_id"] == snapshot["snapshot_id"]
         )
@@ -217,8 +244,9 @@ def update_creator_outcome_snapshot(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     project_id = _validated_project_id(project_id, ErrorCode.OUTCOME_NOT_READY)
     snapshot_id = _validated_snapshot_id(snapshot_id)
+    storage_context = resolve_current_iteration_context(project_id)
     normalized_changes = normalize_outcome_metric_changes(metric_changes)
-    path = creator_outcome_timeline_path(project_id)
+    path = creator_outcome_timeline_path(project_id, storage_context=storage_context)
     with _OUTCOME_LOCK:
         current = _load_outcome_file(path, project_id)
         found = False
@@ -244,14 +272,23 @@ def update_creator_outcome_snapshot(
             },
             expected_project_id=project_id,
         )
-        _write_json_atomic(path, updated)
+        with iteration_write_lock():
+            assert_iteration_context_current(storage_context)
+            _write_json_atomic(path, updated)
         corrected = next(item for item in updated["snapshots"] if item["snapshot_id"] == snapshot_id)
         return corrected, updated
 
 
-def creator_outcome_timeline_path(project_id: str) -> Path:
+def creator_outcome_timeline_path(
+    project_id: str,
+    *,
+    storage_context: IterationStorageContext | None = None,
+) -> Path:
     project_id = _validated_project_id(project_id, ErrorCode.OUTCOME_NOT_READY)
-    return settings.creator_clones_dir / project_id / OUTCOME_TIMELINE_FILENAME
+    context = storage_context or resolve_current_iteration_context(project_id)
+    if context.project_id != project_id:
+        raise AppError(ErrorCode.ITERATION_CONTEXT_CHANGED)
+    return iteration_artifact_path(context, OUTCOME_TIMELINE_FILENAME)
 
 
 def validate_creator_outcome_timeline(
@@ -497,9 +534,14 @@ def _outcome_summary(snapshots: list[dict[str, Any]], expected_metric: str) -> d
     }
 
 
-def _expected_metric_for_record(project_id: str, record: dict[str, Any]) -> tuple[str, list[str]]:
+def _expected_metric_for_record(
+    project_id: str,
+    record: dict[str, Any],
+    *,
+    storage_context: IterationStorageContext,
+) -> tuple[str, list[str]]:
     try:
-        execution_pack = load_creator_execution_pack(project_id)
+        execution_pack = _load_execution_pack_for_context(project_id, storage_context)
     except AppError:
         return "", ["execution_pack_unavailable_for_expected_metric"]
     pack_matches = (
@@ -510,6 +552,24 @@ def _expected_metric_for_record(project_id: str, record: dict[str, Any]) -> tupl
         return "", ["execution_pack_changed_since_record"]
     topic = execution_pack.get("topic") if isinstance(execution_pack.get("topic"), dict) else {}
     return _safe_text(topic.get("expected_metric"), 240), []
+
+
+def _load_execution_pack_for_context(
+    project_id: str,
+    storage_context: IterationStorageContext,
+) -> dict[str, Any]:
+    if load_creator_execution_pack is _DEFAULT_EXECUTION_PACK_LOADER:
+        return load_creator_execution_pack(project_id, storage_context=storage_context)
+    return load_creator_execution_pack(project_id)
+
+
+def _load_execution_record_for_context(
+    project_id: str,
+    storage_context: IterationStorageContext,
+) -> dict[str, Any]:
+    if load_creator_execution_record is _DEFAULT_EXECUTION_RECORD_LOADER:
+        return load_creator_execution_record(project_id, storage_context=storage_context)
+    return load_creator_execution_record(project_id)
 
 
 def _load_outcome_file(path: Path, project_id: str) -> dict[str, Any]:

@@ -14,6 +14,13 @@ from app.errors import AppError, ErrorCode
 from app.services.creator_clone import CloneSample, CloneSampleSet, creator_clone_dir, load_sample_set
 from app.services.creator_intelligence.generator import validate_creator_strategy_plan
 from app.services.creator_intelligence.llm_execution import LLMExecutionEngine
+from app.services.creator_intelligence.iteration_storage import (
+    IterationStorageContext,
+    assert_iteration_context_current,
+    iteration_artifact_path,
+    iteration_write_lock,
+    resolve_current_iteration_context,
+)
 from app.services.llm_budget import DistillDeadline
 from app.services.llm_provider import BaseLLMProvider, get_llm_provider
 from app.services.runtime_settings import effective_llm_settings
@@ -112,6 +119,7 @@ def generate_creator_execution_pack(
     provider: BaseLLMProvider | None = None,
 ) -> dict[str, Any]:
     project_id = _validated_project_id(project_id, ErrorCode.CREATOR_REPORT_NOT_READY)
+    storage_context = resolve_current_iteration_context(project_id)
     sample_set, report, strategy_plan = _load_generation_inputs(project_id)
     topics = strategy_plan["next_topics"]
     if not isinstance(topic_index, int) or isinstance(topic_index, bool) or topic_index < 0 or topic_index >= len(topics):
@@ -194,14 +202,23 @@ def generate_creator_execution_pack(
         pack = validate_creator_execution_pack(result.payload, context=final_context)
     except ValueError as error:
         raise AppError(ErrorCode.LLM_RESPONSE_INVALID, str(error)[:240]) from error
-    _write_json_atomic(execution_pack_path(project_id), pack)
+    with iteration_write_lock():
+        assert_iteration_context_current(storage_context)
+        _write_json_atomic(
+            execution_pack_path(project_id, storage_context=storage_context),
+            pack,
+        )
     return pack
 
 
-def load_creator_execution_pack(project_id: str) -> dict[str, Any]:
+def load_creator_execution_pack(
+    project_id: str,
+    *,
+    storage_context: IterationStorageContext | None = None,
+) -> dict[str, Any]:
     project_id = _validated_project_id(project_id, ErrorCode.EXECUTION_PACK_NOT_READY)
     sample_set = load_sample_set(project_id)
-    path = execution_pack_path(project_id)
+    path = execution_pack_path(project_id, storage_context=storage_context)
     if not path.is_file():
         raise AppError(ErrorCode.EXECUTION_PACK_NOT_READY)
     payload = _read_json_object(path, ErrorCode.EXECUTION_PACK_NOT_READY)
@@ -229,8 +246,16 @@ def load_creator_execution_pack(project_id: str) -> dict[str, Any]:
         raise AppError(ErrorCode.EXECUTION_PACK_NOT_READY) from error
 
 
-def execution_pack_path(project_id: str) -> Path:
-    return creator_clone_dir(project_id) / EXECUTION_PACK_FILENAME
+def execution_pack_path(
+    project_id: str,
+    *,
+    storage_context: IterationStorageContext | None = None,
+) -> Path:
+    project_id = _validated_project_id(project_id, ErrorCode.EXECUTION_PACK_NOT_READY)
+    context = storage_context or resolve_current_iteration_context(project_id)
+    if context.project_id != project_id:
+        raise AppError(ErrorCode.ITERATION_CONTEXT_CHANGED)
+    return iteration_artifact_path(context, EXECUTION_PACK_FILENAME)
 
 
 def validate_creator_execution_pack(

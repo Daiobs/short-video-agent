@@ -7479,3 +7479,209 @@ footer {
         grid-column: auto;
     }
 }
+
+.creator-iteration-card {
+    min-width: 0;
+    margin-bottom: 18px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid rgba(37, 99, 235, 0.16);
+}
+
+.creator-iteration-overview,
+.creator-iteration-current,
+.creator-iteration-detail-card {
+    display: grid;
+    min-width: 0;
+    gap: 12px;
+}
+
+.creator-iteration-current-heading,
+.creator-iteration-history-heading {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.creator-iteration-current-heading h4,
+.creator-iteration-history-heading strong {
+    margin: 4px 0 0;
+    overflow-wrap: anywhere;
+}
+
+.creator-iteration-current-facts,
+.creator-iteration-history-facts,
+.iteration-readonly-facts {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+}
+
+.creator-iteration-current-facts > div,
+.creator-iteration-history-facts > div,
+.iteration-readonly-facts > div {
+    min-width: 0;
+    padding: 9px 10px;
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    border-radius: 6px;
+    background: #fff;
+}
+
+.creator-iteration-current-facts span,
+.creator-iteration-history-facts dt,
+.iteration-readonly-facts dt {
+    display: block;
+    color: var(--muted, #6b7280);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.creator-iteration-current-facts strong,
+.creator-iteration-history-facts dd,
+.iteration-readonly-facts dd {
+    display: block;
+    min-width: 0;
+    margin: 4px 0 0;
+    overflow-wrap: anywhere;
+}
+
+.creator-iteration-start-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
+    gap: 10px;
+    align-items: end;
+    padding: 12px;
+    border: 1px solid rgba(37, 99, 235, 0.16);
+    border-radius: 8px;
+    background: #f8fbff;
+}
+
+.creator-iteration-start-controls > p {
+    grid-column: 1 / 3;
+    align-self: center;
+    margin: 0;
+}
+
+.creator-iteration-start-controls label {
+    display: grid;
+    min-width: 0;
+    gap: 5px;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.creator-iteration-start-controls select,
+.creator-iteration-start-controls input {
+    width: 100%;
+    min-width: 0;
+}
+
+.creator-iteration-history {
+    min-width: 0;
+    padding-top: 2px;
+}
+
+.creator-iteration-history > summary {
+    color: #1e3a8a;
+    cursor: pointer;
+    font-weight: 800;
+}
+
+.creator-iteration-history > ol {
+    display: grid;
+    gap: 10px;
+    margin: 12px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.creator-iteration-history-item {
+    display: grid;
+    min-width: 0;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid rgba(15, 23, 42, 0.11);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.creator-iteration-history-item.is-current {
+    border-color: rgba(37, 99, 235, 0.35);
+    background: #f8fbff;
+}
+
+.creator-iteration-history-item p {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.creator-iteration-history-facts {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.creator-iteration-detail {
+    min-width: 0;
+    margin-top: 14px;
+}
+
+.creator-iteration-detail-card {
+    padding: 14px;
+    border: 1px solid rgba(37, 99, 235, 0.2);
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.creator-iteration-artifact {
+    min-width: 0;
+    padding-top: 12px;
+    border-top: 1px solid rgba(15, 23, 42, 0.1);
+}
+
+.creator-iteration-artifact > h5 {
+    margin: 0 0 10px;
+}
+
+.creator-iteration-artifact button,
+.creator-iteration-artifact input,
+.creator-iteration-artifact select,
+.creator-iteration-artifact textarea {
+    display: none !important;
+}
+
+@media (max-width: 820px) {
+    .creator-iteration-current-facts,
+    .creator-iteration-history-facts,
+    .iteration-readonly-facts {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .creator-iteration-start-controls {
+        grid-template-columns: 1fr;
+    }
+
+    .creator-iteration-start-controls > p {
+        grid-column: auto;
+    }
+}
+
+@media (max-width: 480px) {
+    .creator-iteration-current-heading,
+    .creator-iteration-history-heading {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .creator-iteration-current-heading .status-badge,
+    .creator-iteration-history-heading button {
+        width: 100%;
+    }
+
+    .creator-iteration-current-facts,
+    .creator-iteration-history-facts,
+    .iteration-readonly-facts {
+        grid-template-columns: 1fr;
+    }
+}

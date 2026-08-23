@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>short-video-agent</title>
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
 </head>
 <body data-profile-build-max-items="{{ profile_build_max_items }}" data-creator-clone-max-distill-samples="{{ creator_clone_max_distill_samples }}">
@@ -787,6 +788,9 @@ https://v.douyin.com/xxxxxx/
                 </div>
                 <div id="creator-clone-result" class="creator-clone-result"></div>
                 <section class="creator-strategy-plan-card hidden" id="creator-strategy-plan-card">
+                    <section id="creator-iteration-card" class="creator-iteration-card" aria-live="polite">
+                        <div class="creator-iteration-loading muted">正在读取创作迭代...</div>
+                    </section>
                     <div class="profile-card-heading">
                         <div>
                             <span class="entry-label">Generate</span>
@@ -877,6 +881,7 @@ https://v.douyin.com/xxxxxx/
 <script src="/static/modules/creator-execution-pack.js?v={{ static_version }}"></script>
 <script src="/static/modules/creator-execution-record.js?v={{ static_version }}"></script>
 <script src="/static/modules/creator-outcome-snapshot.js?v={{ static_version }}"></script>
+<script src="/static/modules/creator-iteration-history.js?v={{ static_version }}"></script>
 <script src="/static/modules/settings-panel.js?v={{ static_version }}"></script>
 <script src="/static/modules/representative-sample-selector.js?v={{ static_version }}"></script>
 <script src="/static/app.js?v={{ static_version }}"></script>

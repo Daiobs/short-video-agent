@@ -183,6 +183,40 @@
     `;
   }
 
+  function historyItemReadOnly(snapshotValue) {
+    const snapshot = objectValue(snapshotValue);
+    const metrics = objectValue(snapshot.metrics);
+    const derived = objectValue(snapshot.derived);
+    const delta = objectValue(derived.delta_from_previous);
+    return `
+      <li class="creator-outcome-history-item" data-outcome-snapshot-id="${escapeHtml(snapshot.snapshot_id || "")}">
+        <div class="creator-outcome-history-heading">
+          <strong>${escapeHtml(snapshot.captured_at || "未知时间")}</strong>
+          <span class="muted">人工记录</span>
+        </div>
+        <dl class="creator-outcome-history-metrics">
+          ${METRIC_FIELDS.map((field) => `
+            <div><dt>${METRIC_LABELS[field]}</dt><dd>${formatMetric(metrics[field])}${formatDelta(delta[field]) ? `<small>${formatDelta(delta[field])}</small>` : ""}</dd></div>
+          `).join("")}
+        </dl>
+      </li>
+    `;
+  }
+
+  function publicationSummary(publicationValue = {}) {
+    const publication = objectValue(publicationValue);
+    return `
+      <section class="creator-outcome-publication creator-outcome-publication-readonly">
+        <div class="profile-card-heading"><div><span class="entry-label">Publication</span><h5>作品信息</h5></div></div>
+        <dl class="iteration-readonly-facts">
+          <div><dt>平台</dt><dd>${escapeHtml(PLATFORM_LABELS[publication.platform] || publication.platform || "—")}</dd></div>
+          <div><dt>作品 ID</dt><dd>${escapeHtml(publication.platform_item_id || "—")}</dd></div>
+          <div><dt>发布时间</dt><dd>${escapeHtml(publication.published_at || "—")}</dd></div>
+        </dl>
+      </section>
+    `;
+  }
+
   function renderPublicationOnly() {
     return `
       <div class="creator-outcome" data-outcome-state="publication">
@@ -199,18 +233,19 @@
     `;
   }
 
-  function renderOutcome(outcomeValue) {
+  function renderOutcome(outcomeValue, options = {}) {
     const outcome = objectValue(outcomeValue);
     const snapshots = listValue(outcome.snapshots).slice().reverse();
+    const readOnly = options.readOnly === true;
     return `
       <div class="creator-outcome" data-outcome-state="ready" data-outcome-version="${escapeHtml(outcome.version || "1.0")}">
-        ${publicationForm(outcome.publication)}
+        ${readOnly ? publicationSummary(outcome.publication) : publicationForm(outcome.publication)}
         <section class="creator-outcome-expectation">
           <span>预期关注指标</span>
           <strong>${escapeHtml(outcome.expected_metric || "未绑定")}</strong>
         </section>
         ${latestMetrics(outcome)}
-        <section class="creator-outcome-new-snapshot">
+        ${readOnly ? "" : `<section class="creator-outcome-new-snapshot">
           <div class="profile-card-heading">
             <div>
               <span class="entry-label">Measure</span>
@@ -220,7 +255,7 @@
           </div>
           <div class="creator-outcome-snapshot-grid">${metricInputs("new")}</div>
           <button type="button" data-outcome-action="add-snapshot">记录当前数据</button>
-        </section>
+        </section>`}
         <section class="creator-outcome-history">
           <div class="profile-card-heading">
             <div>
@@ -228,7 +263,7 @@
               <h5>数据快照历史</h5>
             </div>
           </div>
-          ${snapshots.length ? `<ol>${snapshots.map(historyItem).join("")}</ol>` : '<p class="muted">还没有数据快照。</p>'}
+          ${snapshots.length ? `<ol>${snapshots.map(readOnly ? historyItemReadOnly : historyItem).join("")}</ol>` : '<p class="muted">还没有数据快照。</p>'}
         </section>
       </div>
     `;

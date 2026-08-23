@@ -168,15 +168,22 @@ opportunity.
 
 ## Persistence
 
-Successful generation writes:
+Without an iteration index, successful generation keeps the legacy path:
 
 ```text
 outputs/creator_clones/{project_id}/creator_execution_pack.json
 ```
 
+After the user starts a new iteration, the current Pack is stored at:
+
+```text
+outputs/creator_clones/{project_id}/iterations/{iteration_id}/creator_execution_pack.json
+```
+
 The file is UTF-8 JSON, atomically replaced with `os.replace`, and is fully
-rebuildable from upstream assets plus a new user-triggered LLM call. v1 stores
-only the current pack; regeneration safely overwrites it and does not modify:
+rebuildable from upstream assets plus a new user-triggered LLM call. Each
+iteration stores one current Pack; regeneration safely overwrites that Pack and
+does not modify:
 
 - `samples.json`;
 - `creator_clone_result.json`;
@@ -226,7 +233,9 @@ brief.
   matches, but v1 does not fingerprint every upstream field. A regenerated
   plan with the same title at the same index should still be followed by an
   explicit Execution Pack regeneration.
-- v1 retains only the latest Execution Pack and has no history browser.
+- One Execution Pack is current per Creator iteration. Creator Iteration History
+  preserves closed rounds and exposes their Pack through a read-only history
+  browser without changing the `CreatorExecutionPackV1` schema.
 - Evidence matching is exact and intentionally conservative; paraphrased model
   references may be dropped even when semantically similar.
 - The feature depends on the configured OpenAI-compatible provider and does not
