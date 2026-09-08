@@ -99,6 +99,28 @@ def resolve_analysis_focus(metadata: dict, analysis_input: dict, requested: str 
             "questions": list(QUESTIONS[primary]), "section_order": SECTION_ORDER.get(primary, ["first_3_seconds", "script_structure", "visual_analysis", "replication"])}
 
 
+def comment_evidence_text(value, *, semantic_field: bool = False) -> str:
+    """Read comment semantics, never counts, status, provenance or manual notes."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        try:
+            decoded = json.loads(text)
+        except (ValueError, TypeError):
+            # Broken/stringified containers are not a comment transcript.
+            return "" if not semantic_field and text.startswith(("{", "[", '"')) else text
+        return comment_evidence_text(decoded, semantic_field=semantic_field)
+    if isinstance(value, list):
+        return "\n".join(filter(None, (comment_evidence_text(item, semantic_field=semantic_field) for item in value)))
+    if isinstance(value, dict):
+        return "\n".join(filter(None, (comment_evidence_text(value.get(key), semantic_field=True) for key in (
+            "text", "full_text", "summary", "top_comments", "high_frequency_words",
+            "top_needs", "comment_hooks",
+        ))))
+    return ""
+
+
 def request_evidence(analysis_input: dict, image_paths: list[Path]) -> dict:
     enrichment = analysis_input.get("analysis_enrichment") or {}
     manifest = {"images": [Path(path).name for path in image_paths], "visual_available": bool(image_paths)}
@@ -113,6 +135,13 @@ def request_evidence(analysis_input: dict, image_paths: list[Path]) -> dict:
         manifest[key] = {"status": status, "text_state": state, "submitted": bool(text), "refs": [key] if text else []}
         if text:
             refs.append(key)
+    comment_source = "comment_summary" if "comment_summary" in analysis_input else "analysis_enrichment.comments"
+    comments = analysis_input.get("comment_summary") if "comment_summary" in analysis_input else enrichment.get("comments")
+    submitted_comments = bool(comment_evidence_text(comments, semantic_field=comment_source == "comment_summary"))
+    manifest["comments"] = {"submitted": submitted_comments, "source": comment_source,
+                            "refs": ["comments"] if submitted_comments else []}
+    if submitted_comments:
+        refs.append("comments")
     manifest["valid_refs"] = refs + ["metadata"]
     return manifest
 
@@ -128,6 +157,7 @@ def focus_prompt(focus: dict, evidence: dict | None = None, compact: bool = Fals
         "题材、主要表达方式、用户研究视角应分开。自动模式可在本次回答 category_review={suggested_category,reason} 复核初判；建议不覆盖用户选择，不触发新请求。",
         "可选 focused_analysis=[{question,observation,interpretation,transfer,evidence:[引用ID],uncertainty}]；观察、解释、可迁移方法和不确定性分开。",
         "ASR未运行、失败或空文本均不能证明没有口播；OCR不等于口播原话。未发送的图片不能声称看过。静态帧不能证明连续运镜、卡点、音乐节拍，不发明时间戳。",
+        "评论引用 ID 为 comments，仅在 valid_refs 包含它时使用；只依据本次发送的评论摘要，不推断截断部分。评论是用户/平台观察，不能证明因果、留存或转化；人工备注不是平台评论或已核验事实。",
         "已有材料不足只限制相关结论，不必让整份分析失败。标题不是画面事实，不编造互动率、留存率或转化率。",
         "本次输入证据：" + json.dumps(evidence or {"status": "由实际调用路径声明；不要把素材包存在当成已经发送"}, ensure_ascii=False),
     ])

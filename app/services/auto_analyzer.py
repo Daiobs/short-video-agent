@@ -11,6 +11,7 @@ from app.errors import AppError, ErrorCode, is_retryable_llm_error
 from app.models import CaseArtifact
 from app.services.analysis_taxonomy import build_analysis_context
 from app.services.content_analysis import (
+    comment_evidence_text,
     focus_prompt,
     normalize_focused_analysis,
     request_evidence,
@@ -1229,7 +1230,7 @@ def _fast_prompt_payload(
                    for key in ("cover_text", "subtitle_text", "frame_text")},
             },
         },
-        "comment_summary": _truncate_text(json.dumps(enrichment.get("comments") or {}, ensure_ascii=False), 600),
+        "comment_summary": _truncate_text(comment_evidence_text(enrichment.get("comments")), 600),
         "manual_notes": _truncate_text(json.dumps(manual_review or {}, ensure_ascii=False), 600),
     }
 
@@ -1520,6 +1521,12 @@ def _normalize_result(
         normalized["content_category"] = focus["primary"]
         normalized["content_category_label"] = focus["label"]
     analysis_input = {**analysis_input, **analysis_input.get("_submitted_input", {})}
+    if manifest is not None and "comments" in manifest:
+        enrichment = dict(analysis_input.get("analysis_enrichment") or {})
+        comments = enrichment.get("comments")
+        if not isinstance(comments, dict):
+            enrichment["comments"] = {"summary": comment_evidence_text(comments)}
+        analysis_input = {**analysis_input, "analysis_enrichment": enrichment}
     normalized.setdefault("summary", "")
     normalized.setdefault("content_category", analysis_input.get("content_category") or analysis_context.get("category_id") or "generic")
     normalized.setdefault(
@@ -2330,9 +2337,12 @@ def _analysis_quality_review(result: dict) -> dict:
             "details": publish_issues[:8],
         },
     ]
-    if isinstance(result.get("analysis_focus"), dict) and result["analysis_focus"].get("version") == 1:
+    focused = isinstance(result.get("analysis_focus"), dict) and result["analysis_focus"].get("version") == 1
+    if focused:
         checks = _focused_quality_checks(result, checks)
-    score = sum(check["weight"] for check in checks if check["passed"])
+    score = _applicable_quality_score(checks) if focused else sum(
+        check["weight"] for check in checks if check["passed"]
+    )
     gaps = [check for check in checks if not check["passed"]]
     has_visual_input_gap = any(gap["id"] == "visual_input" for gap in gaps)
     if score >= 85 and not gaps:
@@ -2355,6 +2365,11 @@ def _analysis_quality_review(result: dict) -> dict:
         level = "weak"
         label = "拆解质量不足"
         summary = "报告缺少多项核心内容，不建议直接作为复刻依据。"
+    if focused:
+        summary = (
+            "适用项结构与完成度检查已通过。"
+            if level == "strong" else "适用项结构与完成度仍需结合检查缺口复核。"
+        ) + "质量分按适用项权重归一化，不代表事实准确率或已完成事实核验。"
     return {
         "score": score,
         "max_score": 100,
@@ -2365,6 +2380,13 @@ def _analysis_quality_review(result: dict) -> dict:
         "gaps": gaps,
         "next_actions": [gap["action"] for gap in gaps[:4]],
     }
+
+
+def _applicable_quality_score(checks: list[dict]) -> int:
+    applicable = [check for check in checks if check.get("applicable", True) and check["weight"] > 0]
+    total = sum(check["weight"] for check in applicable)
+    earned = sum(check["weight"] for check in applicable if check["passed"])
+    return int(round(100 * earned / total)) if total else 0
 
 
 def _focused_quality_checks(result: dict, checks: list[dict]) -> list[dict]:
@@ -2455,6 +2477,19 @@ def _focused_quality_checks(result: dict, checks: list[dict]) -> list[dict]:
                      "passed": not unsupported, "details": unsupported,
                      "message": "检查核心模块是否使用未发送的模态，不等于事实语义验证。",
                      "action": "删除没有输入依据的画面或口播事实声明，将待确认假设写入不确定性。"})
+    invalid_refs = []
+    valid_refs = manifest.get("valid_refs") or []
+    for index, row in enumerate(rows):
+        references = row.get("evidence") or []
+        # Normalization removes invalid IDs but preserves this review marker.
+        if (not isinstance(references, list)
+                or any(not isinstance(ref, str) or ref not in valid_refs for ref in references)
+                or "存在无法定位的引用，已移除" in str(row.get("uncertainty") or "")):
+            invalid_refs.append(f"focused_analysis[{index}]：存在无法定位的引用，需复核观察依据。")
+    retained.append({"id": "focused_evidence_refs", "label": "类型重点引用", "weight": 0,
+                     "passed": not invalid_refs, "details": invalid_refs,
+                     "message": "引用应能对应本次实际发送的证据；移除非法引用后仍需复核结论。",
+                     "action": "核对类型重点的引用与观察，仅使用本次 valid_refs 内的证据。"})
     return retained
 
 
@@ -2508,9 +2543,23 @@ def _evidence_source_available(key: str, analysis_input: dict) -> bool:
         ocr = enrichment.get("ocr") or {}
         return any(_has_text(ocr.get(field)) for field in ("cover_text", "subtitle_text", "frame_text"))
     if key == "comment_evidence":
+        submitted = _submitted_comment_text(analysis_input)
+        if submitted is not None:
+            return bool(submitted)
         comments = enrichment.get("comments") or {}
         return any(_has_items(comments.get(field)) for field in ("top_needs", "high_frequency_words", "comment_hooks"))
     return True
+
+
+def _submitted_comment_text(analysis_input: dict) -> str | None:
+    manifest = analysis_input.get("_request_evidence") or {}
+    if "comments" not in manifest:
+        return None  # Preserve historical evidence handling without a request manifest.
+    if not manifest["comments"].get("submitted"):
+        return ""
+    payload = analysis_input.get("_submitted_input") or analysis_input
+    value = payload.get("comment_summary") if "comment_summary" in payload else (payload.get("analysis_enrichment") or {}).get("comments")
+    return comment_evidence_text(value, semantic_field="comment_summary" in payload)
 
 
 def _coerce_evidence_items(value, default_claim: str) -> list[dict]:
@@ -2624,7 +2673,14 @@ def _default_evidence_summary(analysis_input: dict, visual_input_mode: str) -> d
         evidence_gaps.append("未提供 OCR 文字，封面字和字幕结构需要人工复核。")
 
     comment_evidence = []
-    if int(comments.get("total_comments") or 0):
+    submitted_comments = _submitted_comment_text(analysis_input)
+    if submitted_comments is not None:
+        if submitted_comments:
+            comment_evidence.append({"claim": "已提交评论摘要（观察资料，非因果证明）",
+                                     "evidence": _truncate(submitted_comments, 180), "confidence": "low"})
+        else:
+            evidence_gaps.append("本次未提交有效评论内容，用户反馈仍需确认。")
+    elif int(comments.get("total_comments") or 0):
         comment_bits = []
         top_needs = _coerce_list(comments.get("top_needs"))
         high_frequency_words = _coerce_list(comments.get("high_frequency_words"))
@@ -2667,6 +2723,9 @@ def _default_enrichment_usage(analysis_input: dict) -> dict:
     comment_summary_used = any(
         _has_items(comments.get(key)) for key in ("top_needs", "high_frequency_words", "comment_hooks")
     )
+    submitted_comments = _submitted_comment_text(analysis_input)
+    if submitted_comments is not None:
+        comment_summary_used = bool(submitted_comments)
     notes = []
     if str(asr.get("status") or "") == "no_speech":
         notes.append("ASR 已检测，未发现可转写语音；本条按画面、音乐和动作拆解。")
@@ -2709,6 +2768,7 @@ def _build_enrichment_coverage(result: dict, analysis_input: dict) -> dict:
     enrichment = analysis_input.get("analysis_enrichment") or {}
     evidence = result.get("evidence_summary") or {}
     usage = result.get("enrichment_usage") or {}
+    submitted_comments = _submitted_comment_text(analysis_input)
     items = {
         "asr": _coverage_item(
             label="语音 / ASR",
@@ -2750,7 +2810,7 @@ def _build_enrichment_coverage(result: dict, analysis_input: dict) -> dict:
         "comments": _coverage_item(
             label="评论反馈",
             status=str((enrichment.get("comments") or {}).get("status") or "pending"),
-            signal_available=any(
+            signal_available=bool(submitted_comments) if submitted_comments is not None else any(
                 _has_items((enrichment.get("comments") or {}).get(key))
                 for key in ("top_needs", "high_frequency_words", "comment_hooks", "top_comments")
             ),
@@ -2767,10 +2827,10 @@ def _build_enrichment_coverage(result: dict, analysis_input: dict) -> dict:
             empty_result_message="已导入评论但摘要为空；请重新导入更有代表性的高赞或典型评论。",
             action="导入高赞/典型评论后重跑，让 audience_needs、comment_triggers、replicable_interaction_design 有真实评论依据。",
             empty_result=bool(int((enrichment.get("comments") or {}).get("total_comments") or 0))
-            and not any(
+            and not (bool(submitted_comments) if submitted_comments is not None else any(
                 _has_items((enrichment.get("comments") or {}).get(key))
                 for key in ("top_needs", "high_frequency_words", "comment_hooks", "top_comments")
-            ),
+            )),
         ),
     }
     blocking = [item for item in items.values() if item["verdict"] in _coverage_blocking_verdicts()]
