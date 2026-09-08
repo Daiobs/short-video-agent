@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import re
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,7 @@ ANALYSIS_PROFILES: tuple[AnalysisProfile, ...] = (
         prompt_focus=(
             "把 0-3 秒逐帧拆成第一眼吸引点、人物动作和表情变化。",
             "判断妆造、服装、背景、光线和镜头角度如何共同塑造人设。",
-            "输出一个适合 COS / 甜美账号复刻的安全改编方案。",
+            "输出符合用户账号定位的可迁移拍摄或动作方案，不预设改编对象。",
         ),
     ),
     AnalysisProfile(
@@ -282,6 +283,13 @@ ANALYSIS_PROFILES: tuple[AnalysisProfile, ...] = (
 )
 
 
+# Reuse the existing Creator photography direction without merging it into beauty.
+ANALYSIS_PROFILES += (replace(
+    next(profile for profile in ANALYSIS_PROFILES if profile.category_id == "tutorial"),
+    category_id="photo_beauty", label="摄影美拍 / 出片教程",
+    description="重点分析成片承诺、机位光线、拍摄过程和结果证明。",
+    keywords=("出片", "摄影", "机位", "拍摄教程"),
+),)
 PROFILE_MAP = {profile.category_id: profile for profile in ANALYSIS_PROFILES}
 DEFAULT_CATEGORY = "generic"
 
@@ -349,15 +357,26 @@ def build_analysis_context(category_id: str) -> dict:
         "description": profile.description,
         "analysis_lens": list(profile.analysis_lens),
         "key_questions": list(profile.key_questions),
-        "content_ratio": list(profile.content_ratio),
+        "content_ratio": [],
+        "attention_priorities": [
+            ("重点关注：" if index < 2 else "辅助关注：") + re.sub(r"\s*\d+%", "", value)
+            for index, value in enumerate(profile.content_ratio)
+        ],
         "prompt_focus": list(profile.prompt_focus),
     }
 
 
 def build_prompt(metadata: dict, ffprobe: dict, analysis_context: dict) -> str:
+    from app.services.content_analysis import focus_prompt, resolve_analysis_focus, safe_analysis_text
+
+    metadata = {key: safe_analysis_text(value) if isinstance(value, str) else value for key, value in metadata.items()}
+    focus_context = analysis_context.get("analysis_focus")
+    if not isinstance(focus_context, dict):
+        focus_context = resolve_analysis_focus(metadata, {"content_category": analysis_context.get("category_id")})
+    direction = focus_prompt(focus_context)
     lens = "\n".join(f"* {item}" for item in analysis_context.get("analysis_lens", []))
     questions = "\n".join(f"* {item}" for item in analysis_context.get("key_questions", []))
-    ratios = "\n".join(f"* {item}" for item in analysis_context.get("content_ratio", []))
+    priorities = "\n".join(f"* {item}" for item in analysis_context.get("attention_priorities", []))
     prompt_focus = "\n".join(f"* {item}" for item in analysis_context.get("prompt_focus", []))
     focus = "\n".join(f"* {item}" for item in BASE_ANALYSIS_FOCUS)
 
@@ -386,11 +405,13 @@ def build_prompt(metadata: dict, ffprobe: dict, analysis_context: dict) -> str:
 
 {lens}
 
-## 3. 内容占比判断
+{direction}
 
-请按以下维度估算这条视频的内容占比，并说明判断依据：
+## 3. 分析关注重点
 
-{ratios}
+按材料选择重点关注与辅助关注，不按预设百分比填充结论：
+
+{priorities}
 
 ## 4. 关键问题
 
@@ -398,7 +419,7 @@ def build_prompt(metadata: dict, ffprobe: dict, analysis_context: dict) -> str:
 
 ## 5. 前 3 秒钩子分析
 
-请结合 0s、1s、2s、3s 关键帧分析：
+仅结合实际提供且有时间标记的开头关键帧分析，不发明缺失时间点：
 
 * 第一眼看到什么；
 * 信息是否足够明确；

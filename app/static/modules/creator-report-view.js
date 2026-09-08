@@ -14,6 +14,88 @@
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   }
 
+  function hasContent(value) {
+    if (Array.isArray(value)) return value.some(hasContent);
+    if (value && typeof value === "object") return Object.values(value).some(hasContent);
+    return value !== null && value !== undefined && String(value).trim() !== "";
+  }
+
+  function renderValue(value) {
+    if (!hasContent(value)) return "";
+    if (Array.isArray(value)) return `<ul class="public-report-list">${value.filter(hasContent).map((item) => `<li>${renderValue(item)}</li>`).join("")}</ul>`;
+    const labels = {
+      subject: "主体", composition: "构图", lighting_color: "光线色彩", scene: "场景",
+      movement_rhythm: "动作变化", style_keywords: "风格", first_impression: "第一眼",
+      why_stop_scrolling: "停留理由", optimization: "优化方向", first_3_seconds: "开头观察",
+      script_structure: "表达结构", opening_line: "开头一句", spoken_hook: "口播吸引点",
+      has_speech: "口播判断", quotable_lines: "关键表达", remake_angle: "改编角度",
+      copyable_points: "可迁移做法", avoid_copying: "不要照搬", opening_3s: "开头设计",
+      shot_table: "拍摄方案", caption: "文案", titles: "标题", hashtags: "标签",
+      visual_style: "视觉风格", shot_types: "景别", scene_order: "呈现顺序",
+      opening_hooks: "开头结构", ending_patterns: "结尾方式", subtitle_voice: "字幕与声音",
+      assumptions: "观众假设", tension_sources: "张力来源", detail_selection_rules: "细节选择",
+      novelty_vs_familiarity: "熟悉与新鲜感", audience_promise: "观众承诺",
+      what_the_creator_sells: "账号定位", hidden_genre: "表达类型", audience_assumption: "观众假设",
+    };
+    if (value && typeof value === "object") return `<dl class="public-report-fields">${Object.entries(value).filter(([, item]) => hasContent(item)).map(([key, item]) => `<dt>${escapeHtml(labels[key] || key)}</dt><dd>${renderValue(item)}</dd>`).join("")}</dl>`;
+    return escapeHtml(value);
+  }
+
+  function renderFocus(result) {
+    const focus = objectValue(result.analysis_focus);
+    const review = objectValue(result.category_review);
+    const hasFocus = hasContent(focus.primary) || hasContent(focus.label);
+    const hasReview = hasContent(review.suggested_category) || hasContent(review.reason);
+    if (!hasFocus && !hasReview) return "";
+    const labels = {
+      auto: "自动判断", beauty_cos: "美拍 / COS / 颜值", photo_beauty: "摄影美拍 / 出片教程",
+      tutorial: "步骤教程", knowledge: "知识 / 观点", motivational: "情绪文案",
+      emotional_copy: "情绪文案", plot_twist: "剧情 / 反转", story_twist: "剧情 / 反转",
+      product_seed: "种草 / 带货", commerce_seed: "种草 / 带货",
+      edge_visual: "视觉吸引", generic: "通用短视频", general: "通用短视频",
+    };
+    const directionLabel = (value) => Array.isArray(value)
+      ? value.map(directionLabel)
+      : typeof value === "string" && Object.hasOwn(labels, value) ? labels[value] : value;
+    const sources = {auto: "自动判断", user: "用户指定", legacy: "历史报告，来源未记录"};
+    return `<section class="analysis-focus" style="min-width:0;overflow-wrap:anywhere" aria-label="本次分析重点">
+      ${hasFocus ? `<h4>本次分析重点：${escapeHtml(focus.label || directionLabel(focus.primary))}</h4>
+      <p>${escapeHtml(sources[focus.source] || "来源未记录")}</p>` : ""}
+      ${hasContent(focus.reason) ? `<p>判断依据：${renderValue(focus.reason)}</p>` : ""}
+      ${hasContent(focus.initial_category) ? `<p>自动初判：${renderValue(directionLabel(focus.initial_category))}</p>` : ""}
+      ${hasContent(focus.auxiliary) ? `<details><summary>辅助视角</summary>${renderValue(directionLabel(focus.auxiliary))}</details>` : ""}
+      ${hasReview ? `<section aria-label="模型复核建议"><h4>模型复核建议（未自动切换）</h4>
+        ${hasContent(review.suggested_category) ? `<p>建议方向：${renderValue(directionLabel(review.suggested_category))}</p>` : ""}
+        ${hasContent(review.reason) ? `<p>复核依据：${renderValue(review.reason)}</p>` : ""}
+        <p>此建议不改变本次报告采用的方向，也不会自动重新分析。</p></section>` : ""}
+    </section>`;
+  }
+
+  function renderFocusedAnalysis(items) {
+    if (!Array.isArray(items)) return "";
+    return items.map(objectValue).filter((item) => [item.observation, item.interpretation, item.transfer, item.evidence, item.uncertainty].some(hasContent)).map((item) => `
+      <section style="min-width:0;overflow-wrap:anywhere">
+        ${hasContent(item.question) ? `<h4>${escapeHtml(item.question)}</h4>` : ""}
+        <dl class="public-report-fields">${[["观察", item.observation], ["解释", item.interpretation], ["可迁移方法", item.transfer], ["支持证据", item.evidence], ["尚不能确认", item.uncertainty]].filter(([, value]) => hasContent(value)).map(([label, value]) => `<dt>${label}</dt><dd>${renderValue(value)}</dd>`).join("")}</dl>
+      </section>`).join("");
+  }
+
+  function renderSections(focus, sections) {
+    const order = Array.isArray(focus?.section_order) ? focus.section_order : [];
+    const available = sections.filter((section) => hasContent(section.value));
+    const rank = (section) => {
+      if (section.key === "focused_analysis") return -2;
+      if (section.key === "content_groups") return -1;
+      const index = order.findIndex((key) => key === section.key || section.aliases?.includes(key));
+      return index < 0 ? Infinity : index;
+    };
+    const primary = order.length ? available.filter((section) => rank(section) !== Infinity) : available;
+    if (order.length) primary.sort((a, b) => rank(a) - rank(b));
+    const auxiliary = order.length ? available.filter((section) => rank(section) === Infinity) : [];
+    const markup = (section) => `<section data-analysis-section="${escapeHtml(section.key)}" style="min-width:0;overflow-wrap:anywhere"><h4>${escapeHtml(section.label)}</h4>${section.html ?? renderValue(section.value)}</section>`;
+    return primary.map(markup).join("") + (auxiliary.length ? `<details class="analysis-auxiliary"><summary>辅助分析</summary>${auxiliary.map(markup).join("")}</details>` : "");
+  }
+
   function createRenderer(helpers = {}) {
     const {
       compactReportList,
@@ -291,6 +373,48 @@
       const explanation = objectValue(valueUpgrade.explanation);
       const execution = objectValue(valueUpgrade.execution);
       const repeatablePatterns = normalizeItems(sections.repeatable_patterns).slice(0, 6);
+      const focus = objectValue(result.analysis_focus);
+      const focused = renderFocusedAnalysis(result.focused_analysis);
+      if (hasContent(focus.primary) || hasContent(focus.label) || focused || hasContent(result.content_groups)) {
+        const groups = Array.isArray(result.content_groups) ? result.content_groups : [];
+        const groupMarkup = groups.map((group) => {
+          const data = objectValue(group);
+          const body = renderFocusedAnalysis(data.focused_analysis) || renderValue(data.patterns || data.summary || data.observations);
+          const members = data.sample_ids || data.members;
+          if (!body && !hasContent(members)) return "";
+          return `<section style="min-width:0;overflow-wrap:anywhere"><h4>${escapeHtml(data.label || data.content_category || data.category || "样本类型")}</h4>
+            ${data.count !== undefined || data.sample_count !== undefined ? `<p>样本数：${escapeHtml(data.count ?? data.sample_count ?? "未记录")}</p>` : ""}
+            ${data.analyzed_count !== undefined ? `<p>已有分析：${escapeHtml(data.analyzed_count)}</p>` : ""}
+            ${data.metadata_only_count !== undefined ? `<p>仅元数据：${escapeHtml(data.metadata_only_count)}，不视为已验证的内容规律。</p>` : ""}
+            ${hasContent(members) ? `<details><summary>支持样本</summary>${renderValue(members)}</details>` : ""}
+            ${body}${hasContent(data.uncertainty) ? `<p>适用边界：${renderValue(data.uncertainty)}</p>` : ""}</section>`;
+        }).join("");
+        const contentSections = [
+          {key: "focused_analysis", label: "类型重点分析", value: focused, html: focused},
+          {key: "content_groups", label: "按样本类型归纳", value: groupMarkup, html: groupMarkup},
+          {key: "creator_positioning", label: "账号定位", value: result.creator_positioning},
+          {key: "topic_buckets", label: "选题规律", value: result.topic_buckets},
+          {key: "thinking_patterns", aliases: ["script_structure", "emotion_path"], label: "思维与论证", value: result.thinking_patterns},
+          {key: "expression_patterns", aliases: ["visual_analysis", "first_3_seconds", "timeline"], label: "表达与视觉", value: result.expression_patterns},
+          {key: "transferable_formulas", aliases: ["replication"], label: "可迁移结构", value: result.transferable_formulas || sections.formulas},
+          {key: "creator_clone_spec", label: "创作方法", value: result.creator_clone_spec},
+          {key: "observation", label: "观察", value: observation.bullets || sections.core_judgment?.bullets},
+          {key: "explanation", label: "解释", value: explanation.bullets || sections.traffic_sources?.hooks},
+          {key: "execution", label: "下一步", value: execution.bullets || sections.next_actions},
+          {key: "next_actions", label: "行动建议", value: result.next_actions},
+          {key: "candidate_ideas", label: "下一条内容", value: result.candidate_ideas || execution.next_content_suggestions || sections.next_ideas},
+          {key: "sample_evidence", label: "样本证据", value: valueUpgrade.sample_evidence},
+          {key: "repeatable_patterns", label: "跨形式共性", value: repeatablePatterns},
+          {key: "evidence_gaps", label: "证据与适用边界", value: result.evidence_gaps || valueUpgrade.evidence_gaps},
+        ];
+        return `<section class="creator-distillation-report" aria-label="创作者蒸馏核心报告" style="min-width:0;overflow-wrap:anywhere">
+          ${hasContent(result.summary) ? `<section class="public-analysis-hero">${renderSummary(result.summary)}</section>` : ""}
+          ${renderFocus(result)}
+          ${renderSections(focus, contentSections)}
+          ${renderQualitySummary(valueUpgrade)}
+          ${renderEvidenceDetails(overview, result, viewModel)}
+        </section>`;
+      }
       const executionBody = `
         ${renderPublicList(execution.bullets || sections.next_actions, "先从最高互动样本中选 3 条，人工复核开头、封面、动作和标题，再生成候选脚本。")}
         <h5>下一条内容建议</h5>
@@ -302,6 +426,7 @@
           ${renderSummary(result.summary || "创作者蒸馏完成。")}
         </section>
         <section class="creator-distillation-report" aria-label="创作者蒸馏核心报告">
+          ${renderFocus(result)}
           ${renderHero({viewModel, result, overview, templateLabel, positioningText})}
           <div class="public-report-grid creator-distillation-grid creator-decision-grid">
             ${renderPublicCard("1. 观察：这个账号做了什么", `
@@ -354,6 +479,10 @@
       if (!container) {
         return false;
       }
+      if (hasReport(container)) {
+        container.innerHTML += `<p role="status">${escapeHtml(message)} 上次可用报告已保留。</p>`;
+        return true;
+      }
       container.innerHTML = `
         <section class="public-analysis-hero">
           <span>REPORT_RENDER_FAILED</span>
@@ -390,5 +519,5 @@
     });
   }
 
-  global.CreatorReportView = Object.freeze({createRenderer});
+  global.CreatorReportView = Object.freeze({createRenderer, hasContent, renderValue, renderFocus, renderFocusedAnalysis, renderSections});
 })(window);

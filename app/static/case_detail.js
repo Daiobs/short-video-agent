@@ -608,8 +608,8 @@ function findProfile(categoryId) {
 }
 
 function renderCategoryControls(analysisInput) {
-  const currentCategory = analysisInput.content_category || "generic";
-  analysisCategorySelect.innerHTML = (loadedCase.analysis_profiles || [])
+  const currentCategory = analysisInput.analysis_direction || "auto";
+  analysisCategorySelect.innerHTML = `<option value="auto"${currentCategory === "auto" ? " selected" : ""}>自动判断</option>` + (loadedCase.analysis_profiles || []).filter((profile) => profile.category_id !== "auto")
     .map((profile) => {
       const selected = profile.category_id === currentCategory ? " selected" : "";
       return `<option value="${escapeHtml(profile.category_id)}"${selected}>${escapeHtml(profile.label)}</option>`;
@@ -1002,7 +1002,7 @@ function renderPublicCard(title, body, tone = "") {
 }
 
 function renderPublicAnalysisHero(result) {
-  const category = result.content_category_label || result.content_category || "短视频";
+  const category = result.analysis_focus?.label || result.analysis_focus?.primary || result.content_category_label || result.content_category || "短视频";
   const confidence = result.confidence ? `置信度 ${result.confidence}` : "";
   return `
     <section class="public-analysis-hero">
@@ -1013,11 +1013,34 @@ function renderPublicAnalysisHero(result) {
 }
 
 function renderPublicAnalysisCards(result) {
+  const contentView = window.CreatorReportView;
+  if (contentView && (contentView.hasContent(result.analysis_focus) || contentView.hasContent(result.focused_analysis))) {
+    const focused = contentView.renderFocusedAnalysis(result.focused_analysis);
+    const speech = result.speech_analysis;
+    const scriptStructure = contentView.hasContent(speech?.script_structure)
+      ? speech.script_structure
+      : result.script_structure;
+    const sections = [
+      {key: "focused_analysis", label: "类型重点分析", value: focused, html: focused},
+      {key: "first_3_seconds", label: "开头观察", value: result.first_3_seconds},
+      {key: "script_structure", label: "内容与表达结构", value: scriptStructure},
+      {key: "timeline", label: "内容展开", value: result.timeline},
+      {key: "emotion_path", label: "情绪变化", value: result.emotion_path},
+      ...[["hook_analysis", "开头与吸引点"], ["visual_analysis", "画面与人物呈现"], ["copywriting_analysis", "文案结构"], ["speech_analysis", "口播与论证"], ["screen_text_analysis", "画面文字"], ["comment_insights", "评论反馈"], ["replication", "可迁移方法"], ["publish_package", "标题与发布灵感"], ["risks", "风险与改编边界"], ["next_actions", "下一步"], ["evidence_summary", "证据与推断边界"]].map(([key, label]) => ({key, label, value: result[key]})),
+    ];
+    if (speech && typeof speech === "object" && !Array.isArray(speech)) {
+      const {script_structure, ...speechDetails} = speech;
+      sections.find((section) => section.key === "speech_analysis").value = speechDetails;
+    }
+    sections.find((section) => section.key === "hook_analysis").aliases = ["first_3_seconds"];
+    return contentView.renderFocus(result) + contentView.renderSections(result.analysis_focus, sections);
+  }
   const hook = result.hook_analysis || {};
   const visual = result.visual_analysis || {};
   const replication = result.replication || {};
   const publish = result.publish_package || {};
   return `
+    ${contentView ? contentView.renderFocus(result) : ""}
     <div class="public-report-grid">
       ${renderPublicCard(
         "0-3 秒抓人点",
@@ -1734,10 +1757,10 @@ function renderCase(data) {
     ["标题", metadata.title],
     ["作者", metadata.author],
     ["来源", metadata.source_url],
-    ["点赞", formatNumber(stats.like_count)],
-    ["评论", formatNumber(stats.comment_count)],
-    ["分享", formatNumber(stats.share_count)],
-    ["互动分", formatNumber(stats.engagement_score)],
+    ["点赞", stats.like_count == null ? "未采集" : formatNumber(stats.like_count)],
+    ["评论", stats.comment_count == null ? "未采集" : formatNumber(stats.comment_count)],
+    ["分享", stats.share_count == null ? "未采集" : formatNumber(stats.share_count)],
+    ["互动分", stats.engagement_score == null ? "未采集" : formatNumber(stats.engagement_score)],
     ["时长", formatSeconds(video.duration || ffprobe.duration)],
     ["分辨率", `${video.width || ffprobe.width || 0}x${video.height || ffprobe.height || 0}`],
     ["帧率", video.fps || ffprobe.fps || ""],
@@ -2162,7 +2185,9 @@ updateCategoryButton.addEventListener("click", async () => {
       throw payload;
     }
     renderCase(payload.case);
-    categoryStatus.textContent = "已更新分析类型，Prompt 和 analysis_input.json 已同步。";
+    categoryStatus.textContent = payload.case?.analysis_result
+      ? "分析方向已修改，现有报告仍按上次方向生成。主动重新分析后才会更新报告。"
+      : "分析方向已修改，尚未生成报告。";
   } catch (error) {
     categoryStatus.textContent = `${error.error_code || "ERROR"}：${error.message || "更新失败"}`;
   } finally {

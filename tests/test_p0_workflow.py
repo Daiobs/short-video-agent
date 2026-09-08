@@ -3354,8 +3354,10 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
     assert analysis_input["content_category_guess"]["confidence"] == "low"
     assert analysis_input["analysis_lens"]
     assert analysis_input["key_questions"]
-    assert analysis_input["content_ratio"]
-    assert "前3秒钩子" in analysis_input["analysis_focus"]
+    assert analysis_input["content_ratio"] == []
+    assert analysis_input["analysis_context"]["attention_priorities"]
+    assert analysis_input["analysis_focus"]["primary"] == "generic"
+    assert analysis_input["analysis_focus"]["source"] == "auto"
 
     prompt = (case_dir / "prompt.md").read_text(encoding="utf-8")
     assert "# 爆款案例拆解 Prompt" in prompt
@@ -5680,13 +5682,21 @@ def test_auto_analyzer_uses_asr_ocr_and_comment_enrichment(tmp_path: Path) -> No
             assert "求同款/购买线索" in prompt
             assert "evidence_summary" in prompt
             assert "证据不足的结论必须放入 inferred_points 或 evidence_gaps" in prompt
-            assert "first_3_seconds 至少写两个具体时间点" in prompt
-            assert "publish_package 不能只有标题" in prompt
-            assert "replication.avoid_copying 或 risks 必须说明不要照搬" in prompt
+            assert "没有时间依据不填时间点" in prompt
+            assert "publish_package 需提供可用发布建议" in prompt
+            assert "replication.avoid_copying 或 risks 说明不要照搬" in prompt
+            assert "本次输入证据：" in prompt
             assert "replication.copyable_points 每一条都必须能追溯" in prompt
             assert "不要凭空新增原视频没有的镜头" in prompt
             return {
                 "summary": "这条视频用前三秒人物入镜、金句口播和封面承诺形成强停留，评论区求同款说明可复刻需求明确。",
+                "focused_analysis": [{
+                    "question": "表达结构如何迁移？",
+                    "observation": "口播先给能力判断，字幕强调前三秒。",
+                    "interpretation": "结果承诺为后文提供理解顺序。",
+                    "transfer": "使用自己的结果示例组织开场，而不照搬原句。",
+                    "evidence": ["asr", "ocr"], "uncertainty": "合成 provider 示例。",
+                }],
                 "content_category": "generic",
                 "content_category_label": "通用短视频",
                 "confidence": 0.9,
@@ -9715,12 +9725,12 @@ def test_quality_calibration_recommendations_use_content_ratio_gap() -> None:
     recommendation_by_id = {item["id"]: item for item in recommendations}
     assert "tighten_content_ratio_gate" in recommendation_by_id
     recommendation = recommendation_by_id["tighten_content_ratio_gate"]
-    assert recommendation["label"] == "校准内容占比结构"
+    assert recommendation["label"] == "校准分析结构"
     assert recommendation["priority"] == 82
     assert "content_ratio_balance" in recommendation["source_issue_ids"]
     assert recommendation["action_target"] == "#run-auto-analysis-button"
     assert recommendation["action_mode"] == "click"
-    assert "percent 总和约 100%" in recommendation["action"]
+    assert "不要求估算内容百分比" in recommendation["action"]
 
 
 def test_quality_calibration_recommendations_use_category_alignment_gap() -> None:
@@ -9744,7 +9754,7 @@ def test_quality_calibration_recommendations_use_category_alignment_gap() -> Non
     assert recommendation["action_label"] == "调整类型"
     assert recommendation["action_target"] == "#analysis-category-select"
     assert recommendation["action_mode"] == "focus"
-    assert "content_category" in recommendation["action"]
+    assert "不因缺分类强制重跑" in recommendation["action"]
 
 
 def test_quality_calibration_recommendations_use_engagement_data_gap() -> None:
@@ -11460,7 +11470,7 @@ def test_creator_clone_prompt_allows_manual_content_profile_override() -> None:
 
     assert "账号类型 / 分析模板" in prompt
     assert "鸡汤 / 情绪文案" in prompt
-    assert "文案段落逻辑" in prompt
+    assert "情绪对象" in prompt
     assert normalized["content_profile"]["requested"] == "emotional_copy"
     assert normalized["content_profile"]["effective"] == "emotional_copy"
 

@@ -51,6 +51,13 @@ from app.services.creator_intelligence import (
 from app.services.creator_intelligence.memory import CreatorMemoryGraph
 from app.services.creator_intelligence.models import validate_creator_clone_schema as validate_creator_clone_strategy_schema
 from app.services.creator_intelligence.report_quality import validate_creator_report_quality
+from app.services.content_analysis import (
+    creator_category,
+    focus_prompt,
+    normalize_focused_analysis,
+    resolve_analysis_focus,
+    safe_analysis_text,
+)
 
 
 VALID_SOURCE_TYPES = {"douyin", "xhs", "bili", "local", "manual", "unknown"}
@@ -62,6 +69,7 @@ VALID_CONTENT_PROFILES = {
     "photo_beauty",
     "emotional_copy",
     "knowledge",
+    "tutorial",
     "story_twist",
     "commerce_seed",
     "general",
@@ -71,19 +79,11 @@ CONTENT_PROFILE_LABELS = {
     "beauty_cos": "美拍 / COS / 颜值",
     "photo_beauty": "摄影美拍 / 出片教程",
     "emotional_copy": "鸡汤 / 情绪文案",
-    "knowledge": "教学 / 知识",
+    "knowledge": "知识 / 观点",
+    "tutorial": "步骤教程",
     "story_twist": "剧情 / 反转",
     "commerce_seed": "带货 / 种草",
     "general": "通用短视频",
-}
-CONTENT_PROFILE_GUIDANCE = {
-    "beauty_cos": "优先分析第一眼视觉吸引、人物人设、妆造/服装/发型/道具、镜头距离/角度/光线、动作节奏、标题话题、互动引导，以及适合安全复刻的拍摄公式。弱化长文案结构拆解。",
-    "photo_beauty": "优先分析出片承诺、低门槛器材反差、模特/妆造/人设、构图/光线/镜头距离、前后成片证明、标题系列化和可复刻拍摄流程。不要把它当纯知识课拆解。",
-    "emotional_copy": "优先分析前 3 秒钩子、情绪冲突、文案段落逻辑、共鸣路径、身份代入、金句结构、结尾情绪落点和可复刻脚本模板。",
-    "knowledge": "优先分析问题切入、知识承诺、信息分层、案例/证明、步骤化表达、保存理由、可信度来源和可复用教学结构。",
-    "story_twist": "优先分析角色关系、冲突设置、悬念铺垫、反转节点、节奏控制、结尾回收和评论讨论点。",
-    "commerce_seed": "优先分析种草场景、痛点承诺、产品/道具露出、信任证据、转化理由、收藏/购买动机和风险边界。",
-    "general": "先判断内容类型，再提炼选题、表达、视觉和互动规律；不要把某一类模板强行套到所有样本。",
 }
 MAX_DISTILL_SAMPLES = 20
 BATCH_DISTILL_MAX_SAMPLES = 150
@@ -1066,13 +1066,15 @@ def build_sample_map_prompt(sample: CloneSample, fallback_summary: dict) -> str:
 目标：
 - 用 1 条视频的有限证据，提炼它靠什么吸引、属于什么内容类型、可复用的表达结构。
 - 不要写长报告，不要编造没有证据的画面/评论/口播。
-- 如果是美拍/COS/颜值类，重点看第一眼视觉、人物人设、动作节奏、妆造光线和标题话题。
-- 如果是鸡汤/教学/知识类，重点看前 3 秒钩子、文案结构、情绪路径和可复刻脚本结构。
+{focus_prompt(fallback_summary.get('analysis_focus') or sample_analysis_focus(sample), compact=True)}
+- 本次只有文字摘要，没有发送图片或音频；已有单条报告是二手证据，不是本次直接观察。
+- focused_analysis 按 observation/interpretation/transfer/evidence/uncertainty 输出；evidence 仅引用本条 sample_id。
 
 返回 JSON 字段：
 {{
   "one_line_summary": "",
   "content_category": "",
+  "focused_analysis": [],
   "hook": {{"first_impression": "", "why_stop_scrolling": "", "first_3_seconds": []}},
   "visual": {{"subject": "", "movement_rhythm": "", "style_keywords": []}},
   "content_ratio": [],
@@ -1104,7 +1106,7 @@ def sample_map_summary(sample: CloneSample) -> dict:
         "evidence_status": _sample_evidence_status(sample),
         "map_source": "metadata",
         "one_line_summary": _truncate_text(sample.notes or sample.title or "仅有元数据，不能判断画面和表达结构。", 180),
-        "content_category": "",
+        "content_category": sample.content_category,
         "hook": {},
         "visual": {},
         "content_ratio": [],
@@ -1118,6 +1120,9 @@ def sample_map_summary(sample: CloneSample) -> dict:
     if sample.case_id:
         case_summary = _case_map_summary(_case_dir_from_sample(sample))
         summary.update(case_summary)
+    summary["analysis_focus"] = sample_analysis_focus(sample)
+    summary["content_category"] = summary["analysis_focus"]["primary"]
+    summary["focused_analysis"] = _sample_focused_analysis(summary.get("focused_analysis"), sample)
     return _drop_empty_prompt_values(summary)
 
 
@@ -1127,7 +1132,7 @@ def _case_map_summary(case_dir: Path) -> dict:
     analysis_result = _read_json(case_dir / "analysis_result.json")
     analysis_input = _read_json(case_dir / "analysis_input.json")
     evidence_pack = _case_compact_map_evidence(case_dir)
-    if not analysis_result:
+    if not _has_case_analysis(analysis_result):
         fallback = {
             "map_source": "case_evidence",
             "one_line_summary": _truncate_text(
@@ -1154,6 +1159,8 @@ def _case_map_summary(case_dir: Path) -> dict:
     return _drop_empty_prompt_values(
         {
             "map_source": "analysis_result",
+            "analysis_focus": analysis_result.get("analysis_focus") or {},
+            "focused_analysis": analysis_result.get("focused_analysis") or [],
             "one_line_summary": _truncate_text(analysis_result.get("summary") or "", 220),
             "content_category": analysis_result.get("content_category") or analysis_input.get("content_category") or "",
             "content_category_label": analysis_result.get("content_category_label")
@@ -1180,7 +1187,7 @@ def _case_map_summary(case_dir: Path) -> dict:
                 "reusable_patterns": _short_list(copywriting.get("reusable_patterns"), 4, 100),
             },
             "speech": {
-                "has_speech": bool(speech.get("has_speech")),
+                "has_speech": speech.get("has_speech"),
                 "opening_line": _truncate_text(speech.get("opening_line") or "", 140),
                 "spoken_hook": _truncate_text(speech.get("spoken_hook") or "", 140),
                 "script_structure": _truncate_text(speech.get("script_structure") or "", 180),
@@ -1229,7 +1236,14 @@ def _normalize_llm_map_summary(raw: dict, fallback: dict) -> dict:
         {
             "map_source": "llm_map",
             "one_line_summary": _truncate_text(raw.get("one_line_summary") or raw.get("summary") or result.get("one_line_summary") or "", 220),
-            "content_category": _truncate_text(raw.get("content_category") or result.get("content_category") or "", 80),
+            "content_category": result.get("content_category") or "",
+            "focused_analysis": normalize_focused_analysis(
+                raw.get("focused_analysis") or result.get("focused_analysis"),
+                valid_refs=[str(fallback.get("sample_id") or "")],
+            ),
+            "category_review": {key: safe_analysis_text(raw["category_review"].get(key), 300)
+                                for key in ("suggested_category", "reason")}
+            if isinstance(raw.get("category_review"), dict) else {},
             "hook": _short_dict(raw.get("hook"), 120) if isinstance(raw.get("hook"), dict) else result.get("hook", {}),
             "visual": _short_dict(raw.get("visual"), 120) if isinstance(raw.get("visual"), dict) else result.get("visual", {}),
             "content_ratio": _short_content_ratio(raw.get("content_ratio")),
@@ -1321,7 +1335,7 @@ def build_reduce_distill_prompt(
     return f"""你是 Creator Clone Lab 的 Reduce 蒸馏助手。请只基于下面的单条视频 Map 摘要做跨样本归纳，输出合法 JSON，不要 Markdown。
 
 工作方式：
-- Map 阶段已经完成单条视频短拆解；你不要重新分析原视频，也不要要求更多原始素材。
+- Map 是已有分析或元数据的本地短摘，只有 map_source=analysis_result 才代表已有单条分析；不要重新分析原视频。
 - Reduce 阶段只负责找 2-3 条样本之间反复出现的内容规律、流量来源、可复刻公式和风险边界。
 - 如果证据不足，写进 evidence_gaps；不要把没有 ASR/OCR/评论的部分说死。
 - 美拍/COS/颜值类优先归纳：第一眼吸引、人物人设、动作节奏、妆造/光线/构图、标题话题和互动引导。
@@ -1370,21 +1384,17 @@ def build_micro_reduce_distill_prompt(
     distill_mode: str = "quick",
 ) -> str:
     rows = [_micro_map_summary(summary) for summary in map_summaries]
-    profile_prompt = content_profile_prompt_text(sample_set, selected_samples)
+    profile_prompt = content_profile_prompt_text(sample_set, selected_samples, compact=True)
     behavior_model = behavior_representation_prompt_payload(sample_set, selected_samples, compact=True)
     return f"""你是 Creator Clone Lab 的短视频账号规律蒸馏助手。请基于一组单条视频摘要，输出合法 JSON，不要 Markdown。
 
 要求：
 - 总输出控制在 1800-2600 个中文字符内，不要压缩成一句话摘要。
-- 只归纳共同规律，不重写单条报告，但要保留足够细节让用户能据此选题、拍摄和自检。
+- 分类型归纳具体规律及跨形式共性，不重写单条报告。
 - 证据不足写进 evidence_gaps。
 - 高赞/高评/高分享/高收藏要分开解释：高赞看情绪/身份共鸣，高评看参与钩子，高分享看转发理由，高收藏看模板/复看价值。
-- 美拍/COS/颜值类重点输出视觉吸引、人物人设、动作节奏、妆造/光线/构图、标题话题、互动引导；不要硬套文案鸡汤结构。
-- 对美拍/COS/摄影出片类账号，至少输出 3 条拍摄动作公式，每条都要包含首帧、人物动作、镜头或光线、标题话题、验证指标和风险边界。
-- transferable_formulas 至少给 3 个，candidate_ideas 至少给 5 个，creator_clone_spec.self_check_rubric 至少给 5 条；如果证据不足，也要写出“低置信度规则”。
-- 每个公式必须能直接指导下一条怎么拍；每个选题必须能直接变成一个标题/拍摄方向。
-- 不要输出空壳公式、空壳选题、空壳规则；证据不足就写 evidence_gaps。
-- 报告按“观察/解释/执行”三层思考：先说账号做了什么，再解释为什么有效，最后给下一条拍摄/文案/标题/封面/验证动作。
+- 有证据时给出 3 个 transferable_formulas、5 个 candidate_ideas 和 5 条 self_check_rubric；缺证据标为待验证建议，不编造观察。
+- 公式写明适用形式、具体操作、支持样本和验证动作，区分观察、解释和执行。
 - 核心公式、选题和策略尽量绑定 sample_id/title/metric/evidence_level；无法绑定的判断必须标记 low_confidence 或写入 evidence_gaps。
 - {creator_clone_strategy_prompt_contract()}
 
@@ -1403,8 +1413,8 @@ def build_micro_reduce_distill_prompt(
 素材池：{sample_set.title}
 模式：{distill_mode}
 {profile_prompt}
-结构化认知模型：{json.dumps(behavior_model, ensure_ascii=False)}
-样本摘要：{json.dumps(rows, ensure_ascii=False)}
+结构化认知模型：{json.dumps(behavior_model, ensure_ascii=False, separators=(',', ':'))}
+样本摘要：{json.dumps(rows, ensure_ascii=False, separators=(',', ':'))}
 """
 
 
@@ -1422,6 +1432,8 @@ def _map_summary_for_reduce(summary: dict) -> dict:
             "map_error_code": summary.get("map_error_code") or "",
             "one_line_summary": _truncate_text(summary.get("one_line_summary") or "", 180),
             "content_category": summary.get("content_category") or "",
+            "analysis_focus": summary.get("analysis_focus") or {},
+            "focused_analysis": summary.get("focused_analysis") or [],
             "hook": summary.get("hook") if isinstance(summary.get("hook"), dict) else {},
             "visual": summary.get("visual") if isinstance(summary.get("visual"), dict) else {},
             "content_ratio": summary.get("content_ratio") if isinstance(summary.get("content_ratio"), list) else [],
@@ -1447,6 +1459,12 @@ def _micro_map_summary(summary: dict) -> dict:
             "id": summary.get("sample_id") or summary.get("aweme_id") or "",
             "title": _truncate_text(summary.get("title") or "", 60),
             "category": summary.get("content_category") or "",
+            "analysis_focus": {key: (summary.get("analysis_focus") or {}).get(key)
+                               for key in ("primary", "source", "auxiliary")},
+            "focused_analysis": _compact_focused_analysis(summary.get("focused_analysis")),
+            "map_source": summary.get("map_source") or "metadata",
+            "evidence_status": {key: (summary.get("evidence_status") or {}).get(key)
+                                for key in ("understanding_level", "asr_status", "ocr_status")},
             "metrics": summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {},
             "summary": _truncate_text(summary.get("one_line_summary") or "", 120),
             "hook": _truncate_text((summary.get("hook") or {}).get("why_stop_scrolling") or (summary.get("hook") or {}).get("first_impression") or "", 90)
@@ -1460,7 +1478,11 @@ def _micro_map_summary(summary: dict) -> dict:
 
 
 def _lite_sample_prompt_payload(sample: CloneSample) -> dict:
+    summary = sample_map_summary(sample)
     return {
+        "analysis_focus": summary["analysis_focus"],
+        "content_category": summary["content_category"],
+        **_compact_sample_analysis_payload(summary),
         "sample_id": sample.sample_id,
         "aweme_id": sample.aweme_id,
         "title": _truncate_text(sample.title or sample.desc or "", 160),
@@ -1588,6 +1610,12 @@ def behavior_representation_prompt_payload(sample_set: CloneSampleSet, selected_
 
 def sample_to_prompt_payload(sample: CloneSample, include_case_reports: bool = True) -> dict:
     payload = sample.to_dict()
+    summary = sample_map_summary(sample)
+    payload["analysis_focus"] = summary["analysis_focus"]
+    payload["focused_analysis"] = summary.get("focused_analysis") or []
+    payload["map_source"] = summary.get("map_source") or "metadata"
+    if not include_case_reports:
+        payload.update(_compact_sample_analysis_payload(summary))
     payload["evidence_status"] = _sample_evidence_status(sample)
     payload["evidence_note"] = _sample_evidence_note(sample)
     if include_case_reports and sample.case_id:
@@ -2286,6 +2314,9 @@ def build_final_creator_clone_reduce_prompt(
                 "status": batch.get("status"),
                 "sample_count": batch.get("sample_count"),
                 "sample_ids": _short_list(batch.get("sample_ids"), 8, 60),
+                "analysis_focus": (batch.get("result") or {}).get("analysis_focus") or {},
+                "focused_analysis": (batch.get("result") or {}).get("focused_analysis") or [],
+                "content_groups": (batch.get("result") or {}).get("content_groups") or [],
                 "summary": _truncate_text((batch.get("result") or {}).get("summary") or batch.get("summary") or "", 260),
                 "creator_positioning": (batch.get("result") or {}).get("creator_positioning") or {},
                 "expression_patterns": (batch.get("result") or {}).get("expression_patterns") or {},
@@ -2397,6 +2428,8 @@ def build_local_batch_distill_result(
     first_positioning = next((result.get("creator_positioning") for result in successful_results if result.get("creator_positioning")), {}) or {}
     first_spec = next((result.get("creator_clone_spec") for result in successful_results if result.get("creator_clone_spec")), {}) or {}
     raw = {
+        "focused_analysis": [row for result in successful_results for row in result.get("focused_analysis", [])],
+        "content_groups": [group for result in successful_results for group in result.get("content_groups", [])],
         "summary": "；".join(summaries) or f"已完成 {len(batch_results)} 个批次的本地汇总，最终大模型 Reduce 可稍后重试。",
         "creator_positioning": {
             "what_the_creator_sells": first_positioning.get("what_the_creator_sells") or "基于批次摘要汇总的账号核心卖点。",
@@ -3565,9 +3598,28 @@ def prompt_only_result(sample_set: CloneSampleSet, selected_sample_ids: list[str
 
 def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, selected_samples: list[CloneSample], warnings: list[str] | None = None) -> dict:
     result = creator_clone_schema()
-    _deep_merge(result, raw if isinstance(raw, dict) else {})
+    reference_warnings: list[str] = []
+    _deep_merge(result, _validated_creator_refs(raw if isinstance(raw, dict) else {}, selected_samples, reference_warnings) or {})
     result["summary"] = str(result.get("summary") or "创作者蒸馏完成。")
     result["content_profile"] = content_profile_prompt_block(sample_set, selected_samples)
+    result["analysis_focus"] = creator_analysis_focus(sample_set, selected_samples)
+    review = result.get("category_review")
+    result.pop("category_review", None)
+    if isinstance(review, dict):
+        cleaned_review = {key: safe_analysis_text(review.get(key), 300)
+                          for key in ("suggested_category", "reason") if isinstance(review.get(key), str)}
+        if any(cleaned_review.values()):
+            result["category_review"] = cleaned_review
+    valid_refs = _selected_content_refs(selected_samples)
+    result["focused_analysis"] = _normalize_creator_findings(result.get("focused_analysis"), valid_refs, reference_warnings)
+    raw_groups = result.get("content_groups")
+    result["content_groups"] = creator_content_groups(selected_samples)
+    for group in result["content_groups"]:
+        rows = [row for item in (raw_groups if isinstance(raw_groups, list) else [])
+                if isinstance(item, dict) and creator_category(item.get("category")) == group["category"]
+                and isinstance(item.get("focused_analysis"), list)
+                for row in (item.get("focused_analysis") or [])]
+        group["focused_analysis"] = _normalize_creator_findings(rows, group["sample_ids"], reference_warnings)
     result["sample_overview"] = {
         "set_id": sample_set.set_id,
         "sample_count": len(sample_set.samples),
@@ -3578,9 +3630,8 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
         "content_profile": result["content_profile"],
     }
     fallback_segments = performance_segments(selected_samples)
-    current_segments = result.get("performance_segments") if isinstance(result.get("performance_segments"), dict) else {}
     result["performance_segments"] = {
-        key: current_segments.get(key) or fallback_segments.get(key) or []
+        key: fallback_segments.get(key) or []
         for key in creator_clone_schema()["performance_segments"]
     }
     result["creator_clone_strategy"] = normalize_creator_clone_strategy(result)
@@ -3607,6 +3658,7 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
     ).to_dict()
     result["report_quality"] = report_quality
     result["warnings"] = list(result.get("warnings") or [])
+    result["warnings"].extend(reference_warnings)
     result["warnings"].extend(report_quality.get("warnings") or [])
     result["warnings"].extend(report_quality.get("evidence_warnings") or [])
     result["creator_report_view_model"] = build_creator_report_view_model(result, sample_set, selected_samples)
@@ -3726,6 +3778,9 @@ def _normalize_strategy_dicts(value, limit: int = 8, fallback_key: str = "item")
 def creator_clone_schema() -> dict:
     return {
         "summary": "",
+        "analysis_focus": {},
+        "focused_analysis": [],
+        "content_groups": [],
         "creator_clone_strategy": CreatorCloneStrategy.empty_schema(),
         "creator_report_view_model": {},
         "content_profile": {
@@ -3999,7 +4054,8 @@ def normalize_content_profile(value: str) -> str:
         "情绪": "emotional_copy",
         "鸡汤": "emotional_copy",
         "copywriting": "emotional_copy",
-        "teaching": "knowledge",
+        "teaching": "tutorial",
+        "教程": "tutorial",
         "education": "knowledge",
         "知识": "knowledge",
         "剧情": "story_twist",
@@ -4009,45 +4065,168 @@ def normalize_content_profile(value: str) -> str:
         "种草": "commerce_seed",
     }
     candidate = aliases.get(candidate, candidate)
+    if candidate not in VALID_CONTENT_PROFILES and candidate in {"motivational", "plot_twist", "product_seed", "generic"}:
+        candidate = creator_category(candidate)
     return candidate if candidate in VALID_CONTENT_PROFILES else "auto"
 
 
-def infer_content_profile(sample_set: CloneSampleSet, selected_samples: list[CloneSample]) -> str:
-    requested = normalize_content_profile(sample_set.content_profile)
-    if requested != "auto":
-        return requested
-    corpus_parts = [
-        sample_set.title,
-        sample_set.creator_name,
-        json.dumps(sample_set.profile_metadata or {}, ensure_ascii=False),
-    ]
-    for sample in selected_samples:
-        corpus_parts.extend([sample.title, sample.desc, " ".join(sample.tags or [])])
-    corpus = " ".join(str(part or "").lower() for part in corpus_parts)
-    photo_terms = ["摄影", "相机", "杂牌", "拍一组", "出片", "写真", "镜头", "棚子", "抓拍", "构图", "光线", "拍照", "约拍"]
-    model_terms = ["模特", "cos", "cosplay", "写真", "美拍", "颜值", "妆造", "穿搭", "甜妹", "御姐", "氛围感", "出镜", "制服", "角色"]
-    photo_score = _keyword_score(corpus, photo_terms)
-    model_score = _keyword_score(corpus, model_terms)
-    scores = {
-        "beauty_cos": _keyword_score(corpus, ["cos", "cosplay", "写真", "美拍", "颜值", "妆造", "穿搭", "舞蹈", "甜妹", "御姐", "氛围感", "擦边", "变装", "制服"]),
-        "photo_beauty": photo_score * 2 + model_score if photo_score and (model_score or "拍一组" in corpus or "出片" in corpus) else 0,
-        "emotional_copy": _keyword_score(corpus, ["情绪", "文案", "人生", "低谷", "治愈", "扎心", "共鸣", "励志", "鸡汤", "关系", "爱自己"]),
-        "knowledge": _keyword_score(corpus, ["教程", "教学", "干货", "知识", "方法", "技巧", "避坑", "步骤", "怎么", "攻略"]),
-        "story_twist": _keyword_score(corpus, ["剧情", "反转", "短剧", "后续", "悬念", "没想到", "结局", "身份", "冲突"]),
-        "commerce_seed": _keyword_score(corpus, ["同款", "种草", "测评", "好物", "产品", "购买", "链接", "推荐", "开箱", "店铺"]),
+def sample_analysis_focus(sample: CloneSample) -> dict:
+    """Retain a case's generation-time direction, independently of account focus."""
+    analysis_input = {}
+    if sample.case_id:
+        case_dir = _case_dir_from_sample(sample)
+        report = _read_json(case_dir / "analysis_result.json")
+        saved = report.get("analysis_focus")
+        if _has_case_analysis(report) and isinstance(saved, dict) and saved.get("version") == 1 and saved.get("primary"):
+            return saved
+        analysis_input = _read_json(case_dir / "analysis_input.json")
+        # A changed UI direction must not relabel a previously generated report.
+        if _has_case_analysis(report):
+            analysis_input = {"content_category": report.get("content_category") or sample.content_category}
+    analysis_input = dict(analysis_input)
+    if sample.content_category and not analysis_input.get("content_category"):
+        analysis_input["content_category"] = sample.content_category
+    metadata = {"title": sample.title, "notes": " ".join([sample.desc, sample.notes, *sample.tags])}
+    focus = resolve_analysis_focus(
+        metadata,
+        analysis_input,
+    )
+    corpus = (metadata["title"] + " " + metadata["notes"]).lower()
+    if focus["source"] == "auto" and focus["primary"] in {"generic", "beauty_cos"}:
+        if any(word in corpus for word in ("摄影", "相机", "拍一组")) and any(word in corpus for word in ("出片", "写真", "成片")):
+            focus = resolve_analysis_focus(metadata, {}, requested="photo_beauty")
+            focus.update(source="auto", reason="摄影过程与成片关键词初判；尚不代表已观察到拍摄方法。")
+    return focus
+
+
+def _sample_focused_analysis(raw, sample: CloneSample) -> list[dict]:
+    # Creator receives the saved report text, not its original frame/audio payload.
+    # Bind these second-hand conclusions to the selected sample, not local paths.
+    rows = normalize_focused_analysis(raw, valid_refs=[])
+    for row in rows:
+        row["evidence"] = [sample.sample_id]
+        row["uncertainty"] = (row["uncertainty"] + " 来自已有单条报告，未在本次直接复核原始画面或音频。").strip()
+    return rows
+
+
+def _selected_content_refs(samples: list[CloneSample]) -> list[str]:
+    return list(dict.fromkeys(sample.sample_id for sample in samples if sample.sample_id))
+
+
+def _normalize_creator_findings(raw, valid_refs: list[str], warnings: list[str]) -> list[dict]:
+    for row in raw if isinstance(raw, list) else []:
+        refs = row.get("evidence") if isinstance(row, dict) else None
+        if isinstance(refs, list) and any(not isinstance(ref, str) or ref not in valid_refs for ref in refs):
+            warning = "类型分析包含不属于本次选中样本或所属内容组的引用，已移除；相关结论待复核。"
+            if warning not in warnings:
+                warnings.append(warning)
+    return normalize_focused_analysis(raw, valid_refs=valid_refs)
+
+
+def _compact_sample_analysis_payload(summary: dict) -> dict:
+    focused = _compact_focused_analysis(summary.get("focused_analysis"))
+    legacy = {}
+    if not focused and summary.get("map_source") == "analysis_result":
+        legacy = _drop_empty_prompt_values({
+            "summary": _truncate_text(summary.get("one_line_summary") or "", 180),
+            "script_structure": _truncate_text((summary.get("speech") or {}).get("script_structure") or "", 180),
+            "opening": _short_list((summary.get("hook") or {}).get("first_3_seconds"), 2, 80),
+            "copyable_points": _short_list(summary.get("copyable_points"), 2, 100),
+            "visual": _short_dict(summary.get("visual") or {}, 60),
+        })
+    return {
+        "focused_analysis": focused,
+        "legacy_analysis_summary": legacy,
+        "map_source": summary.get("map_source", "analysis_result") if focused or legacy else "metadata",
     }
-    best_profile, best_score = max(scores.items(), key=lambda item: item[1])
-    if best_score > 0:
-        return best_profile
-    video_count = sum(1 for sample in selected_samples if sample.media_type == "video")
-    text_count = sum(1 for sample in selected_samples if sample.media_type == "text")
-    if video_count and video_count >= text_count:
-        return "beauty_cos"
-    return "general"
 
 
-def _keyword_score(corpus: str, keywords: list[str]) -> int:
-    return sum(1 for keyword in keywords if keyword.lower() in corpus)
+def _compact_focused_analysis(rows) -> list[dict]:
+    return [{**{key: _truncate_text(row.get(key) or "", 160)
+                for key in ("observation", "interpretation", "transfer", "uncertainty")},
+             "evidence": row["evidence"][:3] if isinstance(row.get("evidence"), list) else []}
+            for row in (rows if isinstance(rows, list) else [])[:3] if isinstance(row, dict)]
+
+
+def _validated_creator_refs(value, samples: list[CloneSample], warnings: list[str]):
+    """Sanitize new model output and validate identities, not factual claims."""
+    if isinstance(value, str):
+        return safe_analysis_text(value, len(value))
+    if isinstance(value, list):
+        return [clean for item in value if (clean := _validated_creator_refs(item, samples, warnings)) is not None]
+    if not isinstance(value, dict):
+        return value
+    identities = {key: value[key] for key in ("sample_id", "case_id", "aweme_id") if value.get(key)}
+    if identities and not any(all(getattr(sample, key) == ref for key, ref in identities.items()) for sample in samples):
+        if "已移除无法定位到选中样本的结构化引用；引用可定位不代表结论已验证。" not in warnings:
+            warnings.append("已移除无法定位到选中样本的结构化引用；引用可定位不代表结论已验证。")
+        return None
+    cleaned = {key: clean for key, item in value.items()
+               if not HANDOFF_DISALLOWED_KEY_RE.search(str(key))
+               and not re.search(r"(^|[_ -])(api[_ -]?key|apikey|password|secret|client_secret|access_token|refresh_token)($|[_ -])", str(key), re.I)
+               if (clean := _validated_creator_refs(item, samples, warnings)) is not None}
+    if isinstance(cleaned.get("sample_ids"), list):
+        refs = [ref for ref in cleaned["sample_ids"] if ref in _selected_content_refs(samples)]
+        if len(refs) != len(cleaned["sample_ids"]):
+            warning = "已移除 sample_ids 中未选中的样本引用。"
+            if warning not in warnings:
+                warnings.append(warning)
+        cleaned["sample_ids"] = refs
+    return cleaned
+
+
+def creator_content_groups(samples: list[CloneSample]) -> list[dict]:
+    groups: dict[str, dict] = {}
+    for sample in samples:
+        focus = sample_analysis_focus(sample)
+        category = creator_category(focus["primary"])
+        group = groups.setdefault(category, {
+            "category": category, "label": CONTENT_PROFILE_LABELS.get(category, focus.get("label", category)),
+            "sample_ids": [], "count": 0, "analyzed_count": 0, "metadata_only_count": 0,
+        })
+        if sample.sample_id in group["sample_ids"]:
+            continue
+        group["sample_ids"].append(sample.sample_id)
+        group["count"] += 1
+        case_dir = _case_dir_from_sample(sample) if sample.case_id else None
+        report = _read_json(case_dir / "analysis_result.json") if case_dir else {}
+        analyzed = _has_case_analysis(report)
+        evidence = _case_prompt_evidence_pack(case_dir) if case_dir else {}
+        has_evidence = bool(
+            evidence.get("asr_excerpt") or evidence.get("ocr_excerpt") or evidence.get("comment_summary")
+            or (case_dir and ((case_dir / "contact_sheet.jpg").is_file()
+                             or any((case_dir / "keyframes").glob("frame_*.jpg"))))
+        )
+        group["analyzed_count"] += int(analyzed)
+        group["metadata_only_count"] += int(not analyzed and not has_evidence)
+        group["missing_analysis_count"] = group["count"] - group["analyzed_count"]
+    return list(groups.values())
+
+
+def _has_case_analysis(report: dict) -> bool:
+    summary = report.get("summary")
+    return bool(
+        (isinstance(summary, str) and _is_meaningful_report_text(summary))
+        or normalize_focused_analysis(report.get("focused_analysis"), valid_refs=[])
+    )
+
+
+def creator_analysis_focus(sample_set: CloneSampleSet, samples: list[CloneSample]) -> dict:
+    requested = normalize_content_profile(sample_set.content_profile)
+    groups = creator_content_groups(samples)
+    metadata = {"title": sample_set.title, "notes": " ".join([
+        str(sample_set.profile_metadata.get("bio") or ""), *[sample.title for sample in samples]])}
+    focus = resolve_analysis_focus(metadata, {}, requested=requested)
+    if requested == "auto" and groups and any(group["category"] != "general" for group in groups):
+        primary = max(groups, key=lambda group: group["count"])["category"]
+        focus = resolve_analysis_focus(metadata, {}, requested=primary)
+        focus["source"] = "auto"
+        focus["reason"] = "按选中样本的已有方向分组汇总；多数方向仅决定汇总重点，不覆盖各样本事实。"
+    return focus
+
+
+def infer_content_profile(sample_set: CloneSampleSet, selected_samples: list[CloneSample]) -> str:
+    return creator_category(creator_analysis_focus(sample_set, selected_samples)["primary"])
 
 
 def content_profile_prompt_block(sample_set: CloneSampleSet, selected_samples: list[CloneSample]) -> dict:
@@ -4058,15 +4237,28 @@ def content_profile_prompt_block(sample_set: CloneSampleSet, selected_samples: l
         "requested_label": CONTENT_PROFILE_LABELS.get(requested, requested),
         "effective": effective,
         "effective_label": CONTENT_PROFILE_LABELS.get(effective, effective),
-        "guidance": CONTENT_PROFILE_GUIDANCE.get(effective, CONTENT_PROFILE_GUIDANCE["general"]),
+        "guidance": "；".join(creator_analysis_focus(sample_set, selected_samples)["questions"]),
     }
 
 
-def content_profile_prompt_text(sample_set: CloneSampleSet, selected_samples: list[CloneSample]) -> str:
+def content_profile_prompt_text(sample_set: CloneSampleSet, selected_samples: list[CloneSample], compact: bool = False) -> str:
     profile = content_profile_prompt_block(sample_set, selected_samples)
+    focus = creator_analysis_focus(sample_set, selected_samples)
+    groups = creator_content_groups(selected_samples)
+    group_questions = {group["category"]: resolve_analysis_focus({}, {}, requested=group["category"])["questions"][0]
+                       for group in groups if group["category"] != creator_category(focus["primary"])}
+    if compact:
+        profile = {key: profile[key] for key in ("requested", "effective")}
     return (
         f"账号类型 / 分析模板：{json.dumps(profile, ensure_ascii=False)}\n"
-        f"模板执行要求：{profile['guidance']}\n"
+        + focus_prompt(focus, evidence={"images": [], "visual_available": False,
+            "valid_refs": _selected_content_refs(selected_samples), "source": "本次实际附带的文字材料；没有发送图片或音频"}, compact=compact) + "\n"
+        f"content_groups（程序计算，不得改写计数和成员）：{json.dumps(groups, ensure_ascii=False)}\n"
+        f"其它类型问题：{json.dumps(group_questions, ensure_ascii=False)}\n"
+        "分别归纳各组具体做法、支持 sample_id、适用形式和可迁移方法，再区分跨组共性与不可推广结论。"
+        "可返回 content_groups=[{category,focused_analysis:[{observation,interpretation,transfer,evidence,uncertainty}]}]；"
+        "引用仅限本次选中的 sample_id，不引用未提交的帧、片段、时间戳或未选样本。"
+        "元数据初判和已有单条分析必须分开，metadata_only 不计作已验证视觉规律。"
         "如果 requested=auto，先根据标题、标签、媒体类型和样本证据自动判断内容类型；"
         "如果用户手动指定模板，则以该模板的分析重点为准。"
     )
@@ -4409,7 +4601,7 @@ def _sample_evidence_status(sample: CloneSample) -> dict:
         "analysis_status": sample.analysis_status,
         "asr_checked": asr_checked,
         "ocr_checked": ocr_checked,
-        "can_infer_visual_rhythm": bool(sample.has_frames),
+        "can_infer_visual_rhythm": False,
         "can_infer_spoken_script": bool(sample.has_asr),
         "can_infer_screen_text": bool(sample.has_ocr),
         "can_use_comment_reaction": bool(sample.has_comments),
@@ -4422,7 +4614,7 @@ def _sample_evidence_status(sample: CloneSample) -> dict:
     if sample.asr_status == "provider_missing":
         status["limits"].append("ASR provider 未配置，不能把缺少转写等同于无口播。")
     elif sample.asr_status == "no_speech":
-        status["limits"].append("ASR 已检查并确认无可转写语音。")
+        status["limits"].append("ASR 未得到有效文本，不能据此确认没有口播。")
     elif not sample.has_asr:
         status["limits"].append("缺少 ASR 文本，口播/声音判断需要保守。")
     if sample.ocr_status == "provider_missing":

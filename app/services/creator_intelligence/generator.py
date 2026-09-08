@@ -113,7 +113,7 @@ def validate_creator_strategy_plan(value: dict) -> dict:
 
 def _normalize_profile(value: str) -> str:
     profile = str(value or "").strip()
-    if profile in BEAUTY_PROFILES or profile in {"knowledge", "emotional_copy", "story_twist", "commerce_seed"}:
+    if profile in BEAUTY_PROFILES or profile in {"tutorial", "knowledge", "emotional_copy", "story_twist", "commerce_seed"}:
         return profile
     return "general"
 

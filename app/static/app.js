@@ -832,6 +832,12 @@ const profileQueueItems = document.getElementById("profile-queue-items");
 const creatorCloneDistillButton = document.getElementById("creator-clone-distill-button");
 const creatorCloneBatchDistillButton = document.getElementById("creator-clone-batch-distill-button");
 const profileContentProfile = document.getElementById("profile-content-profile");
+profileContentProfile?.addEventListener("change", () => {
+  const status = document.getElementById("profile-content-focus-status");
+  if (status) {
+    status.textContent = "分析方向已修改，现有报告仍按上次方向生成。下次主动蒸馏时使用所选方向。";
+  }
+});
 const profileDistillMode = document.getElementById("profile-distill-mode");
 const creatorCloneSelectionStatus = document.getElementById("creator-clone-selection-status");
 const profileEvidenceStatus = document.getElementById("profile-evidence-status");

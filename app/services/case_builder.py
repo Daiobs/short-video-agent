@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.models import CaseArtifact, LocalVideoItem
+from app.services.content_analysis import resolve_analysis_focus
 from app.services.analysis_taxonomy import (
-    BASE_ANALYSIS_FOCUS,
     build_analysis_context,
     build_prompt,
     explain_content_category,
@@ -166,8 +166,17 @@ def build_case_from_local_video(
             "analysis_lens": analysis_context["analysis_lens"],
             "key_questions": analysis_context["key_questions"],
             "content_ratio": analysis_context["content_ratio"],
-            "analysis_focus": list(BASE_ANALYSIS_FOCUS),
+            "analysis_direction": "auto",
         }
+        analysis_input["analysis_focus"] = resolve_analysis_focus(metadata, analysis_input)
+        analysis_context = build_analysis_context(analysis_input["analysis_focus"]["primary"])
+        analysis_context["analysis_focus"] = analysis_input["analysis_focus"]
+        for target in (metadata, analysis_input):
+            target["content_category"] = analysis_context["category_id"]
+            target["content_category_label"] = analysis_context["label"]
+        analysis_input["analysis_context"] = analysis_context
+        analysis_input["analysis_lens"] = analysis_context["analysis_lens"]
+        analysis_input["key_questions"] = analysis_context["key_questions"]
 
         report(80, "写入素材包 JSON 和 prompt")
         metadata_path = case_dir / "metadata.json"

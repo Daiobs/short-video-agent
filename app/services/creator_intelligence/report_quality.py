@@ -179,7 +179,7 @@ def _landing_dimensions(text: str) -> dict[str, bool]:
     }
 
 
-def _evidence_warnings(evidence_summary: dict[str, Any] | None) -> tuple[str, ...]:
+def _evidence_warnings(evidence_summary: dict[str, Any] | None, primary: str | None = None) -> tuple[str, ...]:
     evidence = evidence_summary if isinstance(evidence_summary, dict) else {}
     if not evidence:
         return ()
@@ -191,9 +191,9 @@ def _evidence_warnings(evidence_summary: dict[str, Any] | None) -> tuple[str, ..
     warnings: list[str] = []
     if selected_count and evidence_ready_count < selected_count:
         warnings.append(f"证据不足：{selected_count - evidence_ready_count}/{selected_count} 条样本尚未达到可蒸馏证据。")
-    if selected_count and with_keyframes == 0:
+    if selected_count and with_keyframes == 0 and primary not in {"knowledge", "motivational"}:
         warnings.append("证据不足：当前样本没有关键帧，视觉规律置信度会降低。")
-    if selected_count >= 3 and with_asr == 0 and with_ocr == 0:
+    if selected_count >= 3 and with_asr == 0 and with_ocr == 0 and primary not in {"beauty_cos", "photo_beauty", "edge_visual"}:
         warnings.append("证据不足：当前缺少 ASR/OCR 文本，表达结构和字幕规律置信度会降低。")
     return tuple(warnings)
 
@@ -223,7 +223,9 @@ def validate_creator_report_quality(
         warnings.append("报告结构不完整：" + "、".join(missing))
     if weak:
         warnings.append("报告字段偏弱：" + "、".join(weak))
-    evidence = _evidence_warnings(evidence_summary)
+    focus = (report_context or {}).get("analysis_focus") or {}
+    primary = focus.get("primary") if isinstance(focus, dict) else None
+    evidence = _evidence_warnings(evidence_summary, primary)
     text = _all_text(normalized, report_context)
     has_actions = _has_actionable_language(text)
     has_sample_evidence = _has_sample_evidence(normalized, report_context)
@@ -237,7 +239,15 @@ def validate_creator_report_quality(
         missing_evidence.append("缺少可直接执行的下一条选题。")
     if not has_actions:
         missing_evidence.append("报告缺少明确动作词，容易停留在抽象描述。")
-    missing_dimensions = [name for name, ok in dimensions.items() if not ok]
+    required_dimensions = {
+        "beauty_cos": {"shooting", "cover"},
+        "photo_beauty": {"shooting", "cover"},
+        "tutorial": {"script", "title"},
+        "knowledge": {"script", "title"},
+        "motivational": {"script", "title"},
+        "plot_twist": {"script", "title"},
+    }.get(primary, set(dimensions))
+    missing_dimensions = [name for name, ok in dimensions.items() if not ok and name in required_dimensions]
     if missing_dimensions:
         labels = {"shooting": "拍摄", "script": "脚本/文案", "title": "标题/话题", "cover": "封面/首帧"}
         missing_evidence.append("缺少落地建议维度：" + "、".join(labels[name] for name in missing_dimensions))
