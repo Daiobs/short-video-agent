@@ -1,0 +1,31 @@
+{
+  "summary": "合成验收数据：这个教程账号把容易做错的操作拆成可见步骤，先展示失败结果与正确结果的差别，再解释工具位置、动作顺序和检查方法。本轮最值得尝试的是把判断标准提前，而不是增加更多术语。以下内容只用于长报告排版与字段保留测试，不代表真实账号或模型质量。",
+  "analysis_focus": {"version": 1, "primary": "tutorial", "label": "步骤教程", "source": "user"},
+  "focused_analysis": [
+    {"question": "先展示可比较的结果，再教动作", "observation": "合成样本先并列展示两个不同结果，随后用同样的背景和距离演示操作。观众可以沿着同一个判断标准查看变化，不需要在多个场景中重新寻找参照。", "interpretation": "这种安排可能减少理解成本，但当前没有留存曲线，不能据此断言它提高了完播。", "transfer": "下一条先拍一组固定机位的前后对比，再只改变一个动作，避免同时更换工具、光线和角度。", "evidence": ["sample_fixture_one"], "uncertainty": "这是合成示例；真实效果需要发布后的对照记录。"},
+    {"question": "把动作与验证放在同一段", "observation": "第二个合成样本把转动工具的动作和完成后的检查画面连续呈现，保留手与工具的位置关系，没有用只显示成品的跳切替代关键步骤。", "interpretation": "读者可能更容易判断自己在哪一步出错；评论量无法单独证明理解程度。", "transfer": "每个步骤加一句能现场检查的结果描述，例如边缘是否对齐，并保留一次慢速动作。", "evidence": ["sample_fixture_two"], "uncertainty": "没有逐条评论文本，不能把教程需求写成已确认观众诉求。"},
+    {"question": "工具信息不抢占开头", "observation": "工具名称放在操作出现之后，而不是在开头连续列出型号。", "transfer": "先展示问题与结果，工具型号放在相关步骤或补充说明。", "evidence": ["sample_fixture_one"]},
+    {"question": "补充步骤的边界", "observation": "附加合成条目用于验证展开后仍有完整内容。不同材料可能需要不同力度，不能把某一材料的步骤当作普遍适用。", "transfer": "发布时说明材料与适用范围。", "uncertainty": "不可静默删去此限定。"}
+  ],
+  "next_actions": [
+    "先拍固定机位的失败结果与正确结果，选用相同材料和光线，让区别可以直接检查。",
+    "正文只演示一个关键动作；在动作结束处增加结果检查，而不是另加三个无关技巧。",
+    "发布后记录观众具体卡在哪一步，用真实提问决定下一条补充教程，不仅比较点赞总量。",
+    "补充行动：保留操作失败时的纠正方法，放在完整方案中，不能因默认只展示三条就丢失。"
+  ],
+  "transferable_formulas": [
+    {"name": "可见差异 → 单一动作 → 现场检查", "when_to_use": "同一条件下能拍到可比较结果，且一个动作可以解释主要差别时。", "beat_structure": "先给结果对照 → 保持机位演示动作 → 对照判断标准 → 说明适用范围", "evidence": ["sample_fixture_one"], "risks": ["没有控制条件时，前后对比只能用于演示，不能证明因果。"]},
+    {"name": "问题定位 → 慢速动作 → 常见失误", "when_to_use": "动作顺序容易混淆，需要看到手与工具关系时。", "beat_structure": "展示错误位置 → 连续演示正确步骤 → 展示检查方法", "evidence": ["sample_fixture_two"], "extension": {"preserved_detail": "扩展字段完整保留在技术详情，不应当被渲染器删除。"}}
+  ],
+  "candidate_ideas": [
+    {"title": "为什么同一个工具，你的边缘总对不齐？", "opening_3s": "先让两个结果同框，指出需要观察的边缘。", "production_requirements": ["同一批材料、固定机位、两组操作结果", "保留完整动作和一次检查过程；说明光线与角度仅为展示，不是性能验证。"], "formula_used": "可见差异 → 单一动作 → 现场检查", "evidence": ["sample_fixture_one"], "validation": "记录真实提问集中在哪一步，不把绝对互动量解释成观看率。"},
+    {"title": "先别换工具，检查这个动作顺序", "action": "连续拍摄一次错误与纠正过程，保持背景一致。", "evidence": ["sample_fixture_two"], "risks": ["不能把新创意描述成原样本实际发生的镜头。"]}
+  ],
+  "performance_segments": {
+    "highest_like_samples": [{"sample_id": "sample_fixture_one", "title": "合成作品：结果检查", "metric": "like_count", "metric_value": 120, "comment_count": 0, "share_count": 18, "collect_count": 42}],
+    "highest_share_samples": [{"sample_id": "sample_fixture_one", "title": "合成作品：结果检查", "metric": "share_count", "metric_value": 18}],
+    "highest_comment_samples": [{"sample_id": "sample_fixture_two", "title": "合成作品：步骤演示", "metric": "comment_count", "metric_value": 8, "like_count": 70, "share_count": null, "collect_count": 12}]
+  },
+  "evidence_gaps": ["合成验收数据没有真实留存、转化或评论材料，不能用于评价真实账号。", "部分样本只有已有报告摘要；不能声称本次直接看过所有原片。"],
+  "report_provenance": {"version": 1, "fields": {"summary": "unknown", "focused_analysis": "unknown", "next_actions": "unknown", "transferable_formulas": "unknown", "candidate_ideas": "unknown", "performance_segments": "deterministic"}}
+}

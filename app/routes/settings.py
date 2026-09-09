@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -14,6 +16,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
 class LLMSettingsUpdate(BaseModel):
+    creator_distill_budget_mode: Literal["auto", "manual"] | None = None
     provider: str | None = None
     api_base: str | None = None
     api_key: str | None = None
@@ -22,13 +25,13 @@ class LLMSettingsUpdate(BaseModel):
     creator_distill_request_timeout_seconds: float | None = Field(
         default=None,
         ge=30,
-        le=300,
+        le=1200,
         allow_inf_nan=False,
     )
-    final_reduce_timeout_seconds: float | None = Field(default=None, ge=30, le=900, allow_inf_nan=False)
-    quick_distill_budget_seconds: float | None = Field(default=None, ge=60, le=600, allow_inf_nan=False)
-    deep_distill_budget_seconds: float | None = Field(default=None, ge=120, le=1200, allow_inf_nan=False)
-    batch_job_budget_seconds: float | None = Field(default=None, ge=180, le=1800, allow_inf_nan=False)
+    final_reduce_timeout_seconds: float | None = Field(default=None, ge=30, le=2400, allow_inf_nan=False)
+    quick_distill_budget_seconds: float | None = Field(default=None, ge=60, le=14400, allow_inf_nan=False)
+    deep_distill_budget_seconds: float | None = Field(default=None, ge=120, le=14400, allow_inf_nan=False)
+    batch_job_budget_seconds: float | None = Field(default=None, ge=180, le=14400, allow_inf_nan=False)
     final_reduce_min_reserve_seconds: float | None = Field(default=None, ge=30, le=600, allow_inf_nan=False)
     compact_retry_min_remaining_seconds: float | None = Field(default=None, ge=10, le=300, allow_inf_nan=False)
     temperature: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)

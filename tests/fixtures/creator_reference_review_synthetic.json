@@ -1,0 +1,33 @@
+{
+  "summary": "合成账号：用同一背景展示造型变量，下一条比较单套与集合版。",
+  "analysis_focus": {"primary": "beauty_cos", "source": "auto", "label": "视觉展示"},
+  "reference_manifest": {
+    "version": 1,
+    "scope": "actual_request",
+    "samples": [
+      {"sample_id": "sample_fixture_one", "title": "合成：蓝色造型对照", "case_id": "case_fixture_one", "open_url": "/cases/case_fixture_one"},
+      {"sample_id": "sample_fixture_two", "title": "", "case_id": "", "open_url": ""},
+      {"sample_id": "sample_fixture_three", "title": "合成：道具展示", "case_id": "case_fixture_three", "open_url": "javascript:alert(1)"},
+      {"sample_id": "sample_fixture_four", "title": "合成：细节比较"},
+      {"sample_id": "sample_fixture_five", "title": "合成：文字悬念"}
+    ],
+    "entries": [
+      {"path": "focused_analysis[0].evidence", "valid_sample_ids": ["sample_fixture_one", "sample_fixture_two"], "invalid_refs": [], "status": "valid"},
+      {"path": "focused_analysis[1].evidence", "valid_sample_ids": [], "invalid_refs": ["sample_fixture_onne"], "status": "invalid"},
+      {"path": "transferable_formulas[0].supporting_samples", "valid_sample_ids": ["sample_fixture_one"], "invalid_refs": ["sample_fixture_onne"], "status": "partial"},
+      {"path": "candidate_ideas[0].basis[0]", "valid_sample_ids": ["sample_fixture_one"], "invalid_refs": [], "status": "valid"}
+    ]
+  },
+  "focused_analysis": [
+    {"question": "相同背景如何服务对照", "observation": "两张静态图中背景相近。", "interpretation": "可能让造型差异更容易比较。", "transfer": "拍两种造型，保持背景一致。", "evidence": ["sample_fixture_one", "sample_fixture_two"], "uncertainty": "静态图不能确认整段视频固定机位。"},
+    {"question": "待复核的第三条解释", "observation": "模型提出了额外解释。", "transfer": "仅作为创意草案。", "evidence": [], "uncertainty": "引用无法定位，不能视为有样本支持。"}
+  ],
+  "content_groups": [{"label": "视觉展示", "sample_ids": ["sample_fixture_one", "sample_fixture_two"], "focused_analysis": [{"observation": "sample_fixture_one 给出两种景别。", "transfer": "先全身，再细节。", "evidence": ["sample_fixture_one"], "uncertainty": "不能确认连续镜头运动。"}]}],
+  "expression_patterns": {"visual_style": ["{\"observation\":\"sample_fixture_one 的静态背景相近。\",\"confidence\":\"high\",\"uncertainty\":\"这是可见帧，不是全片运动判断。\"}"]},
+  "transferable_formulas": [{"name": "合成：变量对照", "observation": "先看整体造型。", "interpretation": "有利于比较是假设。", "execution": "参考 sample_fixture_one，记录两版。", "applicable_formats": ["单套", "集合版"], "supporting_samples": [{"sample_id": "sample_fixture_one", "title": "模型伪造标题不可使用", "metrics": {"like_count": 12, "comment_count": 0}, "evidence_level": "high"}], "validation_action": "对照评论是否提及造型差异。"}],
+  "candidate_ideas": [{"idea": "合成：先整体再配件", "basis": ["参考 sample_fixture_one 的可见配件，不推断三条无图作品。"], "format": "两版对照", "effect_hypothesis": "可能更便于比较，尚未验证。", "test": "分别记录反馈。"}],
+  "next_actions": ["拍摄一条对照版，参考 sample_fixture_one；文案原话 high five 可以保留。"],
+  "evidence_gaps": ["两条有图，另外三条没有直接图片；没有评论语义输入。"],
+  "report_provenance": {"version": 1, "fields": {"next_actions": "model", "focused_analysis": "model", "transferable_formulas": "model", "candidate_ideas": "model"}},
+  "performance_segments": {"likes": [{"sample_id": "sample_fixture_one", "title": "不可信的模型标题", "metric": "like_count", "metric_value": 12}, {"sample_id": "sample_fixture_two", "metric": "like_count", "metric_value": 10}, {"sample_id": "sample_fixture_three", "metric": "like_count", "metric_value": 8}, {"sample_id": "sample_fixture_four", "metric": "like_count", "metric_value": 6}, {"sample_id": "sample_fixture_five", "metric": "like_count", "metric_value": 4}], "comments": [{"sample_id": "sample_fixture_one", "metric": "comment_count", "metric_value": 0}]}
+}

@@ -15,12 +15,11 @@ from app.errors import AppError, ErrorCode
 from app.models import CaseArtifact
 from app.routes.common import error_response
 from app.services.llm_settings import llm_status_payload
+from app.services.content_analysis import resolve_analysis_focus
 from app.services.analysis_taxonomy import (
-    BASE_ANALYSIS_FOCUS,
     build_analysis_context,
     build_prompt,
     explain_content_category,
-    infer_content_category,
     list_analysis_profiles,
 )
 from app.services.analysis_worksheet import (
@@ -183,26 +182,6 @@ def _analysis_report_path(artifact: CaseArtifact) -> Path:
     return _case_dir(artifact) / "analysis_report.md"
 
 
-def _infer_case_category(metadata: dict, analysis_input: dict) -> str:
-    existing = (
-        analysis_input.get("content_category")
-        or metadata.get("content_category")
-        or analysis_input.get("analysis_context", {}).get("category_id")
-    )
-    if existing:
-        return str(existing)
-    return infer_content_category(
-        " ".join(
-            [
-                str(metadata.get("title") or ""),
-                str(metadata.get("notes") or ""),
-                str(metadata.get("author") or ""),
-                str(metadata.get("source_url") or ""),
-            ]
-        )
-    )
-
-
 def _category_source_text(metadata: dict, analysis_input: dict) -> str:
     return " ".join(
         [
@@ -217,24 +196,17 @@ def _category_source_text(metadata: dict, analysis_input: dict) -> str:
 def _apply_analysis_context(
     metadata: dict,
     analysis_input: dict,
-    category_id: str,
     *,
     category_guess: dict | None = None,
 ) -> tuple[dict, dict]:
-    analysis_context = build_analysis_context(category_id)
+    focus = resolve_analysis_focus(metadata, analysis_input)
+    analysis_context = build_analysis_context(focus["primary"])
+    analysis_context["analysis_focus"] = focus
     guess = category_guess if isinstance(category_guess, dict) else analysis_input.get("content_category_guess")
-    if not isinstance(guess, dict) or guess.get("category_id") != analysis_context["category_id"]:
+    if not isinstance(guess, dict):
         guess = explain_content_category(_category_source_text(metadata, analysis_input))
-        if guess.get("category_id") != analysis_context["category_id"]:
-            guess = {
-                "category_id": analysis_context["category_id"],
-                "label": analysis_context["label"],
-                "description": analysis_context["description"],
-                "confidence": "manual",
-                "matched_keywords": [],
-                "reason": "用户已手动切换分析类型，系统按当前模板展示和生成 Prompt。",
-                "source": "manual_override",
-            }
+        if focus["source"] == "legacy":
+            guess = {**guess, "source": "legacy_unknown", "reason": focus["reason"]}
     metadata["content_category"] = analysis_context["category_id"]
     metadata["content_category_label"] = analysis_context["label"]
     metadata["content_category_guess"] = guess
@@ -244,8 +216,9 @@ def _apply_analysis_context(
     analysis_input["analysis_context"] = analysis_context
     analysis_input["analysis_lens"] = analysis_context["analysis_lens"]
     analysis_input["key_questions"] = analysis_context["key_questions"]
-    analysis_input["content_ratio"] = analysis_context["content_ratio"]
-    analysis_input.setdefault("analysis_focus", list(BASE_ANALYSIS_FOCUS))
+    if "analysis_direction" in analysis_input or "content_ratio" not in analysis_input:
+        analysis_input["content_ratio"] = analysis_context["content_ratio"]
+    analysis_input["analysis_focus"] = focus
     return metadata, analysis_input
 
 
@@ -253,8 +226,7 @@ def _load_case_parts(artifact: CaseArtifact) -> tuple[dict, dict, dict, str]:
     metadata = _read_json_file(artifact.metadata_path)
     ffprobe = _read_json_file(artifact.ffprobe_path)
     analysis_input = refresh_analysis_input_enrichment(artifact)
-    category_id = _infer_case_category(metadata, analysis_input)
-    metadata, analysis_input = _apply_analysis_context(metadata, analysis_input, category_id)
+    metadata, analysis_input = _apply_analysis_context(metadata, analysis_input)
     _write_json_file(artifact.metadata_path, metadata)
     _write_json_file(artifact.analysis_input_path, analysis_input)
     prompt = _read_text_file(artifact.prompt_path)
@@ -279,7 +251,8 @@ def _update_case_category(artifact: CaseArtifact, category_id: str) -> None:
     metadata = _read_json_file(artifact.metadata_path)
     ffprobe = _read_json_file(artifact.ffprobe_path)
     analysis_input = _read_json_file(artifact.analysis_input_path)
-    metadata, analysis_input = _apply_analysis_context(metadata, analysis_input, category_id)
+    analysis_input["analysis_direction"] = category_id
+    metadata, analysis_input = _apply_analysis_context(metadata, analysis_input)
     _write_json_file(artifact.metadata_path, metadata)
     _write_json_file(artifact.analysis_input_path, analysis_input)
     Path(artifact.prompt_path).write_text(
@@ -1617,10 +1590,10 @@ def _quality_calibration_recommendations(insights: dict) -> list[dict]:
         _add_recommendation(
             recommendations,
             "tighten_content_ratio_gate",
-            "校准内容占比结构",
+            "校准分析结构",
             82,
-            "样本中的内容占比缺少完整结构、比例总和不接近 100%，或比例缺少依据。",
-            "content_ratio 应输出 2-5 个结构段，每项包含 name、percent、reason，percent 总和约 100%；无法量化时应写入 risks 或 next_actions 等待人工复核。",
+            "历史样本提示结构或比例依据不足；新分析应使用有证据的关注重点。",
+            "按本次类型呈现有证据的结构与关注重点，不要求估算内容百分比；无法确认的部分保留为局限。",
             ["content_ratio_balance", "structure_depth"],
             "重新拆解",
             "#run-auto-analysis-button",
@@ -1633,7 +1606,7 @@ def _quality_calibration_recommendations(insights: dict) -> list[dict]:
             "收紧内容类型拆解",
             81,
             "样本的内容占比或拆解维度没有贴合当前内容类型，容易把教程、美拍、鸡汤等都写成通用模板。",
-            "每次拆解必须先确认 content_category，再让 content_ratio 至少覆盖两个该类型核心维度；类型不确定时先人工切换分类后重跑。",
+            "类型是研究视角；按实际证据回答类型重点，证据不足可继续通用分析，不因缺分类强制重跑。",
             ["category_alignment"],
             "调整类型",
             "#analysis-category-select",

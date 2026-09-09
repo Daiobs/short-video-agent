@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import Callable
@@ -9,6 +10,14 @@ from app.config import settings
 from app.errors import AppError, ErrorCode, is_retryable_llm_error
 from app.models import CaseArtifact
 from app.services.analysis_taxonomy import build_analysis_context
+from app.services.content_analysis import (
+    comment_evidence_text,
+    focus_prompt,
+    normalize_focused_analysis,
+    request_evidence,
+    resolve_analysis_focus,
+    safe_analysis_text,
+)
 from app.services.enrichment import refresh_analysis_input_enrichment
 from app.services.llm_provider import BaseLLMProvider, get_llm_provider
 
@@ -420,7 +429,7 @@ def analyze_case_artifact(
                 report,
             )
         else:
-            prompt = _build_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review)
+            prompt = _build_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review, image_paths)
             visual_input_mode = _visual_input_mode(artifact, image_paths)
             try:
                 result = llm.analyze(prompt, image_paths)
@@ -439,10 +448,8 @@ def analyze_case_artifact(
                     report(45, "首次调用失败，使用轻量视觉输入重试")
                     light_image_paths = image_paths[:1]
                     visual_input_mode = _visual_input_mode(artifact, light_image_paths)
-                    light_prompt = (
-                        f"{prompt}\n\n"
-                        "注意：首次多图请求失败，本次只使用 contact_sheet.jpg 进行轻量重试。"
-                        "请基于关键帧总览图和结构化信息完成拆解。"
+                    light_prompt = _build_prompt(
+                        metadata, ffprobe, analysis_input, analysis_context, manual_review, light_image_paths
                     )
                     try:
                         result = llm.analyze(light_prompt, light_image_paths)
@@ -457,6 +464,10 @@ def analyze_case_artifact(
                         )
 
         report(75, "整理自动拆解结果")
+        if not isinstance(result, dict) or not (
+            _has_text(result.get("summary")) or normalize_focused_analysis(result.get("focused_analysis"), [])
+        ):
+            raise AppError(ErrorCode.AUTO_ANALYSIS_FAILED, "模型未返回有效分析，保留上次报告。")
         normalized = _normalize_result(
             result,
             metadata,
@@ -510,6 +521,9 @@ def manual_review_context_for_case(artifact: CaseArtifact) -> dict:
 
 
 def _ensure_analysis_quality_fields(artifact: CaseArtifact, result: dict) -> dict:
+    if isinstance(result.get("analysis_focus"), dict) and result["analysis_focus"].get("version") == 1:
+        # A saved report describes its own request, not today's direction or assets.
+        return result
     normalized = dict(result)
     before = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
     analysis_input = refresh_analysis_input_enrichment(artifact)
@@ -1077,7 +1091,7 @@ def _run_fast_analysis(
         try:
             return (
                 llm.analyze(
-                    _build_fast_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review),
+                    _build_fast_prompt(metadata, ffprobe, analysis_input, analysis_context, manual_review, light_image_paths),
                     light_image_paths,
                 ),
                 visual_input_mode,
@@ -1100,8 +1114,11 @@ def _build_fast_prompt(
     analysis_input: dict,
     analysis_context: dict,
     manual_review: dict | None = None,
+    image_paths: list[Path] | None = None,
 ) -> str:
-    return f"""你是短视频内容策略分析师。请看 contact_sheet.jpg，并快速输出一个简短 JSON。
+    payload = _safe_prompt_value(_fast_prompt_payload(metadata, ffprobe, analysis_input, analysis_context, manual_review))
+    direction = _request_focus_prompt(metadata, analysis_input, payload, image_paths or [], compact=True)
+    return f"""你是短视频内容策略分析师。请基于实际发送的材料，快速输出一个简短 JSON。
 
 目标：给用户一个能直接看的短视频拆解报告，不要写后台诊断。总字数控制在 800-1200 字。
 
@@ -1109,7 +1126,7 @@ def _build_fast_prompt(
 1. 只输出合法 JSON，不要 Markdown。
 2. 每个数组最多 4 条，每条尽量不超过 45 个字。
 3. summary 写 2-3 句，说明这条视频靠什么吸引、适合学习什么。
-4. 重点判断：第一眼吸引、画面/人物气质、动作节奏、可复刻点、风险边界。
+4. 按本次方向回答类型专属问题，说明可迁移方法和风险边界。
 4. 看不到的内容不要编造。
 5. 面向短视频创作者，不要输出“质量门槛、证据覆盖、后台素材包”等工程说明。
 
@@ -1130,7 +1147,8 @@ def _build_fast_prompt(
 }}
 
 输入信息：
-{json.dumps(_fast_prompt_payload(metadata, ffprobe, analysis_input, analysis_context, manual_review), ensure_ascii=False, indent=2)}
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+{direction}
 """
 
 
@@ -1141,6 +1159,8 @@ def _fast_text_prompt(
     analysis_context: dict,
     manual_review: dict | None = None,
 ) -> str:
+    payload = _safe_prompt_value(_fast_prompt_payload(metadata, ffprobe, analysis_input, analysis_context, manual_review))
+    direction = _request_focus_prompt(metadata, analysis_input, payload, [], compact=True)
     return f"""请做短视频快速文本拆解。本次视觉图片调用失败，只能基于标题、互动数据、视频参数和内容类型输出保守结论。
 
 只输出合法 JSON，不要 Markdown。总字数控制在 600-900 字。数组最多 4 条。
@@ -1163,7 +1183,8 @@ def _fast_text_prompt(
 }}
 
 输入信息：
-{json.dumps(_fast_prompt_payload(metadata, ffprobe, analysis_input, analysis_context, manual_review), ensure_ascii=False, indent=2)}
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+{direction}
 """
 
 
@@ -1182,10 +1203,10 @@ def _fast_prompt_payload(
         "author": metadata.get("author") or analysis_input.get("author") or "",
         "source_url": metadata.get("source_url") or analysis_input.get("source_url") or "",
         "stats": {
-            "like_count": stats.get("like_count", 0),
-            "comment_count": stats.get("comment_count", 0),
-            "share_count": stats.get("share_count", 0),
-            "engagement_score": stats.get("engagement_score", 0),
+            "like_count": stats.get("like_count"),
+            "comment_count": stats.get("comment_count"),
+            "share_count": stats.get("share_count"),
+            "engagement_score": stats.get("engagement_score"),
         },
         "video": {
             "duration": video.get("duration") or ffprobe.get("duration") or 0,
@@ -1198,9 +1219,18 @@ def _fast_prompt_payload(
             analysis_input.get("content_category_label") or analysis_context.get("label") or "通用短视频"
         ),
         "category_description": analysis_context.get("description", ""),
-        "asr_text": _truncate_text(((enrichment.get("asr") or {}).get("full_text") or ""), 600),
-        "ocr_text": _truncate_text(json.dumps(enrichment.get("ocr") or {}, ensure_ascii=False), 600),
-        "comment_summary": _truncate_text(json.dumps(enrichment.get("comments") or {}, ensure_ascii=False), 600),
+        "analysis_enrichment": {
+            "asr": {
+                "status": (enrichment.get("asr") or {}).get("status", ""),
+                "full_text": _truncate_text((enrichment.get("asr") or {}).get("full_text", ""), 600),
+            },
+            "ocr": {
+                "status": (enrichment.get("ocr") or {}).get("status", ""),
+                **{key: _truncate_text((enrichment.get("ocr") or {}).get(key, ""), 200)
+                   for key in ("cover_text", "subtitle_text", "frame_text")},
+            },
+        },
+        "comment_summary": _truncate_text(comment_evidence_text(enrichment.get("comments")), 600),
         "manual_notes": _truncate_text(json.dumps(manual_review or {}, ensure_ascii=False), 600),
     }
 
@@ -1210,38 +1240,64 @@ def _truncate_text(value: str, limit: int) -> str:
     return text if len(text) <= limit else f"{text[:limit]}..."
 
 
+def _safe_prompt_value(value):
+    if isinstance(value, dict):
+        return {safe_analysis_text(key, len(key)): _safe_prompt_value(item) for key, item in value.items()
+                if not re.search(r"cookie|authorization|api.?key|token|secret|password|credential", key, re.I)}
+    if isinstance(value, list):
+        return [_safe_prompt_value(item) for item in value]
+    return safe_analysis_text(value, len(value)) if isinstance(value, str) else value
+
+
+def _request_focus_prompt(metadata: dict, analysis_input: dict, submitted: dict,
+                          image_paths: list[Path], compact: bool = False) -> str:
+    focus = resolve_analysis_focus(metadata, analysis_input, analysis_input.get("analysis_direction", "auto"))
+    submitted["analysis_focus"] = focus
+    submitted["content_category"] = focus["primary"]
+    submitted["content_category_label"] = focus["label"]
+    manifest = request_evidence(submitted, image_paths)
+    analysis_input["_request_focus"] = focus
+    analysis_input["_request_evidence"] = manifest
+    analysis_input["_submitted_input"] = submitted
+    return focus_prompt(focus, manifest, compact=compact) + (
+        "\n请在上述 JSON 中输出 focused_analysis，至少回答一个有材料支持的类型问题；"
+        "证据不足时说明 uncertainty。category_review 仅记录复核建议，不改写本次采用方向。"
+        "\n互动指标的真实 0 是已采集值，只有缺失字段或 null 才是未采集；"
+        "全部缺失为 missing，部分缺失为 partial，完整（包括全 0）为 ok。"
+    )
+
+
 def _build_prompt(
     metadata: dict,
     ffprobe: dict,
     analysis_input: dict,
     analysis_context: dict,
     manual_review: dict | None = None,
+    image_paths: list[Path] | None = None,
 ) -> str:
+    submitted = _safe_prompt_value({key: value for key, value in analysis_input.items() if key != "assets" and not key.startswith("_")})
+    direction = _request_focus_prompt(metadata, analysis_input, submitted, image_paths or [])
     payload = {
-        "metadata": metadata,
-        "ffprobe": ffprobe,
-        "analysis_input": {
-            key: value
-            for key, value in analysis_input.items()
-            if key not in {"assets"}
-        },
-        "analysis_context": analysis_context,
-        "manual_review": manual_review or {},
+        "metadata": _safe_prompt_value(metadata),
+        "ffprobe": _safe_prompt_value(ffprobe),
+        "analysis_input": submitted,
+        "analysis_context": _safe_prompt_value(analysis_context),
+        "manual_review": _safe_prompt_value(manual_review or {}),
     }
-    enrichment = analysis_input.get("analysis_enrichment") or {}
+    enrichment = submitted.get("analysis_enrichment") or {}
     return f"""请对这个短视频素材包做全自动爆款拆解。
 
-你会收到 contact sheet 和若干关键帧。请结合视觉信息、标题、作者、互动数据、视频参数、内容类型，以及素材包中已富化的 ASR/OCR/评论数据进行判断。
+请按本次证据清单使用实际发送的图像和文本，结合标题、作者、互动数据、视频参数和内容类型进行判断。
 
 要求：
 1. 只输出合法 JSON，不要 Markdown，不要解释 JSON 之外的内容。
-2. 如果点赞/评论/分享为 0 或缺失，请明确标记 engagement_data_quality 为 "missing"，不要编造数据；此时只能判断内容结构，不能判断真实爆款强度，并要在 risks 或 next_actions 中说明需要补指标快照。
+2. 点赞/评论/分享的真实 0 是已采集值，不等于缺失。仅缺失字段或 null 表示未采集：全部缺失标记 engagement_data_quality="missing"，部分缺失为 "partial"，完整（包括全 0）为 "ok"。不要编造指标；缺少数据时不能判断真实爆款强度，已有互动数也不能证明留存、转化或因果。
 3. 下载文件只用于视觉拆解；标题、作者、点赞、评论、分享、发布时间以 metadata / analysis_input 为准。
 4. 不要复述素材路径；输出可直接展示给用户的分析结论。
 5. 对可能涉及高风险尺度、搬运、侵权或不适合照搬的内容，要给出风险与替代表达。
 6. 如果 analysis_enrichment 中存在 ASR 转写、OCR 文字或评论摘要，必须用于判断钩子、文案结构、情绪路径和复刻方案；如果缺失，要在 enrichment_usage 里说明缺失，不要编造。
 7. 每个关键结论要尽量标注证据来源。视觉判断来自 contact sheet/keyframes；口播判断来自 ASR；画面文字判断来自 OCR；用户需求判断来自评论摘要。证据不足的结论必须放入 inferred_points 或 evidence_gaps。
-8. 输出必须满足质量门槛：confidence 建议 >= 0.6；first_3_seconds 至少写两个具体时间点，并说明真实画面/字幕/动作变化，不要只写“主体出现/字幕出现/节奏变化”；visual_analysis 至少覆盖场景/主体/构图/运动节奏中的两类；emotion_path 至少两段；content_ratio 要用 2-5 项覆盖完整结构，每项有 percent 和 reason，percent 总和约 100%；shot_table 至少一行包含 time 且画面/动作/字幕/节奏/目的中至少两项；publish_package 不能只有标题，还要有 caption、hashtags 或 pinned_comment；replication.avoid_copying 或 risks 必须说明不要照搬和替代表达。
+8. 优先回答类型专属问题，区分观察、解释、可迁移建议与不确定性。不适用的模块允许为空。没有时间依据不填时间点，静态帧不足以确定连续运镜、音乐或卡点。不要求内容百分比，不为填字段编造数据。publish_package 需提供可用发布建议；replication.avoid_copying 或 risks 说明不要照搬和替代表达。
 9. replication.copyable_points 每一条都必须能追溯到 hook_analysis、visual_analysis、copywriting_analysis、speech_analysis、screen_text_analysis、comment_insights 或 evidence_summary；不要输出“爆款结构”“适合复刻”这类无来源泛化点。replication.shot_table 每一行都必须基于 timeline、evidence_summary、opening_3s 或 copyable_points；不要凭空新增原视频没有的镜头、动作、转场或字幕。若属于创意扩展，请移入 risks / next_actions，并说明需要人工确认。
 10. timeline、hook_analysis.first_3_seconds 和 replication.shot_table 的时间点必须落在 ffprobe/analysis_input 给出的视频时长内；first_3_seconds 只能描述 0-3s；不要给 10 秒视频编出 15-20s 的原片分镜。
 11. 如果 manual_review 中存在人工工作表内容，请把它作为用户观察和校对意见使用；不要用它替代真实视觉/ASR/OCR/评论证据。若人工笔记与模型观察冲突，请在 evidence_gaps、risks 或 next_actions 中标记需要人工复核。
@@ -1258,7 +1314,7 @@ def _build_prompt(
   "hook_analysis": {{
     "first_impression": "",
     "why_stop_scrolling": "",
-    "first_3_seconds": ["0s ...", "1s ...", "2s ..."],
+    "first_3_seconds": [],
     "optimization": ""
   }},
   "visual_analysis": {{
@@ -1276,7 +1332,7 @@ def _build_prompt(
     "reusable_patterns": []
   }},
   "speech_analysis": {{
-    "has_speech": true,
+    "has_speech": null,
     "opening_line": "",
     "spoken_hook": "",
     "script_structure": "",
@@ -1294,13 +1350,8 @@ def _build_prompt(
     "high_frequency_words": [],
     "replicable_interaction_design": ""
   }},
-  "emotion_path": ["开头", "中段", "结尾"],
-  "content_ratio": [
-    {{"name": "维度", "percent": 0, "reason": ""}}
-  ],
-  "timeline": [
-    {{"time_range": "0-1s", "visual": "", "purpose": ""}}
-  ],
+  "emotion_path": [],
+  "timeline": [],
   "replication": {{
     "copyable_points": [],
     "avoid_copying": [],
@@ -1350,7 +1401,8 @@ def _build_prompt(
 {json.dumps(enrichment, ensure_ascii=False, indent=2)}
 
 人工工作表、质量验收与人工摘要：
-{json.dumps(manual_review or {}, ensure_ascii=False, indent=2)}
+{json.dumps(_safe_prompt_value(manual_review or {}), ensure_ascii=False, indent=2)}
+{direction}
 """
 
 
@@ -1368,10 +1420,10 @@ def _compact_text_prompt(
         "author": metadata.get("author") or analysis_input.get("author") or "",
         "source_url": metadata.get("source_url") or analysis_input.get("source_url") or "",
         "stats": {
-            "like_count": stats.get("like_count", 0),
-            "comment_count": stats.get("comment_count", 0),
-            "share_count": stats.get("share_count", 0),
-            "engagement_score": stats.get("engagement_score", 0),
+            "like_count": stats.get("like_count"),
+            "comment_count": stats.get("comment_count"),
+            "share_count": stats.get("share_count"),
+            "engagement_score": stats.get("engagement_score"),
         },
         "video": {
             "duration": video.get("duration") or ffprobe.get("duration") or 0,
@@ -1388,6 +1440,8 @@ def _compact_text_prompt(
         "analysis_enrichment": analysis_input.get("analysis_enrichment") or {},
         "manual_review": manual_review or {},
     }
+    payload = _safe_prompt_value(payload)
+    direction = _request_focus_prompt(metadata, analysis_input, payload, [], compact=True)
     return f"""请做一次短视频案例的文本降级拆解。
 
 本次视觉图片输入调用失败，你没有成功读取 contact_sheet.jpg 或 keyframes。
@@ -1407,7 +1461,7 @@ def _compact_text_prompt(
   "hook_analysis": {{"first_impression": "", "why_stop_scrolling": "", "first_3_seconds": [], "optimization": ""}},
   "visual_analysis": {{"scene": "", "subject": "", "composition": "", "lighting_color": "", "movement_rhythm": "", "style_keywords": []}},
   "copywriting_analysis": {{"title_click_reason": "", "subtitle_or_text_role": "", "comment_trigger": "", "reusable_patterns": []}},
-  "speech_analysis": {{"has_speech": false, "opening_line": "", "spoken_hook": "", "script_structure": "", "quotable_lines": []}},
+  "speech_analysis": {{"has_speech": null, "opening_line": "", "spoken_hook": "", "script_structure": "", "quotable_lines": []}},
   "screen_text_analysis": {{"cover_text_role": "", "subtitle_text_role": "", "screen_text_patterns": [], "text_visual_conflicts": []}},
   "comment_insights": {{"audience_needs": [], "comment_triggers": [], "high_frequency_words": [], "replicable_interaction_design": ""}},
   "emotion_path": [],
@@ -1431,6 +1485,7 @@ def _compact_text_prompt(
 
 输入：
 {json.dumps(payload, ensure_ascii=False, indent=2)}
+{direction}
 """
 
 
@@ -1448,6 +1503,30 @@ def _normalize_result(
     manual_review: dict | None = None,
 ) -> dict:
     normalized = dict(result)
+    manifest = analysis_input.get("_request_evidence")
+    if manifest is None and "analysis_direction" in analysis_input:
+        manifest = request_evidence(analysis_input, [])
+    if manifest is not None:
+        normalized["confidence_input_valid"] = _valid_confidence_input(result.get("confidence"))
+        focus = analysis_input.get("_request_focus") or resolve_analysis_focus(
+            metadata, analysis_input, analysis_input.get("analysis_direction", "auto")
+        )
+        normalized["analysis_focus"] = dict(focus)
+        normalized["request_evidence"] = manifest
+        normalized["focused_analysis"] = normalize_focused_analysis(result.get("focused_analysis"), manifest["valid_refs"])
+        review = result.get("category_review")
+        normalized["category_review"] = {
+            key: safe_analysis_text(review.get(key), 600) for key in ("suggested_category", "reason")
+        } if isinstance(review, dict) else {}
+        normalized["content_category"] = focus["primary"]
+        normalized["content_category_label"] = focus["label"]
+    analysis_input = {**analysis_input, **analysis_input.get("_submitted_input", {})}
+    if manifest is not None and "comments" in manifest:
+        enrichment = dict(analysis_input.get("analysis_enrichment") or {})
+        comments = enrichment.get("comments")
+        if not isinstance(comments, dict):
+            enrichment["comments"] = {"summary": comment_evidence_text(comments)}
+        analysis_input = {**analysis_input, "analysis_enrichment": enrichment}
     normalized.setdefault("summary", "")
     normalized.setdefault("content_category", analysis_input.get("content_category") or analysis_context.get("category_id") or "generic")
     normalized.setdefault(
@@ -1456,7 +1535,10 @@ def _normalize_result(
     )
     normalized.setdefault("confidence", 0)
     stats = analysis_input.get("stats") or {}
-    if not any(int(stats.get(key) or 0) for key in ("like_count", "comment_count", "share_count")):
+    if manifest is not None:
+        present = sum(stats.get(key) is not None for key in ("like_count", "comment_count", "share_count"))
+        normalized["engagement_data_quality"] = "ok" if present == 3 else "partial" if present else "missing"
+    elif not any(int(stats.get(key) or 0) for key in ("like_count", "comment_count", "share_count")):
         normalized["engagement_data_quality"] = "missing"
     else:
         normalized.setdefault("engagement_data_quality", "ok")
@@ -1480,6 +1562,17 @@ def _normalize_result(
         analysis_input,
         visual_input_mode,
     )
+    if manifest is not None:
+        normalized["evidence_summary"]["submitted_evidence"] = manifest
+        if not manifest.get("asr", {}).get("submitted"):
+            normalized["evidence_summary"]["asr_evidence"] = []
+        if not manifest.get("visual_available"):
+            normalized["evidence_summary"]["visual_evidence"] = []
+        elif not isinstance(result.get("evidence_summary"), dict) or not result["evidence_summary"].get("visual_evidence"):
+            normalized["evidence_summary"]["visual_evidence"] = [{
+                "claim": "本次图像输入范围（不是内容事实验证）",
+                "evidence": "模型收到：" + ", ".join(manifest["images"]), "confidence": "medium",
+            }]
     normalized["enrichment_usage"] = _normalize_enrichment_usage(
         normalized.get("enrichment_usage"),
         analysis_input,
@@ -1495,6 +1588,9 @@ def _normalize_result(
     normalized["source"] = _normalize_source_payload(normalized.get("source"), metadata, ffprobe, analysis_input)
     normalized["rerun_compliance"] = _build_rerun_compliance(normalized)
     normalized["quality_review"] = _analysis_quality_review(normalized)
+    if manifest is not None:
+        # Sanitize after source merging and diagnostic generation, before either report is saved.
+        normalized = _safe_prompt_value(normalized)
     return normalized
 
 
@@ -2241,7 +2337,12 @@ def _analysis_quality_review(result: dict) -> dict:
             "details": publish_issues[:8],
         },
     ]
-    score = sum(check["weight"] for check in checks if check["passed"])
+    focused = isinstance(result.get("analysis_focus"), dict) and result["analysis_focus"].get("version") == 1
+    if focused:
+        checks = _focused_quality_checks(result, checks)
+    score = _applicable_quality_score(checks) if focused else sum(
+        check["weight"] for check in checks if check["passed"]
+    )
     gaps = [check for check in checks if not check["passed"]]
     has_visual_input_gap = any(gap["id"] == "visual_input" for gap in gaps)
     if score >= 85 and not gaps:
@@ -2264,6 +2365,11 @@ def _analysis_quality_review(result: dict) -> dict:
         level = "weak"
         label = "拆解质量不足"
         summary = "报告缺少多项核心内容，不建议直接作为复刻依据。"
+    if focused:
+        summary = (
+            "适用项结构与完成度检查已通过。"
+            if level == "strong" else "适用项结构与完成度仍需结合检查缺口复核。"
+        ) + "质量分按适用项权重归一化，不代表事实准确率或已完成事实核验。"
     return {
         "score": score,
         "max_score": 100,
@@ -2274,6 +2380,127 @@ def _analysis_quality_review(result: dict) -> dict:
         "gaps": gaps,
         "next_actions": [gap["action"] for gap in gaps[:4]],
     }
+
+
+def _applicable_quality_score(checks: list[dict]) -> int:
+    applicable = [check for check in checks if check.get("applicable", True) and check["weight"] > 0]
+    total = sum(check["weight"] for check in applicable)
+    earned = sum(check["weight"] for check in applicable if check["passed"])
+    return int(round(100 * earned / total)) if total else 0
+
+
+def _focused_quality_checks(result: dict, checks: list[dict]) -> list[dict]:
+    rows = result.get("focused_analysis") or []
+    substantive = [row for row in rows if _has_text(row.get("observation"))
+                   and _has_text(row.get("interpretation")) and _has_text(row.get("transfer"))]
+    grounded = bool(substantive) and all(row.get("evidence") or _has_text(row.get("uncertainty")) for row in substantive)
+    focus = result["analysis_focus"]
+    primary = focus.get("primary")
+    manifest = result.get("request_evidence") or {}
+    visual = result.get("visual_analysis") or {}
+    hook = result.get("hook_analysis") or {}
+    replication = result.get("replication") or {}
+    visual_required = primary in {"beauty_cos", "photo_beauty", "edge_visual"}
+    text_required = primary in {"tutorial", "knowledge", "motivational", "plot_twist", "product_seed"}
+    # Only completeness rules that force ratios, timing, or unavailable modalities change.
+    removed = {"content_ratio_balance", "visual_input", "evidence_gaps"}
+    retained = []
+    for check in checks:
+        key = check["id"]
+        if key in removed:
+            continue
+        if key == "category_alignment":
+            check = {**check, "passed": grounded, "details": [],
+                     "label": "类型重点结构（不验证语义）",
+                     "message": "类型重点应包含具体观察、解释、迁移方法和证据或明确局限。",
+                     "action": "根据本次方向补充有材料支持的具体结论；无法确认的部分说明局限，不补造比例或时间点。"}
+        elif key == "hook":
+            check = {**check, "passed": all(_has_specific_hook_detail(hook.get(field))
+                                             for field in ("first_impression", "why_stop_scrolling")),
+                     "details": [], "message": "是否具体说明开头信息与停留理由，不强制时间点。",
+                     "action": "补充有材料支持的开头信息和停留理由；无法定位时间时不填写时间点。"}
+        elif key == "visual":
+            applicable = bool(manifest.get("visual_available")) and (visual_required or _has_insight_content(visual))
+            issues = [issue for issue in _visual_analysis_quality_issues(visual, [])
+                      if issue["id"] != "visual_timeline_missing"]
+            check = {**check, "weight": check["weight"] if applicable else 0,
+                     "passed": not issues if applicable else not _has_insight_content(visual),
+                     "details": issues if applicable else [], "applicable": applicable,
+                     "message": "可用画面应提供具体视觉描述；不强制连续运镜和时间线。",
+                     "action": "只描述实际画面可支持的主体、构图等细节，不从文字补造画面。"}
+        elif key == "copy_speech_text":
+            applicable = text_required or any(
+                manifest.get(k, {}).get("submitted")
+                and (result.get("evidence_summary") or {}).get(f"{k}_evidence")
+                for k in ("asr", "ocr")
+            )
+            check = {**check, "weight": check["weight"] if applicable else 0,
+                     "passed": check["passed"] if applicable else True, "applicable": applicable,
+                     "action": "根据已有标题、转录或画面文字说明表达结构；不要求补做空内容检测。"}
+        elif key == "structure_depth":
+            applicable = primary in {"motivational", "plot_twist"}
+            check = {**check, "passed": not _emotion_path_issues(result.get("emotion_path")) if applicable else True,
+                     "applicable": applicable, "details": [],
+                     "message": "情绪或剧情内容应交代推进变化，不要求预设百分比。",
+                     "action": "按已有材料说明情绪或叙事的推进与收束，不填造比例。"}
+        elif key == "replication":
+            check = {**check, "passed": _has_text(replication.get("remake_angle"))
+                     and _has_items(replication.get("copyable_points")), "details": [],
+                     "message": "是否独立给出改编角度和具体可迁移做法，不强制带时间分镜。",
+                     "action": "补充与证据对应的改编角度、可迁移做法；保留来源和改编边界。"}
+        elif key == "model_confidence":
+            check = {**check, "passed": result.get("confidence_input_valid", _valid_confidence_input(result.get("confidence"))),
+                     "message": "置信度应为合法有限数值，允许低置信度，不要求达到 0.6。",
+                     "action": "提供 0 到 1 范围的置信度，不使用缺失、布尔、越界或非有限值。"}
+        elif key == "audience" and not (result.get("evidence_summary") or {}).get("comment_evidence"):
+            check = {**check, "weight": 0, "applicable": False,
+                     "passed": not _has_insight_content(result.get("comment_insights")),
+                     "details": [], "action": "没有评论证据时不填观众实际反馈，可单独标记受众假设。"}
+        elif key == "shot_table_traceability" and not (result.get("replication") or {}).get("shot_table"):
+            check = {**check, "passed": True, "details": []}
+        elif key == "enrichment_usage":
+            # Missing/empty enrichment limits conclusions, not the whole report.
+            check = {**check, "passed": not any(
+                item.get("verdict") == "insight_without_evidence"
+                for item in ((result.get("enrichment_coverage") or {}).get("items") or {}).values()
+            )}
+        retained.append(check)
+    unsupported = []
+    if not manifest.get("visual_available") and _has_insight_content(visual):
+        unsupported.append("visual_analysis：没有发送图像，不能作为已观察到的画面结论。")
+    speech = result.get("speech_analysis") or {}
+    if not manifest.get("asr", {}).get("submitted") and (
+        speech.get("has_speech") is True or any(_has_text(speech.get(k)) for k in ("opening_line", "spoken_hook", "script_structure"))
+    ):
+        unsupported.append("speech_analysis：没有发送有效转录，口播声明缺少依据。")
+    retained.append({"id": "submitted_claim_support", "label": "实际输入与核心声明", "weight": 0,
+                     "passed": not unsupported, "details": unsupported,
+                     "message": "检查核心模块是否使用未发送的模态，不等于事实语义验证。",
+                     "action": "删除没有输入依据的画面或口播事实声明，将待确认假设写入不确定性。"})
+    invalid_refs = []
+    valid_refs = manifest.get("valid_refs") or []
+    for index, row in enumerate(rows):
+        references = row.get("evidence") or []
+        # Normalization removes invalid IDs but preserves this review marker.
+        if (not isinstance(references, list)
+                or any(not isinstance(ref, str) or ref not in valid_refs for ref in references)
+                or "存在无法定位的引用，已移除" in str(row.get("uncertainty") or "")):
+            invalid_refs.append(f"focused_analysis[{index}]：存在无法定位的引用，需复核观察依据。")
+    retained.append({"id": "focused_evidence_refs", "label": "类型重点引用", "weight": 0,
+                     "passed": not invalid_refs, "details": invalid_refs,
+                     "message": "引用应能对应本次实际发送的证据；移除非法引用后仍需复核结论。",
+                     "action": "核对类型重点的引用与观察，仅使用本次 valid_refs 内的证据。"})
+    return retained
+
+
+def _valid_confidence_input(value) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number) and 0 <= number <= 1
 
 
 def _normalize_evidence_summary(existing: dict | None, analysis_input: dict, visual_input_mode: str) -> dict:
@@ -2316,9 +2543,23 @@ def _evidence_source_available(key: str, analysis_input: dict) -> bool:
         ocr = enrichment.get("ocr") or {}
         return any(_has_text(ocr.get(field)) for field in ("cover_text", "subtitle_text", "frame_text"))
     if key == "comment_evidence":
+        submitted = _submitted_comment_text(analysis_input)
+        if submitted is not None:
+            return bool(submitted)
         comments = enrichment.get("comments") or {}
         return any(_has_items(comments.get(field)) for field in ("top_needs", "high_frequency_words", "comment_hooks"))
     return True
+
+
+def _submitted_comment_text(analysis_input: dict) -> str | None:
+    manifest = analysis_input.get("_request_evidence") or {}
+    if "comments" not in manifest:
+        return None  # Preserve historical evidence handling without a request manifest.
+    if not manifest["comments"].get("submitted"):
+        return ""
+    payload = analysis_input.get("_submitted_input") or analysis_input
+    value = payload.get("comment_summary") if "comment_summary" in payload else (payload.get("analysis_enrichment") or {}).get("comments")
+    return comment_evidence_text(value, semantic_field="comment_summary" in payload)
 
 
 def _coerce_evidence_items(value, default_claim: str) -> list[dict]:
@@ -2394,7 +2635,7 @@ def _default_evidence_summary(analysis_input: dict, visual_input_mode: str) -> d
         asr_evidence.append(
             {
                 "claim": "口播/脚本结构判断",
-                "evidence": "ASR 已完成，未检测到可转写语音；本条更适合按画面、音乐和文字信息拆解。",
+                "evidence": "ASR 已完成，未检测到可转写语音；空转写不能证明没有口播，声音内容仍需复核。",
                 "confidence": "high",
             }
         )
@@ -2432,7 +2673,14 @@ def _default_evidence_summary(analysis_input: dict, visual_input_mode: str) -> d
         evidence_gaps.append("未提供 OCR 文字，封面字和字幕结构需要人工复核。")
 
     comment_evidence = []
-    if int(comments.get("total_comments") or 0):
+    submitted_comments = _submitted_comment_text(analysis_input)
+    if submitted_comments is not None:
+        if submitted_comments:
+            comment_evidence.append({"claim": "已提交评论摘要（观察资料，非因果证明）",
+                                     "evidence": _truncate(submitted_comments, 180), "confidence": "low"})
+        else:
+            evidence_gaps.append("本次未提交有效评论内容，用户反馈仍需确认。")
+    elif int(comments.get("total_comments") or 0):
         comment_bits = []
         top_needs = _coerce_list(comments.get("top_needs"))
         high_frequency_words = _coerce_list(comments.get("high_frequency_words"))
@@ -2475,6 +2723,9 @@ def _default_enrichment_usage(analysis_input: dict) -> dict:
     comment_summary_used = any(
         _has_items(comments.get(key)) for key in ("top_needs", "high_frequency_words", "comment_hooks")
     )
+    submitted_comments = _submitted_comment_text(analysis_input)
+    if submitted_comments is not None:
+        comment_summary_used = bool(submitted_comments)
     notes = []
     if str(asr.get("status") or "") == "no_speech":
         notes.append("ASR 已检测，未发现可转写语音；本条按画面、音乐和动作拆解。")
@@ -2517,6 +2768,7 @@ def _build_enrichment_coverage(result: dict, analysis_input: dict) -> dict:
     enrichment = analysis_input.get("analysis_enrichment") or {}
     evidence = result.get("evidence_summary") or {}
     usage = result.get("enrichment_usage") or {}
+    submitted_comments = _submitted_comment_text(analysis_input)
     items = {
         "asr": _coverage_item(
             label="语音 / ASR",
@@ -2558,7 +2810,7 @@ def _build_enrichment_coverage(result: dict, analysis_input: dict) -> dict:
         "comments": _coverage_item(
             label="评论反馈",
             status=str((enrichment.get("comments") or {}).get("status") or "pending"),
-            signal_available=any(
+            signal_available=bool(submitted_comments) if submitted_comments is not None else any(
                 _has_items((enrichment.get("comments") or {}).get(key))
                 for key in ("top_needs", "high_frequency_words", "comment_hooks", "top_comments")
             ),
@@ -2575,10 +2827,10 @@ def _build_enrichment_coverage(result: dict, analysis_input: dict) -> dict:
             empty_result_message="已导入评论但摘要为空；请重新导入更有代表性的高赞或典型评论。",
             action="导入高赞/典型评论后重跑，让 audience_needs、comment_triggers、replicable_interaction_design 有真实评论依据。",
             empty_result=bool(int((enrichment.get("comments") or {}).get("total_comments") or 0))
-            and not any(
+            and not (bool(submitted_comments) if submitted_comments is not None else any(
                 _has_items((enrichment.get("comments") or {}).get(key))
                 for key in ("top_needs", "high_frequency_words", "comment_hooks", "top_comments")
-            ),
+            )),
         ),
     }
     blocking = [item for item in items.values() if item["verdict"] in _coverage_blocking_verdicts()]
@@ -2723,7 +2975,13 @@ def _align_detection_flags_with_evidence(result: dict) -> None:
     risks = result.setdefault("risks", [])
     next_actions = result.setdefault("next_actions", [])
 
-    asr_no_speech = _evidence_mentions(evidence.get("asr_evidence"), "未检测到可转写语音")
+    if isinstance(result.get("analysis_focus"), dict):
+        if not (result.get("request_evidence") or {}).get("asr", {}).get("submitted"):
+            speech["has_speech"] = None
+
+    asr_no_speech = not isinstance(result.get("analysis_focus"), dict) and _evidence_mentions(
+        evidence.get("asr_evidence"), "未检测到可转写语音"
+    )
     if speech:
         if asr_no_speech and speech.get("has_speech") is True:
             text = "ASR 已确认无可转写语音，但报告声称有口播，需要人工复核。"
@@ -3226,7 +3484,9 @@ def _shot_table_quality_issues(result: dict, evidence: dict) -> list[dict]:
                 }
             )
             continue
-        if not _has_time_marker(row.get("time")):
+        if not _has_time_marker(row.get("time")) and not (
+            isinstance(result.get("analysis_focus"), dict) and result["analysis_focus"].get("version") == 1
+        ):
             issues.append(
                 {
                     "id": "shot_row_missing_time",
@@ -4281,6 +4541,19 @@ def render_analysis_report(result: dict) -> str:
         f"- 互动数据质量：{result.get('engagement_data_quality', '')}",
         "",
     ]
+    focus = result.get("analysis_focus")
+    if isinstance(focus, dict):
+        lines.extend(["## 本次分析重点", "", f"- 方向：{focus.get('label', '')}",
+                      f"- 来源：{focus.get('source', '')}", f"- 依据：{focus.get('reason', '')}", ""])
+        for row in result.get("focused_analysis") or []:
+            lines.extend([f"### {row.get('question') or '类型重点'}", ""])
+            for label, key in (("观察", "observation"), ("解释", "interpretation"),
+                               ("迁移方法", "transfer"), ("证据", "evidence"), ("局限", "uncertainty")):
+                if row.get(key):
+                    lines.append(f"- {label}：{_format_value(row[key])}")
+            lines.append("")
+        if result.get("category_review"):
+            lines.extend(["- 模型复核建议：" + _format_value(result["category_review"]), ""])
     evidence = result.get("evidence_summary") or {}
     lines.extend(["## 证据与推断边界", ""])
     lines.append(f"- 视觉输入模式：{evidence.get('visual_input_mode', '')}")

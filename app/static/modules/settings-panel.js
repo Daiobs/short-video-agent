@@ -98,11 +98,12 @@
             <dt>图片帧数</dt><dd>${escapeHtml(llm.llm_max_keyframes ?? "")}</dd>
             <dt>Temperature</dt><dd>${escapeHtml(llm.temperature ?? "")}</dd>
             <dt>普通分析单请求</dt><dd>${escapeHtml(llm.timeout_seconds ?? 90)} 秒</dd>
-            <dt>Creator 单请求</dt><dd>${escapeHtml(llm.creator_distill_request_timeout_seconds ?? 180)} 秒</dd>
-            <dt>快速蒸馏总预算</dt><dd>${escapeHtml(llm.quick_distill_budget_seconds ?? 240)} 秒</dd>
-            <dt>深度蒸馏总预算</dt><dd>${escapeHtml(llm.deep_distill_budget_seconds ?? 600)} 秒</dd>
-            <dt>分批任务总预算</dt><dd>${escapeHtml(llm.batch_job_budget_seconds ?? 600)} 秒</dd>
-            <dt>最终汇总请求</dt><dd>${escapeHtml(llm.final_reduce_timeout_seconds ?? 600)} 秒</dd>
+            <dt>Creator 等待模式</dt><dd>${llm.creator_distill_budget_mode === "manual" ? "人工覆盖" : "自动预算"}</dd>
+            <dt>Creator ${llm.creator_distill_budget_mode === "manual" ? "请求上限" : "基础等待"}</dt><dd>${escapeHtml(llm.creator_distill_request_timeout_seconds ?? 180)} 秒</dd>
+            <dt>快速蒸馏总上限</dt><dd>${escapeHtml(llm.quick_distill_budget_seconds ?? 1800)} 秒</dd>
+            <dt>深度蒸馏总上限</dt><dd>${escapeHtml(llm.deep_distill_budget_seconds ?? 3600)} 秒</dd>
+            <dt>分批任务总上限</dt><dd>${escapeHtml(llm.batch_job_budget_seconds ?? 7200)} 秒</dd>
+            <dt>最终汇总${llm.creator_distill_budget_mode === "manual" ? "请求上限" : "基础等待"}</dt><dd>${escapeHtml(llm.final_reduce_timeout_seconds ?? 600)} 秒</dd>
             <dt>最终汇总预留</dt><dd>${escapeHtml(llm.final_reduce_min_reserve_seconds ?? 120)} 秒</dd>
             <dt>精简重试最低剩余</dt><dd>${escapeHtml(llm.compact_retry_min_remaining_seconds ?? 60)} 秒</dd>
           </dl>
@@ -113,6 +114,7 @@
       if (elements.llmApiBaseInput) elements.llmApiBaseInput.value = llm.api_base || "";
       if (elements.llmModelInput) elements.llmModelInput.value = llm.model || "";
       if (elements.llmTimeoutInput) elements.llmTimeoutInput.value = llm.timeout_seconds || 90;
+      if (elements.llmCreatorBudgetModeInput) elements.llmCreatorBudgetModeInput.value = llm.creator_distill_budget_mode || "auto";
       if (elements.llmCreatorDistillTimeoutInput) {
         elements.llmCreatorDistillTimeoutInput.value = llm.creator_distill_request_timeout_seconds || 180;
       }
@@ -120,13 +122,13 @@
         elements.llmFinalReduceTimeoutInput.value = llm.final_reduce_timeout_seconds || 600;
       }
       if (elements.llmQuickDistillBudgetInput) {
-        elements.llmQuickDistillBudgetInput.value = llm.quick_distill_budget_seconds || 240;
+        elements.llmQuickDistillBudgetInput.value = llm.quick_distill_budget_seconds || 1800;
       }
       if (elements.llmDeepDistillBudgetInput) {
-        elements.llmDeepDistillBudgetInput.value = llm.deep_distill_budget_seconds || 600;
+        elements.llmDeepDistillBudgetInput.value = llm.deep_distill_budget_seconds || 3600;
       }
       if (elements.llmBatchJobBudgetInput) {
-        elements.llmBatchJobBudgetInput.value = llm.batch_job_budget_seconds || 600;
+        elements.llmBatchJobBudgetInput.value = llm.batch_job_budget_seconds || 7200;
       }
       if (elements.llmFinalReduceReserveInput) {
         elements.llmFinalReduceReserveInput.value = llm.final_reduce_min_reserve_seconds || 120;
@@ -318,11 +320,12 @@
           api_base: elements.llmApiBaseInput?.value || "",
           model: elements.llmModelInput?.value || "",
           timeout_seconds: Number(elements.llmTimeoutInput?.value || 90),
+          creator_distill_budget_mode: elements.llmCreatorBudgetModeInput?.value || "auto",
           creator_distill_request_timeout_seconds: Number(elements.llmCreatorDistillTimeoutInput?.value || 180),
           final_reduce_timeout_seconds: Number(elements.llmFinalReduceTimeoutInput?.value || 600),
-          quick_distill_budget_seconds: Number(elements.llmQuickDistillBudgetInput?.value || 240),
-          deep_distill_budget_seconds: Number(elements.llmDeepDistillBudgetInput?.value || 600),
-          batch_job_budget_seconds: Number(elements.llmBatchJobBudgetInput?.value || 600),
+          quick_distill_budget_seconds: Number(elements.llmQuickDistillBudgetInput?.value || 1800),
+          deep_distill_budget_seconds: Number(elements.llmDeepDistillBudgetInput?.value || 3600),
+          batch_job_budget_seconds: Number(elements.llmBatchJobBudgetInput?.value || 7200),
           final_reduce_min_reserve_seconds: Number(elements.llmFinalReduceReserveInput?.value || 120),
           compact_retry_min_remaining_seconds: Number(elements.llmCompactRetryMinInput?.value || 60),
           temperature: Number(elements.llmTemperatureInput?.value || 0.2),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -103,15 +104,14 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 provider="openai_compatible",
             )
             self._diagnostics.update({"http_attempt_index": 1, "http_attempt_count": 1})
-            with httpx.Client(timeout=first_timeout, trust_env=False) as client:
-                response = client.post(
-                    endpoint,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
+            response = _post_llm_request(
+                first_timeout, self.deadline, endpoint,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
             if _response_format_may_be_unsupported(response):
                 fallback_timeout = _provider_request_timeout(
                     self.timeout_seconds,
@@ -129,15 +129,14 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                         "response_format_fallback_used": True,
                     }
                 )
-                with httpx.Client(timeout=fallback_timeout, trust_env=False) as fallback_client:
-                    response = fallback_client.post(
-                        endpoint,
-                        headers={
-                            "Authorization": f"Bearer {self.api_key}",
-                            "Content-Type": "application/json",
-                        },
-                        json=payload,
-                    )
+                response = _post_llm_request(
+                    fallback_timeout, self.deadline, endpoint,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
             if response.status_code >= 400:
                 logger.warning(
                     "llm_request_failed provider=openai_compatible model=%s status=%s duration_ms=%s prompt_chars=%s image_count=%s image_bytes=%s",
@@ -304,15 +303,14 @@ class OpenAIResponsesProvider(BaseLLMProvider):
                 provider="openai_responses",
             )
             self._diagnostics.update({"http_attempt_index": 1, "http_attempt_count": 1})
-            with httpx.Client(timeout=request_timeout, trust_env=False) as client:
-                response = client.post(
-                    endpoint,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
+            response = _post_llm_request(
+                request_timeout, self.deadline, endpoint,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
             if response.status_code >= 400:
                 logger.warning(
                     "llm_request_failed provider=openai_responses model=%s status=%s duration_ms=%s",
@@ -456,16 +454,15 @@ class AnthropicCompatibleProvider(BaseLLMProvider):
                 provider="anthropic_compatible",
             )
             self._diagnostics.update({"http_attempt_index": 1, "http_attempt_count": 1})
-            with httpx.Client(timeout=request_timeout, trust_env=False) as client:
-                response = client.post(
-                    _anthropic_messages_url(self.api_base),
-                    headers={
-                        "x-api-key": self.api_key,
-                        "anthropic-version": "2023-06-01",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
+            response = _post_llm_request(
+                request_timeout, self.deadline, _anthropic_messages_url(self.api_base),
+                headers={
+                    "x-api-key": self.api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
             if response.status_code >= 400:
                 raise _classify_llm_http_error(
                     response,
@@ -748,6 +745,35 @@ def _safe_llm_diagnostics(value: dict[str, Any] | None) -> dict[str, Any]:
         "http_attempt_count": max(0, int(source.get("http_attempt_count") or 0)),
         "response_format_fallback_used": bool(source.get("response_format_fallback_used")),
     }
+
+
+def _post_llm_request(timeout_seconds: float, deadline: DistillDeadline | None, endpoint: str, **kwargs) -> httpx.Response:
+    if deadline is None or not deadline.enforce_network:
+        # Single-video analysis and Execution Pack retain their existing policy.
+        with httpx.Client(timeout=timeout_seconds, trust_env=False) as client:
+            return client.post(endpoint, **kwargs)
+
+    async def request() -> httpx.Response:
+        remaining = min(timeout_seconds, deadline.require_remaining())
+        timeout = httpx.Timeout(
+            connect=min(10.0, remaining), pool=min(10.0, remaining),
+            write=min(30.0, remaining), read=remaining,
+        )
+
+        async def exchange() -> httpx.Response:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                return await client.post(endpoint, **kwargs)
+
+        # wait_for cancels and awaits the exchange's cleanup, rather than leaving
+        # a synchronous request alive in an abandoned worker thread.
+        try:
+            response = await asyncio.wait_for(exchange(), timeout=remaining)
+        except asyncio.TimeoutError as error:
+            raise httpx.ReadTimeout("Creator local request deadline exceeded") from error
+        deadline.require_remaining()
+        return response
+
+    return asyncio.run(request())
 
 
 def _provider_request_timeout(

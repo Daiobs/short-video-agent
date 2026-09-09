@@ -1300,6 +1300,17 @@ def _distill_phase_payload(phase: dict | None, *, execution_plan: dict | None = 
     phase = dict(phase or {})
     plan = phase.get("execution_plan") if isinstance(phase.get("execution_plan"), dict) else execution_plan or {}
     current_phase = str(phase.get("current_phase") or "running")
+    batch_count = phase.get("batch_count") or plan.get("batch_count") or 0
+    phase_index = phase.get("phase_index")
+    # Only batch_reduce uses a batch ordinal; other phases include planning and persistence.
+    batch_index = (
+        phase_index
+        if current_phase == "batch_reduce"
+        and type(phase_index) is int
+        and type(batch_count) is int
+        and 1 <= phase_index <= batch_count
+        else None
+    )
     labels = {
         "planning": "规划分批蒸馏",
         "batch_reduce": "分批大模型蒸馏",
@@ -1318,8 +1329,11 @@ def _distill_phase_payload(phase: dict | None, *, execution_plan: dict | None = 
         "phase_index": phase.get("phase_index"),
         "phase_count": phase.get("phase_count"),
         "batch_id": phase.get("batch_id") or "",
-        "batch_count": phase.get("batch_count") or plan.get("batch_count") or 0,
-        "sample_count": phase.get("sample_count") or 0,
+        "batch_index": batch_index,
+        "batch_count": batch_count,
+        "sample_count": phase.get("sample_count") or plan.get("selected_count") or 0,
+        "budget_mode": phase.get("budget_mode") or (plan.get("timeout_policy") or {}).get("budget_mode", "auto"),
+        "task_cap_seconds": phase.get("task_cap_seconds") or (plan.get("timeout_policy") or {}).get("task_cap_seconds"),
         "timeout_seconds": phase.get("timeout_seconds"),
         "total_budget_seconds": phase.get("total_budget_seconds") or phase.get("total_job_budget_seconds"),
         "elapsed_seconds": phase.get("elapsed_seconds"),
@@ -1383,6 +1397,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                 or settings.llm_creator_distill_request_timeout_seconds
             ),
             final_timeout_seconds=float(llm_settings.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
+            budget_mode=llm_settings.get("creator_distill_budget_mode", "auto"),
         )
 
         def progress(value: int, message: str, phase: dict | None = None) -> None:
@@ -1398,7 +1413,7 @@ def _run_creator_clone_distill_job(job_id: str, payload: dict) -> None:
                 result={
                     "set": sample_set.to_dict(),
                     "creator_intelligence": intelligence,
-                    "execution_plan": execution_plan,
+                    "execution_plan": (phase or {}).get("execution_plan") or execution_plan,
                     "distill_phase": _distill_phase_payload(phase, execution_plan=execution_plan, message=message),
                 },
             )
@@ -1629,6 +1644,7 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
                 or settings.llm_creator_distill_request_timeout_seconds
             ),
             final_timeout_seconds=float(llm_settings.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
+            budget_mode=llm_settings.get("creator_distill_budget_mode", "auto"),
         )
 
         def progress(value: int, message: str, phase: dict | None = None) -> None:
@@ -1641,7 +1657,7 @@ def _run_creator_clone_batch_distill_job(job_id: str, payload: dict) -> None:
                     message,
                     result={
                         "set": sample_set.to_dict(),
-                        "execution_plan": execution_plan,
+                        "execution_plan": (phase or {}).get("execution_plan") or execution_plan,
                         "distill_phase": _distill_phase_payload(phase, execution_plan=execution_plan, message=message),
                     },
                 )

@@ -21,11 +21,11 @@ SUPPORTED_PROVIDERS = {
 DISABLED_PROVIDERS = {"", "disabled", "none", "off"}
 LLM_TIMING_LIMITS = {
     "timeout_seconds": (5.0, 300.0, "普通 LLM 请求上限"),
-    "creator_distill_request_timeout_seconds": (30.0, 300.0, "Creator 单请求上限"),
-    "quick_distill_budget_seconds": (60.0, 600.0, "Quick 总预算"),
-    "deep_distill_budget_seconds": (120.0, 1200.0, "Deep 总预算"),
-    "batch_job_budget_seconds": (180.0, 1800.0, "Batch 总预算"),
-    "final_reduce_timeout_seconds": (30.0, 900.0, "Final Reduce 请求上限"),
+    "creator_distill_request_timeout_seconds": (30.0, 1200.0, "Creator 请求等待值"),
+    "quick_distill_budget_seconds": (60.0, 14400.0, "Quick 总预算"),
+    "deep_distill_budget_seconds": (120.0, 14400.0, "Deep 总预算"),
+    "batch_job_budget_seconds": (180.0, 14400.0, "Batch 总预算"),
+    "final_reduce_timeout_seconds": (30.0, 2400.0, "Final Reduce 请求等待值"),
     "final_reduce_min_reserve_seconds": (30.0, 600.0, "Final Reduce 预留"),
     "compact_retry_min_remaining_seconds": (10.0, 300.0, "Compact Retry 最低剩余"),
 }
@@ -78,6 +78,7 @@ def llm_status_payload() -> dict:
         "llm_max_keyframes": effective["max_keyframes"],
         "temperature": effective["temperature"],
         "timeout_seconds": effective["timeout_seconds"],
+        "creator_distill_budget_mode": effective["creator_distill_budget_mode"],
         "creator_distill_request_timeout_seconds": effective["creator_distill_request_timeout_seconds"],
         "final_reduce_timeout_seconds": effective["final_reduce_timeout_seconds"],
         "quick_distill_budget_seconds": effective["quick_distill_budget_seconds"],
@@ -107,6 +108,9 @@ def validate_llm_timing_settings(values: dict) -> dict[str, float]:
             )
         normalized[key] = value
 
+    mode = values.get("creator_distill_budget_mode", "auto")
+    if mode not in {"auto", "manual"}:
+        raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Creator 等待模式必须为 auto 或 manual。")
     creator_timeout = normalized["creator_distill_request_timeout_seconds"]
     quick_budget = normalized["quick_distill_budget_seconds"]
     deep_budget = normalized["deep_distill_budget_seconds"]
@@ -114,9 +118,9 @@ def validate_llm_timing_settings(values: dict) -> dict[str, float]:
     batch_budget = normalized["batch_job_budget_seconds"]
     final_timeout = normalized["final_reduce_timeout_seconds"]
     final_reserve = normalized["final_reduce_min_reserve_seconds"]
-    if quick_budget < creator_timeout:
+    if mode == "manual" and quick_budget < creator_timeout:
         raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Quick 总预算不能小于 Creator 单请求上限。")
-    if deep_budget < creator_timeout:
+    if mode == "manual" and deep_budget < creator_timeout:
         raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Deep 总预算不能小于 Creator 单请求上限。")
     if retry_minimum >= quick_budget:
         raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Compact Retry 最低剩余必须小于 Quick 总预算。")
@@ -124,7 +128,7 @@ def validate_llm_timing_settings(values: dict) -> dict[str, float]:
         raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Compact Retry 最低剩余必须小于 Deep 总预算。")
     if final_reserve >= batch_budget:
         raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Final Reduce 预留必须小于 Batch 总预算。")
-    if final_timeout > batch_budget:
+    if mode == "manual" and final_timeout > batch_budget:
         raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Final Reduce 请求上限不能大于 Batch 总预算。")
     return normalized
 
@@ -132,6 +136,7 @@ def validate_llm_timing_settings(values: dict) -> dict[str, float]:
 def update_llm_settings_payload(payload: dict) -> dict:
     current = effective_llm_settings()
     values = {
+        "creator_distill_budget_mode": payload.get("creator_distill_budget_mode", current["creator_distill_budget_mode"]),
         "provider": payload.get("provider", current["provider"]),
         "api_base": payload.get("api_base", current["api_base"]),
         "model": payload.get("model", current["model"]),

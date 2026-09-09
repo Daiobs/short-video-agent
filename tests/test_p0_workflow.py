@@ -1110,7 +1110,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "需人工复核" in script
     assert "strategy-plan-timeline" in script
     assert "报告来源" in creator_report_script
-    assert "质量判断" in creator_report_script
+    assert "结构与可执行性检查" in creator_report_script
     assert "优先补齐" in creator_report_script
     assert "分批大模型汇总" in script
     assert "evidence-chip" in script
@@ -1185,9 +1185,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "creator_report_view_model" in script
     assert "isTechnicalReportNote" in script
     assert "创作者蒸馏核心报告" in creator_report_script
-    assert "观察：这个账号做了什么" in creator_report_script
-    assert "解释：为什么这些内容有效" in creator_report_script
-    assert "执行：下一条怎么拍 / 怎么写 / 怎么验证" in creator_report_script
+    assert "账号定位与本轮结论" in creator_report_script
+    assert "核心规律与可复用结构" in creator_report_script
+    assert "下一条怎么做" in creator_report_script
     assert "样本证据" in creator_report_script
     assert "低置信提示" in creator_report_script
     assert "证据缺口" in creator_report_script
@@ -2711,15 +2711,15 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
         ("timeout_seconds", 4),
         ("timeout_seconds", 301),
         ("creator_distill_request_timeout_seconds", 29),
-        ("creator_distill_request_timeout_seconds", 301),
+        ("creator_distill_request_timeout_seconds", 1201),
         ("quick_distill_budget_seconds", 59),
-        ("quick_distill_budget_seconds", 601),
+        ("quick_distill_budget_seconds", 14401),
         ("deep_distill_budget_seconds", 119),
-        ("deep_distill_budget_seconds", 1201),
+        ("deep_distill_budget_seconds", 14401),
         ("batch_job_budget_seconds", 179),
-        ("batch_job_budget_seconds", 1801),
+        ("batch_job_budget_seconds", 14401),
         ("final_reduce_timeout_seconds", 29),
-        ("final_reduce_timeout_seconds", 901),
+        ("final_reduce_timeout_seconds", 2401),
         ("final_reduce_min_reserve_seconds", 29),
         ("final_reduce_min_reserve_seconds", 601),
         ("compact_retry_min_remaining_seconds", 9),
@@ -2761,6 +2761,7 @@ def test_llm_settings_reject_cross_field_constraints_without_writing(
     runtime_path = tmp_path / ".local_settings.json"
     monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
     valid = {
+        "creator_distill_budget_mode": "manual",
         "timeout_seconds": 90,
         "creator_distill_request_timeout_seconds": 180,
         "quick_distill_budget_seconds": 240,
@@ -3354,8 +3355,10 @@ def test_local_upload_and_sync_case_build_generate_artifact(tmp_path: Path) -> N
     assert analysis_input["content_category_guess"]["confidence"] == "low"
     assert analysis_input["analysis_lens"]
     assert analysis_input["key_questions"]
-    assert analysis_input["content_ratio"]
-    assert "前3秒钩子" in analysis_input["analysis_focus"]
+    assert analysis_input["content_ratio"] == []
+    assert analysis_input["analysis_context"]["attention_priorities"]
+    assert analysis_input["analysis_focus"]["primary"] == "generic"
+    assert analysis_input["analysis_focus"]["source"] == "auto"
 
     prompt = (case_dir / "prompt.md").read_text(encoding="utf-8")
     assert "# 爆款案例拆解 Prompt" in prompt
@@ -5680,13 +5683,21 @@ def test_auto_analyzer_uses_asr_ocr_and_comment_enrichment(tmp_path: Path) -> No
             assert "求同款/购买线索" in prompt
             assert "evidence_summary" in prompt
             assert "证据不足的结论必须放入 inferred_points 或 evidence_gaps" in prompt
-            assert "first_3_seconds 至少写两个具体时间点" in prompt
-            assert "publish_package 不能只有标题" in prompt
-            assert "replication.avoid_copying 或 risks 必须说明不要照搬" in prompt
+            assert "没有时间依据不填时间点" in prompt
+            assert "publish_package 需提供可用发布建议" in prompt
+            assert "replication.avoid_copying 或 risks 说明不要照搬" in prompt
+            assert "本次输入证据：" in prompt
             assert "replication.copyable_points 每一条都必须能追溯" in prompt
             assert "不要凭空新增原视频没有的镜头" in prompt
             return {
                 "summary": "这条视频用前三秒人物入镜、金句口播和封面承诺形成强停留，评论区求同款说明可复刻需求明确。",
+                "focused_analysis": [{
+                    "question": "表达结构如何迁移？",
+                    "observation": "口播先给能力判断，字幕强调前三秒。",
+                    "interpretation": "结果承诺为后文提供理解顺序。",
+                    "transfer": "使用自己的结果示例组织开场，而不照搬原句。",
+                    "evidence": ["asr", "ocr"], "uncertainty": "合成 provider 示例。",
+                }],
                 "content_category": "generic",
                 "content_category_label": "通用短视频",
                 "confidence": 0.9,
@@ -9715,12 +9726,12 @@ def test_quality_calibration_recommendations_use_content_ratio_gap() -> None:
     recommendation_by_id = {item["id"]: item for item in recommendations}
     assert "tighten_content_ratio_gate" in recommendation_by_id
     recommendation = recommendation_by_id["tighten_content_ratio_gate"]
-    assert recommendation["label"] == "校准内容占比结构"
+    assert recommendation["label"] == "校准分析结构"
     assert recommendation["priority"] == 82
     assert "content_ratio_balance" in recommendation["source_issue_ids"]
     assert recommendation["action_target"] == "#run-auto-analysis-button"
     assert recommendation["action_mode"] == "click"
-    assert "percent 总和约 100%" in recommendation["action"]
+    assert "不要求估算内容百分比" in recommendation["action"]
 
 
 def test_quality_calibration_recommendations_use_category_alignment_gap() -> None:
@@ -9744,7 +9755,7 @@ def test_quality_calibration_recommendations_use_category_alignment_gap() -> Non
     assert recommendation["action_label"] == "调整类型"
     assert recommendation["action_target"] == "#analysis-category-select"
     assert recommendation["action_mode"] == "focus"
-    assert "content_category" in recommendation["action"]
+    assert "不因缺分类强制重跑" in recommendation["action"]
 
 
 def test_quality_calibration_recommendations_use_engagement_data_gap() -> None:
@@ -11460,7 +11471,7 @@ def test_creator_clone_prompt_allows_manual_content_profile_override() -> None:
 
     assert "账号类型 / 分析模板" in prompt
     assert "鸡汤 / 情绪文案" in prompt
-    assert "文案段落逻辑" in prompt
+    assert "情绪对象" in prompt
     assert normalized["content_profile"]["requested"] == "emotional_copy"
     assert normalized["content_profile"]["effective"] == "emotional_copy"
 
@@ -11531,7 +11542,10 @@ def test_creator_clone_auto_detects_photo_beauty_profile_and_public_view_model()
     assert "本地汇总" not in view_model["summary"]
     assert view_model["evidence_counts"]["with_video"] == 2
     assert view_model["evidence_counts"]["media_complete"] == 2
-    assert "视频、关键帧、ASR、OCR 和评论均已覆盖" in view_model["confidence_note"]
+    assert view_model["evidence_counts"]["with_comments"] == 2
+    assert view_model["request_input"]["known"] is False
+    assert "本次输入范围未完整记录" in view_model["confidence_note"]
+    assert "已归档素材不代表本次模型实际使用过" in view_model["confidence_note"]
     assert any("低门槛出片公式" in item for item in view_model["sections"]["formulas"])
     assert any("新手用杂牌相机" in item for item in view_model["sections"]["next_ideas"])
     assert any("Reduce" in item for item in view_model["technical_notes"])
@@ -11648,8 +11662,9 @@ def test_creator_clone_distill_execution_plan_scales_large_batches(monkeypatch, 
     assert plan["duration"]["known_count"] == 1
     assert plan["duration"]["total_seconds"] == 12.5
     assert plan["timeout_policy"]["recommended_enrichment_timeout_seconds"] >= 1800
-    assert plan["timeout_policy"]["recommended_batch_timeout_seconds"] == 90
-    assert plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] == 600
+    assert plan["timeout_policy"]["budget_mode"] == "auto"
+    assert 90 < plan["timeout_policy"]["recommended_batch_timeout_seconds"] <= 1200
+    assert 600 < plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] <= 2400
     assert plan["timeout_policy"]["basis"]["known_video_duration_seconds"] == 12.5
     assert plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"] > 0
     assert plan["timeout_policy"]["basis"]["components_seconds"]["sample_complexity"] > 0
@@ -11680,8 +11695,10 @@ def test_creator_clone_distill_execution_plan_uses_continuous_complexity_factors
     long_plan = build_distill_execution_plan(long_samples, batch_size=20, final_timeout_seconds=600, prompt_chars=12000)
     larger_prompt_plan = build_distill_execution_plan(short_samples, batch_size=20, final_timeout_seconds=600, prompt_chars=48000)
 
-    assert long_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] == short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
-    assert larger_prompt_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] == short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
+    assert short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] < long_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] <= 2400
+    assert short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] < larger_prompt_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] <= 2400
+    assert short_plan["timeout_policy"]["recommended_batch_timeout_seconds"] < long_plan["timeout_policy"]["recommended_batch_timeout_seconds"] <= 1200
+    assert short_plan["timeout_policy"]["recommended_batch_timeout_seconds"] < larger_prompt_plan["timeout_policy"]["recommended_batch_timeout_seconds"] <= 1200
     assert long_plan["timeout_policy"]["basis"]["components_seconds"]["duration_complexity"] > short_plan["timeout_policy"]["basis"]["components_seconds"]["duration_complexity"]
     assert larger_prompt_plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"] > short_plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"]
 
@@ -12248,7 +12265,13 @@ def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) ->
     assert payload["result"]["sample_overview"]["selected_count"] == 3
     assert payload["map_reduce"]["enabled"] is True
     assert len(provider.prompts) == 1
-    assert len(provider.prompts[-1]) < 5000
+    # Preserve the original input-summary budget; bound the new safety note separately.
+    original_prompt, marker, boundary_note = provider.prompts[-1].partition("\n【识别与静态图边界】\n")
+    assert marker
+    assert len(original_prompt) < 5000
+    assert 0 < len(boundary_note) <= 180
+    for required in ("OCR/ASR冲突须分列来源", "不互证", "静态图不证明整段运动", "固定机位", "音乐卡点", "未覆盖图片", "区分原作观察与拍摄建议"):
+        assert required in boundary_note
     assert Path(payload["exports"]["map_summaries_json"]).is_file()
     assert Path(payload["exports"]["distill_prompt_micro_md"]).is_file()
 

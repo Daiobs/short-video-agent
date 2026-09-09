@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -22,9 +22,12 @@ from app.services.creator_clone import (
     distill_creator_clone,
     ensure_creator_clone_html_report,
     export_paths,
+    load_creator_clone_result,
     load_sample_set,
     normalize_content_profile,
     prompt_only_result,
+    render_creator_clone_html_report,
+    render_creator_clone_markdown,
     sample_from_dict,
     save_sample_recommendations,
     save_sample_set,
@@ -173,13 +176,8 @@ def get_creator_clone_set(set_id: str):
         sample_set = load_sample_set(set_id)
         result_path = creator_clone_dir(set_id) / "creator_clone_result.json"
         prompt_path = creator_clone_dir(set_id) / "distill_prompt.md"
-        result = {}
+        result = load_creator_clone_result(set_id)
         prompt = ""
-        if result_path.is_file():
-            try:
-                result = json.loads(result_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                result = {}
         if prompt_path.is_file():
             try:
                 prompt = prompt_path.read_text(encoding="utf-8")
@@ -359,6 +357,15 @@ def download_creator_clone_file(set_id: str, filename: str):
     file_path = ensure_creator_clone_html_report(set_id) if filename == "creator_clone.html" else creator_clone_dir(set_id) / filename
     if not file_path.is_file():
         return error_response(AppError(ErrorCode.CASE_BUILD_FAILED, "文件尚未生成。"), status_code=404)
+    if filename in {"creator_clone_result.json", "creator_clone.md", "creator_clone.html"}:
+        result = load_creator_clone_result(set_id)
+        if result:
+            headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+            if filename == "creator_clone_result.json":
+                return JSONResponse(result, headers=headers)
+            markdown = render_creator_clone_markdown(result)
+            content = render_creator_clone_html_report(markdown) if filename.endswith(".html") else markdown
+            return Response(content, media_type="text/html" if filename.endswith(".html") else "text/markdown", headers=headers)
     media_type = (
         "application/json"
         if file_path.suffix == ".json"

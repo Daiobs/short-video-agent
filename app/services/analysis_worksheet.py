@@ -33,7 +33,7 @@ WORKSHEET_SECTIONS = (
         "section_id": "category",
         "title": "类型判断",
         "fields": (
-            ("content_ratio_notes", "内容占比判断", "按当前类型估算：视觉/文案/情绪/教程/评论触发各占多少，为什么。"),
+            ("content_ratio_notes", "分析关注重点", "记录重点和辅助关注的内容及依据，不要求估算百分比。"),
             ("reusable_points", "可借鉴点", "列 3-5 个可复用结构，不要只复制原视频台词或画面。"),
             ("risk_or_mismatch", "风险或不建议照搬", "写明尺度、版权、搬运、人设不匹配或平台风险，以及替代表达。"),
         ),
@@ -206,7 +206,7 @@ def render_analysis_brief(metadata: dict, ffprobe: dict, analysis_input: dict, w
     for title, items in (
         ("分析镜头", context.get("analysis_lens") or analysis_input.get("analysis_lens") or []),
         ("关键问题", context.get("key_questions") or analysis_input.get("key_questions") or []),
-        ("内容占比", context.get("content_ratio") or analysis_input.get("content_ratio") or []),
+        ("分析关注重点", context.get("attention_priorities") or []),
     ):
         lines.extend([f"### {title}", ""])
         lines.extend(f"- {item}" for item in items)

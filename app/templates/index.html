@@ -181,24 +181,33 @@ LLM_MODEL=支持图片输入的模型</pre>
                         </label>
                     </div>
                     <div class="settings-inline-grid">
-                        <label>Creator 单请求上限
-                            <input name="creator_distill_request_timeout_seconds" id="llm-creator-distill-timeout-input" type="number" min="30" max="300" step="1">
+                        <label>Creator 等待模式
+                            <select name="creator_distill_budget_mode" id="llm-creator-budget-mode-input">
+                                <option value="auto">自动预算</option>
+                                <option value="manual">人工覆盖</option>
+                            </select>
+                            <span class="settings-field-help">自动按样本、实际材料和批次分配等待；不是预计完成时间。</span>
                         </label>
-                        <label>Final Reduce 请求上限
-                            <input name="final_reduce_timeout_seconds" id="llm-final-reduce-timeout-input" type="number" min="30" max="900" step="1">
+                        <label>Creator 请求等待值（秒）
+                            <input name="creator_distill_request_timeout_seconds" id="llm-creator-distill-timeout-input" type="number" min="30" max="1200" step="1">
+                            <span class="settings-field-help">自动：基础等待值，计划可提高至 1200 秒。人工：本次请求上限。整个任务上限始终优先。</span>
+                        </label>
+                        <label>Final Reduce 等待值（秒）
+                            <input name="final_reduce_timeout_seconds" id="llm-final-reduce-timeout-input" type="number" min="30" max="2400" step="1">
+                            <span class="settings-field-help">自动：汇总基础等待值，计划可提高至 2400 秒。人工：最终汇总请求上限。</span>
                         </label>
                     </div>
                     <div class="settings-inline-grid">
                         <label>Quick 总预算
-                            <input name="quick_distill_budget_seconds" id="llm-quick-distill-budget-input" type="number" min="60" max="600" step="1">
+                            <input name="quick_distill_budget_seconds" id="llm-quick-distill-budget-input" type="number" min="60" max="14400" step="1">
                         </label>
                         <label>Deep 总预算
-                            <input name="deep_distill_budget_seconds" id="llm-deep-distill-budget-input" type="number" min="120" max="1200" step="1">
+                            <input name="deep_distill_budget_seconds" id="llm-deep-distill-budget-input" type="number" min="120" max="14400" step="1">
                         </label>
                     </div>
                     <div class="settings-inline-grid">
                         <label>Batch 总预算
-                            <input name="batch_job_budget_seconds" id="llm-batch-job-budget-input" type="number" min="180" max="1800" step="1">
+                            <input name="batch_job_budget_seconds" id="llm-batch-job-budget-input" type="number" min="180" max="14400" step="1">
                         </label>
                         <label>Final Reduce 预留
                             <input name="final_reduce_min_reserve_seconds" id="llm-final-reduce-reserve-input" type="number" min="30" max="600" step="1">
@@ -206,7 +215,7 @@ LLM_MODEL=支持图片输入的模型</pre>
                     </div>
                     <label>Compact Retry 最低剩余时间
                         <input name="compact_retry_min_remaining_seconds" id="llm-compact-retry-min-input" type="number" min="10" max="300" step="1">
-                        <span class="settings-field-help">总预算是整个任务的墙钟上限，不代表每次必定等待到上限。</span>
+                        <span class="settings-field-help">总预算限制整个任务，所有批次、汇总与允许的重试共享，不会按批次重置。达到本地截止时间不代表上游已取消或未计费。</span>
                     </label>
                     <label class="settings-checkbox">
                         <input type="checkbox" id="llm-clear-key-input">
@@ -683,12 +692,14 @@ https://v.douyin.com/xxxxxx/
                                 <option value="beauty_cos">美拍 / COS / 颜值</option>
                                 <option value="photo_beauty">摄影美拍 / 出片教程</option>
                                 <option value="emotional_copy">鸡汤 / 情绪文案</option>
-                                <option value="knowledge">教学 / 知识</option>
+                                <option value="tutorial">步骤教程</option>
+                                <option value="knowledge">知识 / 观点</option>
                                 <option value="story_twist">剧情 / 反转</option>
                                 <option value="commerce_seed">带货 / 种草</option>
                                 <option value="general">通用短视频</option>
                             </select>
                         </label>
+                        <span id="profile-content-focus-status" class="muted" role="status" style="overflow-wrap:anywhere;min-width:0"></span>
                         <button type="button" id="creator-clone-distill-button" class="secondary-button subdued-module-action">高级：执行蒸馏</button>
                         <button type="button" id="creator-clone-batch-distill-button" class="secondary-button subdued-module-action hidden">高级：分批蒸馏</button>
                     </div>

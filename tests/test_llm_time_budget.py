@@ -342,10 +342,12 @@ def test_quick_timeout_makes_one_logical_request(monkeypatch) -> None:
 
     assert raised.value.code == ErrorCode.LLM_GATEWAY_TIMEOUT
     assert calls == [1]
-    assert provider_timeouts == [180]
     failed = next(item for item in progress_events if item.get("current_phase") == "llm_failed")
+    policy = failed["execution_plan"]["timeout_policy"]
+    assert provider_timeouts == [policy["recommended_batch_timeout_seconds"]]
+    assert provider_timeouts[0] > 180
     assert failed["retryable"] is False
-    assert failed["execution_plan"]["timeout_policy"]["total_request_budget_seconds"] == 240
+    assert policy["total_request_budget_seconds"] >= provider_timeouts[0]
     assert failed["execution_plan"]["timeout_policy"]["timeout_retry_enabled"] is False
 
 
@@ -379,9 +381,9 @@ def test_deep_timeout_can_use_one_compact_retry(monkeypatch) -> None:
 
     assert result["result"]["summary"] == "Deep timeout 重试成功"
     assert calls == [1, 2]
-    assert provider_timeouts == [180, 180]
     policy = result["execution_plan"]["timeout_policy"]
-    assert policy["total_request_budget_seconds"] == 600
+    assert provider_timeouts == [policy["recommended_batch_timeout_seconds"]] * 2
+    assert policy["total_request_budget_seconds"] >= sum(provider_timeouts)
     assert policy["timeout_retry_enabled"] is True
 
 
@@ -406,7 +408,8 @@ def test_creator_distill_uses_creator_request_timeout(monkeypatch) -> None:
     )
 
     assert result["result"]["summary"] == "Creator timeout 已隔离"
-    assert provider_timeouts == [180]
+    assert provider_timeouts == [result["execution_plan"]["timeout_policy"]["recommended_batch_timeout_seconds"]]
+    assert provider_timeouts[0] > 180
     assert result["execution_plan"]["timeout_policy"]["configured_batch_timeout_seconds"] == 180
 
 
@@ -428,6 +431,10 @@ def test_timeout_without_minimum_remaining_budget_does_not_retry(monkeypatch) ->
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
     monkeypatch.setattr("app.services.creator_clone.get_llm_provider", lambda **kwargs: Provider())
     sample_set = _sample_set("clone_timeout_exhausted")
+    monkeypatch.setattr(
+        "app.services.creator_clone.effective_llm_settings",
+        lambda: {"creator_distill_budget_mode": "manual", "creator_distill_request_timeout_seconds": 20},
+    )
 
     with pytest.raises(AppError) as raised:
         distill_creator_clone(
@@ -453,7 +460,7 @@ def test_batch_budget_stops_new_requests_and_preserves_results(monkeypatch) -> N
     class Provider:
         def analyze(self, prompt, image_paths):
             calls.append(clock())
-            clock.advance(12)
+            clock.advance(2)
             return _strategy_result(f"批次 {len(calls)}")
 
     monkeypatch.setattr("app.services.creator_clone.llm_is_configured", lambda: True)
@@ -461,8 +468,9 @@ def test_batch_budget_stops_new_requests_and_preserves_results(monkeypatch) -> N
     monkeypatch.setattr(
         "app.services.creator_clone.effective_llm_settings",
         lambda: {
-            "timeout_seconds": 30,
-            "final_reduce_timeout_seconds": 30,
+            "creator_distill_budget_mode": "manual",
+            "creator_distill_request_timeout_seconds": 30,
+            "final_reduce_timeout_seconds": 10,
             "batch_job_budget_seconds": 40,
             "final_reduce_min_reserve_seconds": 10,
             "max_output_tokens": 1200,
@@ -471,12 +479,18 @@ def test_batch_budget_stops_new_requests_and_preserves_results(monkeypatch) -> N
     )
     sample_set = _sample_set("clone_batch_exhausted", count=4)
 
+    def progress(value, message, phase):
+        if phase.get("current_phase") == "batch_reduce" and phase.get("status") == "success":
+            # Persistence/progress work also consumes the shared task clock.
+            clock.advance(10)
+
     result = batch_distill_creator_clone(
         sample_set,
         [sample.sample_id for sample in sample_set.samples],
         batch_size=1,
         max_samples=10,
         deadline=deadline,
+        progress=progress,
     )
 
     manifest = result["batch_distill"]
@@ -485,7 +499,7 @@ def test_batch_budget_stops_new_requests_and_preserves_results(monkeypatch) -> N
     assert manifest["successful_batch_count"] >= 1
     assert any(item["status"] == "budget_exhausted" for item in manifest["batches"])
     assert manifest["final_reduce_min_reserve_seconds"] == 10
-    assert deadline.elapsed_seconds() <= 40 + 12
+    assert deadline.elapsed_seconds() <= 40
 
 
 def test_batch_budget_reserves_final_reduce(monkeypatch) -> None:
@@ -511,7 +525,8 @@ def test_batch_budget_reserves_final_reduce(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.creator_clone.effective_llm_settings",
         lambda: {
-            "timeout_seconds": 20,
+            "creator_distill_budget_mode": "manual",
+            "creator_distill_request_timeout_seconds": 20,
             "final_reduce_timeout_seconds": 30,
             "batch_job_budget_seconds": 60,
             "final_reduce_min_reserve_seconds": 15,
@@ -531,7 +546,8 @@ def test_batch_budget_reserves_final_reduce(monkeypatch) -> None:
 
     assert result["batch_distill"]["job_status"] == "completed"
     assert len(observed_deadlines) == 4
-    assert observed_deadlines[-1] >= 15
+    assert observed_deadlines[-1] == 30
+    assert result["batch_distill"]["final_reduce_min_reserve_seconds"] == 30
     assert result["batch_distill"]["final"]["status"] == "success"
 
 
