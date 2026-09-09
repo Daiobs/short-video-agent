@@ -5949,7 +5949,8 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
     creatorCloneExportActions.hidden = true;
   }
   const overview = result?.sample_overview || creatorCloneOverviewFromSet(set);
-  creatorCloneConfidence.textContent = overview.confidence || (result ? "distilled" : "prompt only");
+  // Archive completeness is not a confidence estimate for model conclusions.
+  creatorCloneConfidence.textContent = result ? "已保存报告" : "待生成";
   if (downloadCreatorCloneJson && exports.creator_clone_result_json && set?.set_id) {
     downloadCreatorCloneJson.href = `/api/creator-clone/sets/${encodeURIComponent(set.set_id)}/files/creator_clone_result.json`;
   }

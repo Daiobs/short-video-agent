@@ -333,7 +333,7 @@
       const thinking = objectValue(result.thinking_patterns);
       const patterns = objectValue(result.expression_patterns);
       const spec = objectValue(result.creator_clone_spec);
-      const strategy = objectValue(creatorStrategyFromResult(result));
+      const strategy = objectValue(hasContent(result.creator_clone_strategy) ? result.creator_clone_strategy : result.creator_strategy);
       const hasThinking = reportValueHasAny(thinking.assumptions, thinking.tension_sources, thinking.detail_selection_rules, thinking.novelty_vs_familiarity);
       const hasExpression = reportValueHasAny(
         patterns.opening_hooks,
@@ -365,8 +365,8 @@
     function renderReportMarkup({result: rawResult, overview: rawOverview, templateLabel = "", viewModel: rawViewModel}) {
       const result = objectValue(rawResult);
       const overview = objectValue(rawOverview);
-      const viewModel = objectValue(rawViewModel);
-      const strategy = objectValue(creatorStrategyFromResult(result));
+      const viewModel = objectValue(rawViewModel || result.creator_report_view_model);
+      const strategy = objectValue(hasContent(result.creator_clone_strategy) ? result.creator_clone_strategy : result.creator_strategy);
       const positioning = objectValue(result.creator_positioning);
       const sections = objectValue(viewModel.sections);
       const valueUpgrade = objectValue(viewModel.value_upgrade);
@@ -389,7 +389,7 @@
       };
       collectSamples([valueUpgrade.sample_evidence, result.performance_segments, result.transferable_formulas, overview.samples]);
       const metricLabels = {like_count: "点赞", comment_count: "评论", share_count: "分享", collect_count: "收藏", view_count: "播放", engagement_score: "综合互动分"};
-      const detail = (value) => `<details class="report-source-detail"><summary>原始记录</summary><pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre></details>`;
+      const detail = (value) => `<details class="report-source-detail"><summary>原始记录</summary><pre>${escapeHtml(JSON.stringify(value, (key, entry) => key === "request_evidence" ? undefined : entry, 2))}</pre></details>`;
       const sample = (value) => {
         if (Array.isArray(value)) return `<ul class="public-report-list">${value.filter(hasContent).map((item) => `<li>${sample(item)}</li>`).join("")}</ul>`;
         const item = typeof value === "string" ? {sample_id: value} : objectValue(value);
@@ -439,7 +439,94 @@
         return narrative(value);
       };
       const block = (label, value) => hasContent(value) ? `<section class="report-reading-block"><h4>${escapeHtml(label)}</h4>${narrative(value)}</section>` : "";
-      const card = (id, title, body) => body.trim() ? `<section data-report-section="${id}">${renderPublicCard(title, body, "creator-reading-card")}</section>` : "";
+      const card = (id, title, body) => body.trim() ? `<section data-report-section="${id}" class="creator-reading-section"><h3>${escapeHtml(title)}</h3>${body}</section>` : "";
+      const items = (value) => Array.isArray(value) ? value.filter(hasContent) : hasContent(value) ? [value] : [];
+      const textKey = (value) => typeof value === "string" ? value.trim().replace(/\s+/g, " ") : JSON.stringify(value);
+      const distinct = (values) => [...new Map(values.filter(hasContent).map((value) => [textKey(value), value])).values()];
+      const compactText = (value) => {
+        if (typeof value !== "string" || value.length <= 160) return narrative(value);
+        // Split at a sentence boundary, with every remaining character retained behind a native disclosure.
+        const end = value.search(/[。！？.!?](?:\s|$|[^\x00-\x7F])/);
+        const prefixLength = end < 0 ? Array.from(value).slice(0, 160).join("").length : end + 1;
+        return `${narrative(value.slice(0, prefixLength))}<details class="report-long-copy"><summary>展开全文</summary>${narrative(value.slice(prefixLength))}</details>`;
+      };
+      const sourceNote = (item, origin) => {
+        const source = origin;
+        return ["local_fallback", "generic_fallback", "local_generic", "fallback"].includes(source)
+          ? "通用参考建议 · 本地预设，不是账号规律"
+          : source === "model" ? "本轮模型分析 · 解释与创意仍需验证"
+          : source === "deterministic" ? "本地数据整理，不是因果判断"
+          : "来源未区分；创意与解释仍需验证";
+      };
+      const component = (kind, value, origin, showSource = true) => {
+        const item = objectValue(value);
+        const titleKey = ["name", "title", "formula", "idea", "question"].find((key) => hasContent(item[key]));
+        const fields = kind === "formula"
+          ? ["text", "when_to_use", "beat_structure", "steps", "structure", "observation", "execution", "support", "evidence", "risks", "uncertainty"]
+          : kind === "idea"
+            ? ["text", "opening_3s", "idea", "action", "formula_used", "why_worth_trying", "production_requirements", "evidence", "validation", "risks"]
+            : ["observation", "interpretation", "transfer", "evidence", "uncertainty"];
+        const selected = Object.fromEntries(fields.filter((key) => key !== titleKey && hasContent(item[key])).map((key) => [key, item[key]]));
+        const extra = Object.fromEntries(Object.entries(item).filter(([key]) => key !== titleKey && !fields.includes(key)));
+        if (kind === "finding" && typeof value === "object") {
+          const support = items(item.evidence)[0];
+          const referenceId = typeof support === "string" && (/^sample_[\w-]+$/.test(support) || samples.has(support)) ? support : support?.sample_id;
+          const supportPreview = referenceId
+            ? escapeHtml(objectValue(support).title || samples.get(String(referenceId)) || "样本名称未记录")
+            : compactText(typeof support === "object" ? first(support?.text, support?.observation, support?.summary, support?.description, support?.title) : support);
+          const primary = ["observation", "transfer", "uncertainty"].filter((key) => hasContent(item[key])).map((key) =>
+            `<div class="report-reading-field"><span class="report-field-label">${escapeHtml(labels[key])}</span><div>${key === "uncertainty" ? narrative(item[key]) : compactText(item[key])}</div></div>`).join("");
+          const reasoning = `${hasContent(item.interpretation) ? block("解释（待验证）", item.interpretation) : ""}${hasContent(item.evidence) ? `<div class="report-reading-field"><span class="report-field-label">完整支持依据</span><div>${evidence(item.evidence)}</div></div>` : ""}${Object.keys(extra).length ? detail(extra) : ""}`;
+          return `<article class="report-finding-card">${titleKey ? `<h4>${escapeHtml(item[titleKey])}</h4>` : ""}${primary}<div class="report-source-note">${supportPreview ? `支持依据：${supportPreview}` : hasContent(item.evidence) ? "已记录支持依据，详见判断依据与适用限制。" : "此条未单列支持依据。"}</div>${reasoning ? `<details><summary>判断依据与适用限制</summary>${reasoning}</details>` : ""}</article>`;
+        }
+        const fieldMarkup = Object.entries(selected).map(([key, entry]) => `<div class="report-reading-field"><span class="report-field-label">${escapeHtml(labels[key] || "")}</span><div>${["support", "evidence"].includes(key) ? evidence(entry) : compactText(entry)}</div></div>`).join("") + (Object.keys(extra).length ? detail(extra) : "");
+        const body = typeof value === "string" ? compactText(value) : `${titleKey ? `<h4>${escapeHtml(item[titleKey])}</h4>` : ""}${kind === "idea" && titleKey && fieldMarkup ? `<details><summary>选题依据与完整执行方案</summary>${fieldMarkup}</details>` : fieldMarkup}`;
+        return `<article class="report-${kind}-card">${body}${kind === "finding" && !hasContent(item.evidence) ? '<p class="report-source-note">此条未单列支持依据。</p>' : ""}${kind !== "finding" && showSource ? `<p class="report-source-note">${sourceNote(item, origin)}</p>` : ""}</article>`;
+      };
+      const highlights = (value, renderItem, label = "查看其余内容", limit = 3) => {
+        const all = distinct(items(value));
+        return all.slice(0, limit).map(renderItem).join("") + (all.length > limit ? `<details class="report-more"><summary>${label}（${all.length - limit}）</summary>${all.slice(limit).map(renderItem).join("")}</details>` : "");
+      };
+      const fieldOrigins = objectValue(objectValue(result.report_provenance || viewModel.report_provenance).fields);
+      const originFor = (path) => fieldOrigins[path] || fieldOrigins[path.split(".")[0]];
+      const choose = (...choices) => choices.find(([value]) => hasContent(value)) || [[], undefined];
+      const sourcedHighlights = ([value, origin], kind, label, limit = 3) => {
+        const generic = [], primary = [];
+        items(value).forEach((item, index) => {
+          const source = Array.isArray(origin) ? origin[index] : origin;
+          const entry = {item, source};
+          (["fallback", "local_fallback", "generic_fallback", "local_generic"].includes(source) ? generic : primary).push(entry);
+        });
+        const uniform = new Set(primary.map(({source}) => source || "unknown")).size === 1;
+        const renderItem = ({item, source}) => kind === "action"
+          ? `<article class="report-action-card">${compactText(item)}${uniform ? "" : `<p class="report-source-note">${sourceNote(item, source)}</p>`}</article>`
+          : component(kind, item, source, !uniform);
+        return highlights(primary, renderItem, label, limit) + (uniform ? `<p class="report-source-note">${sourceNote(primary[0].item, primary[0].source)}</p>` : "") + (generic.length ? `<details class="report-generic-advice"><summary>通用参考建议（本地预设）</summary><p>通用参考建议 · 本地预设，不是账号规律</p>${generic.map(({item, source}) => component(kind, item, source, false)).join("")}</details>` : "");
+      };
+      const safeLink = (value) => {
+        if (typeof value !== "string" || /[\s\\]/.test(value)) return "";
+        return /^https?:\/\//i.test(value) || /^\/(?!\/)/.test(value) ? value : "";
+      };
+      const mergedSamples = () => {
+        const records = [...items(valueUpgrade.sample_evidence), ...Object.values(objectValue(result.performance_segments)).flatMap(items)];
+        const merged = new Map();
+        records.forEach((record, index) => {
+          if (!record || typeof record !== "object") return;
+          const key = hasContent(record.sample_id) ? String(record.sample_id) : `unidentified-${index}`;
+          if (!merged.has(key)) merged.set(key, []);
+          merged.get(key).push(record);
+        });
+        return [...merged.values()].map((records) => {
+          const title = first(...records.map((r) => r.title), samples.get(String(records[0].sample_id))) || "样本名称未记录";
+          const metrics = Object.entries(metricLabels).map(([key, label]) => {
+            const values = distinct(records.flatMap((r) => [r[key], objectValue(r.metrics)[key], ...(r.metric === key || (!r.metric && r.metric_label === label) ? [r.metric_value] : [])]));
+            return `<div><dt>${label}</dt><dd>${values.length ? values.map((v) => escapeHtml(formatNumber(v))).join(" / ") : "未采集"}${values.length > 1 ? '<small>记录冲突，见原始来源</small>' : ""}</dd></div>`;
+          }).join("");
+          const url = records.map((r) => safeLink(r.url || r.source_url || r.open_url)).find(Boolean);
+          const caseId = records.map((r) => r.case_id).find((id) => typeof id === "string" && /^case_[a-zA-Z0-9_-]+$/.test(id));
+          return `<article class="report-sample-card"><h4>${escapeHtml(title)}</h4><dl class="report-sample-metrics">${metrics}</dl><p class="report-source-note">当前样本中的相对代表；指标排名不证明内容效果的原因。</p>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">查看作品</a>` : ""}${caseId ? ` <a href="/cases/${encodeURIComponent(caseId)}">查看 Case</a>` : ""}<details><summary>原始排名与来源记录</summary><p>本地排名整理；历史 reason 中的通用解释不是模型结论。冲突值保留各自原记录，不合并为单一事实。</p>${detail(records)}</details></article>`;
+        });
+      };
       const groupMarkup = normalizeItems(result.content_groups).map((data) => {
         if (!data || typeof data !== "object") return "";
         const content = first(data.focused_analysis, data.patterns, data.summary, data.observations);
@@ -450,27 +537,67 @@
           <p class="muted">${count !== undefined && count !== null ? `样本 ${escapeHtml(count)} · ` : ""}${data.analyzed_count !== undefined ? `已有分析：${escapeHtml(data.analyzed_count)} · ` : ""}${data.metadata_only_count !== undefined ? `仅元数据：${escapeHtml(data.metadata_only_count)}，不视为已验证的内容规律。` : ""}${data.missing_analysis_count !== undefined ? ` 缺少单条分析：${escapeHtml(data.missing_analysis_count)}` : ""}</p>
           ${narrative(content)}${block("尚不能确认", data.uncertainty)}${hasContent(members) ? `<details><summary>支持样本</summary>${sample(members)}</details>` : ""}</section>`;
       }).join("");
-      const formulas = first(result.transferable_formulas, sections.formulas, strategy.templates, strategy.content_strategy);
-      const ideas = first(result.candidate_ideas, execution.next_content_suggestions, sections.next_ideas, strategy.idea_bank);
-      const examples = first(valueUpgrade.sample_evidence, Object.values(objectValue(result.performance_segments)).flat().filter((item) => item && typeof item === "object" && item.sample_id));
+      const sectionSources = Object.fromEntries(Object.entries(objectValue(viewModel.sources)).map(([key, value]) => [key.replace(/^sections\./, ""), value]));
+      const upgradeSources = objectValue(valueUpgrade.sources);
+      const formulas = choose([result.transferable_formulas, originFor("transferable_formulas")], [sections.formulas, sectionSources.formulas], [strategy.templates, originFor("creator_clone_strategy.templates")], [strategy.content_strategy, originFor("creator_clone_strategy.content_strategy")]);
+      const ideas = choose([result.candidate_ideas, originFor("candidate_ideas")], [execution.next_content_suggestions, upgradeSources.next_content_suggestions], [sections.next_ideas, sectionSources.next_ideas], [strategy.idea_bank, originFor("creator_clone_strategy.idea_bank")]);
       const limits = unique(result.evidence_gaps, valueUpgrade.evidence_gaps, valueUpgrade.low_confidence_reasons, valueUpgrade.quality?.missing_evidence, valueUpgrade.quality?.warnings, result.report_quality?.missing_evidence, result.report_quality?.warnings, result.report_quality?.evidence_warnings);
-      // Creator results do not persist an authoritative per-request manifest yet.
-      // The Case manifest contract and model-written evidence fields cannot fill that historical gap.
-      const inputNote = "<p>本次输入范围未完整记录。不能用当前素材库存推断模型当时看过哪些材料。</p>";
+      const requestInput = () => {
+        const manifest = objectValue(result.request_evidence);
+        if (manifest.version !== 1 || manifest.source !== "actual_request" || manifest.final_attempt !== true) {
+          return "<p>本次输入范围未完整记录。不能用当前素材库存推断模型当时看过哪些材料。</p>";
+        }
+        const submitted = new Map();
+        items(manifest.samples).forEach((row) => {
+          if (!row || typeof row.sample_id !== "string" || !row.sample_id.trim()) return;
+          if (!submitted.has(row.sample_id)) submitted.set(row.sample_id, {kinds: new Set(), orders: new Set(), truncated: false});
+          const entry = submitted.get(row.sample_id);
+          items(row.materials).forEach((material) => {
+            if (["asr", "ocr", "comments", "prior_analysis"].includes(material?.kind)) entry.kinds.add(material.kind);
+            if (material?.truncated === true) entry.truncated = true;
+          });
+          items(row.image_orders).filter((order) => Number.isInteger(order) && order > 0).forEach((order) => entry.orders.add(order));
+          if (row.truncated === true) entry.truncated = true;
+        });
+        const rows = [...submitted.entries()];
+        const kinds = {asr: "转录", ocr: "OCR", comments: "评论", prior_analysis: "已有分析（二手）"};
+        const counts = Object.entries(kinds).map(([kind, label]) => `${label} ${rows.filter(([, row]) => row.kinds.has(kind)).length} 条样本`).join(" · ");
+        const direct = rows.filter(([, row]) => row.orders.size);
+        const images = new Set(direct.flatMap(([, row]) => [...row.orders]));
+        const truncated = rows.filter(([, row]) => row.truncated).length;
+        return `<div class="report-submitted-input"><p>最终成功请求${Number.isInteger(manifest.attempt) ? ` · 尝试 ${manifest.attempt}` : ""}${manifest.degraded === true ? " · 使用降级输入" : ""}</p>
+          <p>本次提交 ${rows.length} 条样本；直接图片 ${images.size} 张，覆盖 ${direct.length} 条样本；${rows.length - direct.length} 条未直接查看图片。</p>
+          <p>${counts}</p><p>${truncated ? `${truncated} 条样本的输入短摘有截短。` : "未记录样本短摘截短。"}${manifest.structured_rows_found !== true ? " 未识别完整结构化正文，文本覆盖仍有未知。" : ""}</p>
+          <details><summary>本次提交的样本与图片对应</summary>${rows.map(([id, row]) => `<div class="report-reading-block"><h5>${escapeHtml(samples.get(id) || "样本名称未记录")}</h5><p>${row.orders.size ? `直接图片序号：${[...row.orders].join("、")}` : "未直接查看图片"}；${[...row.kinds].map((kind) => kinds[kind]).join("、") || "未记录有效文本短摘"}${row.truncated ? "；输入有截短" : ""}</p>${detail({sample_id: id})}</div>`).join("")}</details>
+        </div>`;
+      };
+      const inputNote = requestInput();
       const supplementary = `${block("策略要点", strategy.content_strategy)}${block("开头建议", strategy.hooks)}${block("模板", strategy.templates)}${block("补充选题", strategy.idea_bank)}${block("避免照搬", strategy.anti_patterns)}`;
+      const lead = first(result.summary, viewModel.summary, viewModel.headline, positioning, strategy.positioning, sections.core_judgment?.fields);
+      const thinkingFindings = Array.isArray(result.thinking_patterns) ? result.thinking_patterns
+        : Object.entries(objectValue(result.thinking_patterns)).flatMap(([key, value]) => items(value).map((entry) =>
+          typeof entry === "string" ? {question: labels[key] || "内容组织", observation: entry} : entry));
+      const findings = choose([result.focused_analysis, originFor("focused_analysis")], [thinkingFindings, originFor("thinking_patterns")], [sections.repeatable_patterns, sectionSources.repeatable_patterns], [explanation.bullets, upgradeSources.explanation], [sections.traffic_sources?.hooks, sectionSources["traffic_sources.hooks"]]);
+      const actions = choose([result.next_actions, originFor("next_actions")], [execution.bullets, upgradeSources.execution], [sections.next_actions, sectionSources.next_actions]);
       return `<section class="creator-distillation-report creator-reading-report" aria-label="创作者蒸馏核心报告">
-        ${card("positioning", "1. 账号定位与本轮结论", `${hasContent(first(result.summary, viewModel.summary)) ? `<div class="public-analysis-hero">${narrative(first(result.summary, viewModel.summary))}</div>` : ""}
-          ${hasContent(viewModel.headline) ? `<h3>${escapeHtml(viewModel.headline)}</h3>` : ""}${renderFocus(result)}${!hasContent(focus.primary) && templateLabel ? `<p>生成时方向：${escapeHtml(templateLabel)}</p>` : ""}
-          ${narrative(first(positioning, strategy.positioning, sections.core_judgment?.fields))}${block("本轮观察", first(observation.bullets, sections.core_judgment?.bullets))}`)}
-        ${card("patterns", "2. 核心规律与可复用结构", `${block("类型重点分析", result.focused_analysis)}${block("选题规律", result.topic_buckets)}
-          ${block("内容组织", result.thinking_patterns)}${block("表达与呈现", result.expression_patterns)}${block("已有解释（待验证）", first(explanation.bullets, sections.traffic_sources?.hooks))}
-          ${block("可复用方法", formulas)}${block("跨样本规律", sections.repeatable_patterns)}${groupMarkup ? `<details class="report-content-groups"><summary>按样本类型归纳</summary>${groupMarkup}</details>` : ""}
+        ${card("positioning", "账号定位与本轮结论", `${compactText(lead)}${renderFocus(result)}${!hasContent(focus.primary) && templateLabel ? `<p>生成时方向：${escapeHtml(templateLabel)}</p>` : ""}`)}
+        <div class="report-reading-row">
+        ${card("patterns", "核心规律与可复用结构", sourcedHighlights(findings, "finding", "查看其余判断", 2))}
+        ${card("actions", "下一条怎么做", `${sourcedHighlights(actions, "action", "查看其余行动")}${hasContent(ideas[0]) ? `<h4>候选选题与执行方式</h4>${sourcedHighlights(ideas, "idea", "查看其余选题", 2)}` : ""}`)}
+        </div>
+        <div class="report-reading-row">
+        ${card("samples", "代表样本对比", highlights(mergedSamples(), (html) => html, "查看其余样本", 2))}
+        ${card("formulas", "可复用结构与适用条件", sourcedHighlights(formulas, "formula", "查看其余公式", 2))}
+        </div>
+        <details class="report-complete-analysis"><summary>查看完整分析</summary>
+          ${block("选题规律", result.topic_buckets)}${block("内容组织", result.thinking_patterns)}${block("表达与呈现", result.expression_patterns)}${block("已有解释（待验证）", first(explanation.bullets, sections.traffic_sources?.hooks))}
+          ${block("跨样本规律", sections.repeatable_patterns)}${block("验证建议", first(strategy.validation_rules, sections.checklist))}${groupMarkup ? `<details class="report-content-groups"><summary>按样本类型归纳</summary>${groupMarkup}</details>` : ""}
           ${hasContent(result.creator_clone_spec) ? `<details><summary>完整创作方法</summary>${narrative(result.creator_clone_spec)}</details>` : ""}
-          ${supplementary ? `<details><summary>补充策略与模板</summary>${supplementary}</details>` : ""}`)}
-        ${card("samples", "3. 代表样本对比", hasContent(examples) ? `<p class="muted">互动数据用于比较差异，不直接证明流量原因或转化效果。</p>${sample(examples)}` : "")}
-        ${card("actions", "4. 下一条怎么做", `${block("具体行动", unique(first(result.next_actions, execution.bullets, sections.next_actions), hasContent(result.next_actions) ? execution.bullets : []))}
-          ${block("候选选题与执行方式", ideas)}${block("验证建议", first(strategy.validation_rules, sections.checklist))}`)}
-        ${card("limits", "5. 证据与限制", `${hasContent(limits) ? narrative(limits) : "<p>报告未单独记录证据限制；这不代表结论已经核验。</p>"}
+          ${supplementary ? `<details><summary>补充策略与模板 · 历史来源未区分</summary>${supplementary}</details>` : ""}
+          <details><summary>定位与观察原字段（含展示回退）</summary>${detail({summary: result.summary, headline: viewModel.headline, positioning, observation, core_judgment: sections.core_judgment})}</details>
+          <details><summary>完整报告原字段与扩展</summary>${detail(result)}${detail(viewModel)}</details>
+        </details>
+        ${card("limits", "证据与限制", `${hasContent(limits) ? limits.map((item) => `<div class="report-limit">${narrative(item)}</div>`).join("") : "<p>报告未单独记录证据限制；这不代表结论已经核验。</p>"}
           <section class="report-reading-block"><h4>本次生成的输入记录</h4>${inputNote}<p class="muted">已有单条分析、Map 或批次摘要属于二手材料，不等于本次直接查看原视频；其来源限制仍适用。</p></section>
           <details><summary>当前已归档素材与结构检查</summary>${renderQualitySummary({...valueUpgrade, quality: first(valueUpgrade.quality, result.report_quality) || {}})}<p>素材库存不等于本次输入，也不代表已被模型理解。</p></details>`)}
         <details class="creator-report-evidence-details"><summary>完整材料与技术详情</summary>${renderEvidenceDetails(overview, result, viewModel)}</details>

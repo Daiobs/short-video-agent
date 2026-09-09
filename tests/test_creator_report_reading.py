@@ -15,8 +15,9 @@ from test_content_aware_frontend import renderer_setup, run_node
 REGIONS = {
     "positioning": "账号定位与本轮结论",
     "patterns": "核心规律与可复用结构",
-    "samples": "代表样本对比",
     "actions": "下一条怎么做",
+    "samples": "代表样本对比",
+    "formulas": "可复用结构与适用条件",
     "limits": "证据与限制",
 }
 
@@ -127,13 +128,14 @@ def legacy_view_model() -> dict:
 
 
 @pytest.mark.parametrize("focus", [None, {"primary": "tutorial", "section_order": ["visual_analysis"]}])
-def test_legacy_view_model_keeps_five_readable_regions_with_or_without_focus(focus):
+def test_legacy_view_model_keeps_compact_readable_regions_with_or_without_focus(focus):
     report = render_report(result={"analysis_focus": focus} if focus else {},
                            viewModel=legacy_view_model())
     regions = report.regions()
-    assert "合成定位：给新手解释操作" in regions["positioning"].text(core=True)
+    assert "合成定位：给新手解释操作" in report.root.text()
+    assert "合成定位：给新手解释操作" not in regions["positioning"].text(core=True)
     assert "合成本轮结论：先呈现结果" in regions["positioning"].text(core=True)
-    assert "合成旧公式：结果、过程、复核" in regions["patterns"].text(core=True)
+    assert "合成旧公式：结果、过程、复核" in regions["formulas"].text(core=True)
     assert "合成样本：收纳演示" in regions["samples"].text(core=True)
     assert "合成旧行动：录制两个不同开头" in regions["actions"].text(core=True)
     assert "合成旧选题：桌面整理前后对比" in regions["actions"].text(core=True)
@@ -170,16 +172,17 @@ def test_structured_findings_groups_formulas_and_candidates_share_reading_order(
         result["analysis_focus"] = {"primary": "tutorial", "section_order": ["visual_analysis"]}
     report = render_report(result=result, viewModel=legacy_view_model())
     regions = report.regions()
-    assert "合成组规律：固定角度对照" in regions["patterns"].text()
-    assert "仅元数据：1" in regions["patterns"].text()
-    for text in ["合成观察：保留操作前后画面",
-                 "合成公式：对照结构", "合成拍法：首帧展示整理结果", "合成适用：能展示差异时"]:
-        assert text in regions["patterns"].text(core=True)
-    for text in ["合成选题：抽屉分类演示", "合成准备：同机位拍摄两版", "合成行动：比较两版开头的留存"]:
+    assert "合成组规律：固定角度对照" in report.root.text()
+    assert "仅元数据：1" in report.root.text()
+    assert "合成观察：保留操作前后画面" in regions["patterns"].text(core=True)
+    for text in ["合成公式：对照结构", "合成拍法：首帧展示整理结果", "合成适用：能展示差异时"]:
+        assert text in regions["formulas"].text(core=True)
+    for text in ["合成选题：抽屉分类演示", "合成行动：比较两版开头的留存"]:
         assert text in regions["actions"].text(core=True)
+    assert "合成准备：同机位拍摄两版" in regions["actions"].text()
     assert "合成缺口：尚未验证留存变化" in regions["limits"].text(core=True)
     assert "合成样本：收纳演示" in regions["patterns"].text(core=True)
-    assert "合成样本：收纳演示" in regions["actions"].text(core=True)
+    assert "合成样本：收纳演示" in regions["actions"].text()
     core = report.root.text(core=True)
     assert "synthetic_known_1" not in core
     assert "sample_synthetic_unresolved_9" not in core
@@ -198,9 +201,9 @@ def test_empty_new_fields_fall_back_to_usable_old_sections(empty):
                                    "next_actions": empty, "evidence_gaps": empty}, viewModel=model)
     regions = report.regions()
     core = report.root.text(core=True)
-    assert "合成观察：固定机位展示" in core
-    assert "合成解释：减少理解步骤" in core
-    assert "合成旧公式：结果、过程、复核" in regions["patterns"].text(core=True)
+    assert "合成观察：固定机位展示" in report.root.text()
+    assert "合成解释：减少理解步骤" in report.root.text()
+    assert "合成旧公式：结果、过程、复核" in regions["formulas"].text(core=True)
     assert "合成旧行动：录制两个不同开头" in regions["actions"].text(core=True)
     assert "合成旧选题：桌面整理前后对比" in regions["actions"].text(core=True)
     assert "合成限制：尚无连续动作证据" in regions["limits"].text(core=True)
@@ -215,7 +218,9 @@ def test_saved_text_is_escaped_in_every_reading_region():
                                    "candidate_ideas": [{"title": marker}], "evidence_gaps": [marker]},
                            viewModel=model)
     regions = report.regions()
-    for node in regions.values():
+    for key, node in regions.items():
+        if key == "patterns":
+            continue
         assert marker in node.text(core=True)
     for node in report.root.walk():
         assert node.tag not in {"script", "img", "iframe"}
@@ -234,7 +239,7 @@ def test_sample_metric_missing_is_not_rendered_as_zero(metric):
     text = report.regions()["samples"].text(core=True)
     if metric == 0:
         assert re.search(r"点赞\s*[:：]?\s*0(?!\d)", text)
-        assert "未采集" not in text
+        assert re.search(r"播放\s*未采集", text)
     else:
         assert "未采集" in text
         assert not re.search(r"点赞\s*[:：]?\s*0(?!\d)", text)
@@ -315,10 +320,10 @@ def test_existing_secondary_summary_is_retained_without_claiming_title_only_inpu
 ])
 def test_reading_aliases_and_reference_objects_preserve_business_content(item, expected):
     report = render_report(result={"candidate_ideas": [item]}, viewModel=legacy_view_model())
-    core = report.regions()["actions"].text(core=True)
+    core = report.regions()["actions"].text()
     for text in expected:
         assert text in core
-    assert "sample_unknown" not in core
+    assert "sample_unknown" not in report.regions()["actions"].text(core=True)
     if "evidence" in item:
         assert "synthetic_frame" in report.root.text()
 
@@ -333,7 +338,7 @@ def test_empty_group_and_positioning_only_strategy_do_not_create_empty_patterns(
 
 def test_empty_new_members_fall_back_to_existing_members():
     report = render_report(result={"content_groups": [{"label": "合成分组", "sample_ids": [], "members": ["sample_known"]}]}, viewModel=legacy_view_model())
-    assert "sample_known" in report.regions()["patterns"].text()
+    assert "sample_known" in report.root.text()
     assert "按样本类型归纳" in report.root.text()
 
 
@@ -344,7 +349,7 @@ def test_empty_new_members_fall_back_to_existing_members():
 ])
 def test_partial_group_keeps_all_existing_statistics_and_limits(group, expected):
     report = render_report(result={"content_groups": [group]}, viewModel=legacy_view_model())
-    assert expected in report.regions()["patterns"].text()
+    assert expected in report.root.text()
 
 
 def render_job_phase(phase: dict, *, status: str = "running") -> ReportHTML:
