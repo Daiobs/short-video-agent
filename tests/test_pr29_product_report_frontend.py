@@ -242,6 +242,9 @@ def test_two_findings_keep_actions_uncertainty_and_friendly_evidence_visible():
             for i in range(4)
         ],
         "performance_segments": {"likes": [{"sample_id": "sample_synthetic", "title": "Friendly tutorial sample"}]},
+        "reference_manifest": {"version": 1, "scope": "actual_request", "samples": [
+            {"sample_id": "sample_synthetic", "title": "Friendly tutorial sample", "open_url": ""}
+        ], "entries": []},
         "next_actions": ["Record next tutorial now"],
     }
     data = run_node(renderer_setup() + f"const report={json.dumps(report)};\n" + r"""

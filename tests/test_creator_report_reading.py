@@ -186,7 +186,7 @@ def test_structured_findings_groups_formulas_and_candidates_share_reading_order(
     core = report.root.text(core=True)
     assert "synthetic_known_1" not in core
     assert "sample_synthetic_unresolved_9" not in core
-    assert "样本名称未记录" in core
+    assert "引用无法定位，需复核" in core
     assert any("sample_synthetic_unresolved_9" in node.text() for node in report.root.walk() if node.tag == "details")
 
 

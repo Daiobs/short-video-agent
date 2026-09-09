@@ -7500,6 +7500,11 @@ footer {
 .creator-reading-report .report-idea-card h4 { margin: 0; }
 .creator-reading-report .report-idea-card details { margin-top: 8px; }
 .creator-reading-report .report-source-note { font-size: 13px; color: #596574; margin: 10px 0 0; }
+.creator-reading-report .report-priority-action-link { display: none; }
+.creator-reading-report #creator-report-priority-actions { scroll-margin-top: 100px; }
+@media (max-width: 767px) {
+    .creator-reading-report .report-priority-action-link { display: inline-block; margin-top: 12px; font-weight: 600; }
+}
 .creator-reading-report .report-limit + .report-limit { margin-top: 12px; }
 .creator-reading-report .report-sample-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
 .creator-reading-report .report-sample-metrics dt { font-size: 13px; color: #596574; }

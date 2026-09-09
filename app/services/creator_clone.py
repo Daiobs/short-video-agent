@@ -44,6 +44,7 @@ from app.services.creator_request_evidence import (
     select_creator_request_images,
     summarize_creator_request,
 )
+from app.services.creator_references import input_scope_note, request_input_summary, resolve_creator_references
 from app.services.profile_scan import scan_profile
 from app.providers.profile_base import ProfileScanRequest
 from app.services.creator_intelligence import (
@@ -738,7 +739,13 @@ def load_creator_clone_result(set_id: str) -> dict:
         payload = json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    sample_set = load_sample_set(set_id)
+    request = payload.get("request_evidence") or {}
+    ids = {row.get("sample_id") for row in request.get("samples", []) if isinstance(row, dict)} if isinstance(request, dict) and request_input_summary(request)["known"] else set(sample_set.selected_sample_ids)
+    selected = [sample for sample in sample_set.samples if sample.sample_id in ids]
+    return adapt_creator_report_sources(payload, sample_set, selected)
 
 
 def clear_creator_strategy_outputs(set_id: str) -> None:
@@ -2103,11 +2110,17 @@ def _prepare_creator_request(prompt: str, samples: list[CloneSample], effective:
             "compatible", "responses", "claude",
         },
     )
-    return prompt + "\n\n" + visual["prompt_note"], visual
+    return prompt + "\n\n" + visual["prompt_note"] + (
+        "\n【识别与静态图边界】\n"
+        "OCR/ASR冲突须分列来源，不互证、不默认采信一方。"
+        "静态图不证明整段运动、始终固定机位或音乐卡点；未覆盖图片的样本不能推断画面。"
+        "区分原作观察与拍摄建议，保留识别和视觉局限。"
+    ), visual
 
 
 def _record_creator_request_result(raw: dict, prompt: str, visual: dict, *, attempt: int, degraded: bool = False) -> dict:
     result = dict(raw)
+    result.pop("reference_manifest", None)
     result["report_provenance"] = creator_report_model_provenance(raw)
     result["request_evidence"] = summarize_creator_request(
         prompt, image_bindings=visual.get("image_bindings", []),
@@ -2994,14 +3007,10 @@ def _creator_report_evidence_counts(selected_samples: list[CloneSample], sample_
     }
 
 
-def _creator_report_confidence_note(evidence_counts: dict, selected_count: int) -> str:
+def _creator_report_confidence_note(evidence_counts: dict, selected_count: int, request_evidence: dict | None = None) -> str:
     if not selected_count:
         return "尚未选择样本，报告只能作为占位。"
-    if evidence_counts.get("media_complete", 0) == selected_count:
-        return "视频、关键帧、ASR、OCR 和评论均已覆盖；理解等级仍按保守口径记录，报告可信度较高。"
-    if evidence_counts.get("with_keyframes", 0) >= max(1, selected_count // 2):
-        return "大部分样本已有关键帧，视觉和结构判断可用；缺失的 ASR/OCR/评论会影响细节判断。"
-    return "多数样本证据不足，报告更偏元数据和标题层面的方向判断。"
+    return input_scope_note(request_input_summary(request_evidence))
 
 
 def _segment_briefs_for_report(segments: dict, limit: int = 4) -> list[str]:
@@ -3204,6 +3213,9 @@ def _report_generation_diagnostics(result: dict, selected_samples: list[CloneSam
     ]
     return {
         "source_label": source_label,
+        "coverage_scope": "archived_inventory",
+        "request_input": request_input_summary(result.get("request_evidence"), [s.sample_id for s in selected_samples]),
+        "request_input_note": input_scope_note(request_input_summary(result.get("request_evidence"), [s.sample_id for s in selected_samples])),
         "is_fallback": is_fallback or is_prompt_only,
         "fallback_reason": fallback_reason,
         "quality_label": _report_quality_label(score),
@@ -3217,7 +3229,7 @@ def _report_generation_diagnostics(result: dict, selected_samples: list[CloneSam
         },
         "coverage": coverage,
         "coverage_text": (
-            f"视频 {coverage['video']}/{selected_count} · 关键帧 {coverage['keyframes']}/{selected_count} · "
+            f"已归档素材（不代表本次已使用）：视频 {coverage['video']}/{selected_count} · 关键帧 {coverage['keyframes']}/{selected_count} · "
             f"ASR {coverage['asr']}/{selected_count} · OCR {coverage['ocr']}/{selected_count} · 评论 {coverage['comments']}/{selected_count}"
             if selected_count
             else "尚未选择样本"
@@ -3450,7 +3462,9 @@ def build_creator_report_view_model(result: dict, sample_set: CloneSampleSet, se
         "summary": summary,
         "template_label": template_label,
         "confidence_label": _confidence_label(selected_samples),
-        "confidence_note": _creator_report_confidence_note(evidence_counts, len(selected_samples)),
+        "confidence_note": _creator_report_confidence_note(evidence_counts, len(selected_samples), result.get("request_evidence")),
+        "reference_manifest": result.get("reference_manifest") or {},
+        "request_input": request_input_summary(result.get("request_evidence"), [s.sample_id for s in selected_samples]),
         "evidence_counts": evidence_counts,
         "sections": {
             "core_judgment": {
@@ -4054,8 +4068,9 @@ def prompt_only_result(sample_set: CloneSampleSet, selected_sample_ids: list[str
 
 def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, selected_samples: list[CloneSample], warnings: list[str] | None = None) -> dict:
     raw = raw if isinstance(raw, dict) else {}
+    persisted_quality = raw.get("report_quality") if isinstance(raw.get("reference_manifest"), dict) and raw["reference_manifest"].get("version") == 1 else None
     result = creator_clone_schema()
-    reference_warnings: list[str] = []
+    raw, reference_manifest, reference_warnings = resolve_creator_references(raw, selected_samples)
     _deep_merge(result, _validated_creator_refs(raw if isinstance(raw, dict) else {}, selected_samples, reference_warnings) or {})
     result["summary"] = str(result.get("summary") or "创作者蒸馏完成。")
     result["content_profile"] = content_profile_prompt_block(sample_set, selected_samples)
@@ -4067,7 +4082,7 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
                           for key in ("suggested_category", "reason") if isinstance(review.get(key), str)}
         if any(cleaned_review.values()):
             result["category_review"] = cleaned_review
-    valid_refs = _selected_content_refs(selected_samples)
+    valid_refs = [row["sample_id"] for row in reference_manifest["samples"]]
     result["focused_analysis"] = _normalize_creator_findings(result.get("focused_analysis"), valid_refs, reference_warnings)
     raw_groups = result.get("content_groups")
     result["content_groups"] = creator_content_groups(selected_samples)
@@ -4076,7 +4091,7 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
                 if isinstance(item, dict) and creator_category(item.get("category")) == group["category"]
                 and isinstance(item.get("focused_analysis"), list)
                 for row in (item.get("focused_analysis") or [])]
-        group["focused_analysis"] = _normalize_creator_findings(rows, group["sample_ids"], reference_warnings)
+        group["focused_analysis"] = _normalize_creator_findings(rows, [ref for ref in group["sample_ids"] if ref in valid_refs], reference_warnings)
     result["sample_overview"] = {
         "set_id": sample_set.set_id,
         "sample_count": len(sample_set.samples),
@@ -4130,13 +4145,29 @@ def normalize_creator_clone_result(raw: dict, sample_set: CloneSampleSet, select
         evidence_summary=evidence_summary,
         report_context=result,
     ).to_dict()
+    if isinstance(persisted_quality, dict):
+        # Re-reading a server-normalized report is not a new quality evaluation.
+        report_quality = persisted_quality
     result["report_quality"] = report_quality
     result["warnings"] = list(result.get("warnings") or [])
     result["warnings"].extend(reference_warnings)
     result["warnings"].extend(report_quality.get("warnings") or [])
     result["warnings"].extend(report_quality.get("evidence_warnings") or [])
+    # Strategy normalization and server-owned segments can add reference paths.
+    # Index the final persisted shape so a later read has the same diagnostics.
+    result, _, persisted_reference_warnings = resolve_creator_references(result, selected_samples)
+    result["warnings"].extend(persisted_reference_warnings)
+    result["warnings"] = list(dict.fromkeys(result["warnings"]))
     result["creator_report_view_model"] = build_creator_report_view_model(result, sample_set, selected_samples)
     return result
+
+
+def adapt_creator_report_sources(result: dict, sample_set: CloneSampleSet, selected_samples: list[CloneSample]) -> dict:
+    """Read compatibility adapter: rebuild derived sources without changing files."""
+    adapted, _, warnings = resolve_creator_references(result, selected_samples)
+    adapted["warnings"] = list(dict.fromkeys([*(adapted.get("warnings") or []), *warnings]))
+    adapted["creator_report_view_model"] = build_creator_report_view_model(adapted, sample_set, selected_samples)
+    return adapted
 
 
 def normalize_creator_clone_strategy(result: dict) -> dict:
@@ -4330,6 +4361,10 @@ def render_creator_clone_markdown(result: dict) -> str:
         "# 创作者蒸馏报告",
         "",
         f"## 0. 核心摘要\n\n{view_model.get('summary') or result.get('summary') or ''}",
+        "",
+        "### 本次实际输入范围",
+        "",
+        input_scope_note(request_input_summary(result.get("request_evidence"))),
         "",
         "## 1. 观察：这个账号做了什么",
         "",

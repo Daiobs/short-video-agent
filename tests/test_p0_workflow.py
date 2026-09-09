@@ -11542,7 +11542,10 @@ def test_creator_clone_auto_detects_photo_beauty_profile_and_public_view_model()
     assert "本地汇总" not in view_model["summary"]
     assert view_model["evidence_counts"]["with_video"] == 2
     assert view_model["evidence_counts"]["media_complete"] == 2
-    assert "视频、关键帧、ASR、OCR 和评论均已覆盖" in view_model["confidence_note"]
+    assert view_model["evidence_counts"]["with_comments"] == 2
+    assert view_model["request_input"]["known"] is False
+    assert "本次输入范围未完整记录" in view_model["confidence_note"]
+    assert "已归档素材不代表本次模型实际使用过" in view_model["confidence_note"]
     assert any("低门槛出片公式" in item for item in view_model["sections"]["formulas"])
     assert any("新手用杂牌相机" in item for item in view_model["sections"]["next_ideas"])
     assert any("Reduce" in item for item in view_model["technical_notes"])
@@ -12262,7 +12265,13 @@ def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) ->
     assert payload["result"]["sample_overview"]["selected_count"] == 3
     assert payload["map_reduce"]["enabled"] is True
     assert len(provider.prompts) == 1
-    assert len(provider.prompts[-1]) < 5000
+    # Preserve the original input-summary budget; bound the new safety note separately.
+    original_prompt, marker, boundary_note = provider.prompts[-1].partition("\n【识别与静态图边界】\n")
+    assert marker
+    assert len(original_prompt) < 5000
+    assert 0 < len(boundary_note) <= 180
+    for required in ("OCR/ASR冲突须分列来源", "不互证", "静态图不证明整段运动", "固定机位", "音乐卡点", "未覆盖图片", "区分原作观察与拍摄建议"):
+        assert required in boundary_note
     assert Path(payload["exports"]["map_summaries_json"]).is_file()
     assert Path(payload["exports"]["distill_prompt_micro_md"]).is_file()
 
