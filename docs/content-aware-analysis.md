@@ -229,3 +229,47 @@ Creator 分数继续使用原来的 0–100 和阈值，只改为“结构与可
 | 视觉展示 | [fixture](content-aware-examples/product-long-visual-report.json) | [前](content-aware-screenshots/synthetic-visual-before.html-1280.png) / [后](content-aware-screenshots/synthetic-visual.html-1280.png) | [前](content-aware-screenshots/synthetic-visual-before.html-390.png) / [后](content-aware-screenshots/synthetic-visual.html-390.png) |
 
 `STOPPED_AFTER_CREATOR_REPORT_PRODUCT_ACCEPTANCE`：真实生成 1 次但没有新结果，未重新采集/下载/富化，原始业务产物修改 0，保持 Draft，等待人工产品审查。
+
+## PR #29 最后一次真实报告恢复验收
+
+参考 Head `6ba5efd`。本轮没有修改业务代码、UI、模型、网络或等待预算；只在仓库外的隔离验收脚本增加安全阶段诊断。原业务服务 8765 不切换、不重启，8766 的 A/B 原文件校验一致。
+
+上次只能确认 `LLM_GATEWAY_TIMEOUT`；历史异常链没有保存，无法追溯具体 Connect/Write/Read/Pool 类型，也没有可恢复的完整响应。本轮使用已安装 `httpx 0.28.1 / httpcore 1.0.9` 的同步 trace 回调，只记录事件、时间和异常类，不记录 trace info、鉴权头、Base64 或完整 HTTP 请求/响应。
+
+### 请求构造核对（先 mock，再真实发送）
+
+- 当前 endpoint 为 `https://api.cosflow.icu/responses`，`openai_responses / gpt-5.6`。
+- Quick，总预算配置 240 秒，请求配置 180 秒；temperature 0.2，max_output_tokens 1800。没有额外 reasoning 或 stream 参数。
+- HTTPX 实际 connect/read/write/pool 各取剩余请求预算，约 180 秒。它是分阶段等待超时，不是严格的整请求 180 秒墙钟上限。本轮未改这项现有语义。
+- 五条选中样本身份与原两张图保持一致。Prompt 为 8,215 字符，**实际序列化 JSON 请求体 371,548 字节**；不是图片源文件大小之和。
+- 图片经现有编码器处理后为 JPEG 1200×978（136,229 字节）和 1200×489（133,006 字节）；对应既定的第一、第二个选中样本。其余三条没有直接图片输入。
+- 五条均有 OCR 短摘（84/121/17/220/74 字符）；第一、第五条另有 ASR（11/30 字符），无有效评论或既有单条视觉分析。短文本不代表完整口播。
+- 实际首请求的 body 哈希与发送被拦截的 preflight 一致；未发现 endpoint 拼接、样本关联、图片序列化或输出配置错误。
+- Python Client 确认为 `trust_env=False`、`HTTPTransport / ConnectionPool`，未使用环境 HTTP 代理，TLS 校验未关闭。不以 Chrome 连通性推断 Python 路径，也不据此排除操作系统透明网络设施。
+
+### 第二次真实调用的已观察阶段
+
+| 阶段 | 距本轮开始 |
+| --- | --- |
+| TCP 连接完成 | 0.106 秒 |
+| TLS 完成 | 0.170 秒 |
+| 请求体发送完成 | 0.415 秒 |
+| 开始等待响应头 | 0.416 秒 |
+| 响应头读取失败 | 180.406 秒 |
+| Creator 返回失败 | 180.409 秒 |
+
+异常链为 `AppError → httpx.ReadTimeout → httpcore.ReadTimeout → TimeoutError`，公开错误码仍为 `LLM_GATEWAY_TIMEOUT`。未取得 HTTP 状态，没有进入响应正文、JSON 提取或业务校验；连接由现有 Client 上下文关闭，隔离进程已结束。
+
+本轮 **1 次任务级生成 / 1 次逻辑请求 / 1 次真实 HTTP 尝试**，累计 **2 / 2 / 2**。没有内部重试、降级、额外 ping、组合探测或新增逐样本调用。`usage=unknown`；客户端超时不能证明上游未执行或费用为 0。
+
+没有取得网关侧关联记录，不能确认应用层是否接收/转发、排队、上游运行、客户端断开后的继续执行或最终完成。本次可以排除“仍卡在 TCP/TLS 或请求体发送”作为观察到的超时位置，不能判定是模型故障、图片不支持或仅靠延长时间就能成功。
+
+**C 未生成，状态 PARTIAL，停止真实调用。** A/B 继续保留，不用合成内容填充 C，不以模型 JSON 返回与否冒充产品验收。后续只建议先由有权限的网关管理员关联本轮北京时间 **2026-09-09 20:01:30–20:04:31** 的脱敏记录，确定排队、上游与客户端断开阶段；不消耗新生成、不改全局设置，再据此决定是否申请一次不同等待预算的实验。
+
+### 本轮验证
+
+隔离 preflight 使用 mock HTTP 走现有 Provider 序列化、JSON 提取和业务校验；首次过简 mock 未通过业务校验，补足合成定位字段后通过，未发送网络请求。定向回归 **19 passed**（实际请求体接线、重试与请求来源回归）；隔离脚本 Python/JS 语法检查通过。业务代码未变，未重复运行上轮已通过的完整 1061 项测试。文档差异检查通过。
+
+260 个受保护原文件修改 0，原配置校验一致，A/B 字节不变，未重新采集/下载/富化。私有诊断与输入/报告副本不提交 Git。本轮仅更新本节与现有 PR 描述，保持 Draft，不 Ready、不 Merge、不部署。用户产品验收 PENDING。
+
+`STOPPED_AFTER_PR29_REAL_REPORT_RECOVERY`
