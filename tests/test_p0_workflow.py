@@ -1110,7 +1110,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "需人工复核" in script
     assert "strategy-plan-timeline" in script
     assert "报告来源" in creator_report_script
-    assert "质量判断" in creator_report_script
+    assert "结构与可执行性检查" in creator_report_script
     assert "优先补齐" in creator_report_script
     assert "分批大模型汇总" in script
     assert "evidence-chip" in script
@@ -1185,9 +1185,9 @@ def test_home_uses_versioned_static_assets() -> None:
     assert "creator_report_view_model" in script
     assert "isTechnicalReportNote" in script
     assert "创作者蒸馏核心报告" in creator_report_script
-    assert "观察：这个账号做了什么" in creator_report_script
-    assert "解释：为什么这些内容有效" in creator_report_script
-    assert "执行：下一条怎么拍 / 怎么写 / 怎么验证" in creator_report_script
+    assert "账号定位与本轮结论" in creator_report_script
+    assert "核心规律与可复用结构" in creator_report_script
+    assert "下一条怎么做" in creator_report_script
     assert "样本证据" in creator_report_script
     assert "低置信提示" in creator_report_script
     assert "证据缺口" in creator_report_script

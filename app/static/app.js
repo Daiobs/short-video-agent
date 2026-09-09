@@ -1731,8 +1731,14 @@ function renderJobPhase(job) {
   const recommendedBatchTimeout = timeoutPolicy.recommended_batch_timeout_seconds || "";
   const recommendedFinalTimeout = timeoutPolicy.recommended_final_reduce_timeout_seconds || "";
   const recommendedEnrichmentTimeout = timeoutPolicy.recommended_enrichment_timeout_seconds || "";
-  const batchLine = Number(phase.batch_count || plan.batch_count || 0)
-    ? `批次 ${phase.phase_index ? `${formatNumber(phase.phase_index)} / ` : ""}${formatNumber(phase.batch_count || plan.batch_count)}`
+  const batchCount = Number(phase.batch_count || plan.batch_count || 0);
+  // Historical phase_index includes planning/persistence; only batch_reduce is a batch ordinal.
+  const batchIndex = phase.batch_index ?? (phase.current_phase === "batch_reduce" ? phase.phase_index : null);
+  const validBatchIndex = Number.isInteger(batchIndex) && batchIndex >= 1 && batchIndex <= batchCount;
+  const batchLine = batchCount
+    ? phase.current_phase === "batch_reduce"
+      ? validBatchIndex ? `批次 ${formatNumber(batchIndex)} / ${formatNumber(batchCount)}` : `批次序号未记录 · 共 ${formatNumber(batchCount)} 批`
+      : `计划批次 ${formatNumber(batchCount)}`
     : "";
   const timeoutLine = timeout
     ? `本次请求最多等待 ${formatNumber(timeout)} 秒`
@@ -1774,7 +1780,8 @@ function renderJobPhase(job) {
     componentLine,
   ].filter(isMeaningfulReportText);
   jobPhase.classList.remove("hidden");
-  jobPhase.innerHTML = `
+  const completed = job.status === "success";
+  jobPhase.innerHTML = `${completed ? '<details class="job-completed-details"><summary>运行详情</summary>' : ""}
     <div class="job-phase-header">
       <span>${escapeHtml(phase.current_phase_label || "运行阶段")}</span>
       ${phase.status ? `<strong>${escapeHtml(phase.status)}</strong>` : ""}
@@ -1787,6 +1794,7 @@ function renderJobPhase(job) {
         <ul>${diagnostics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
       </details>
     ` : ""}
+    ${completed ? "</details>" : ""}
   `;
 }
 
@@ -2197,13 +2205,13 @@ function qualityLabelFromScore(score) {
     return "待评估";
   }
   const numeric = Number(score);
-  if (Number.isNaN(numeric)) {
+  if (!Number.isFinite(numeric)) {
     return "待评估";
   }
-  if (numeric >= 85) return "高可信";
-  if (numeric >= 70) return "可用，建议复核";
-  if (numeric >= 50) return "低置信，需要补证据";
-  return "占位/降级报告";
+  if (numeric >= 85) return "结构与落地项较完整";
+  if (numeric >= 70) return "结构与落地项基本完整";
+  if (numeric >= 50) return "结构与落地项待补充";
+  return "结构与落地项不足";
 }
 
 function creatorReportDiagnosticsFromResult(result = {}, overview = {}) {
@@ -5616,6 +5624,8 @@ function creatorReportViewModelFromResult(result = {}, overview = {}, templateLa
     viewModel.value_upgrade = viewModel.value_upgrade && typeof viewModel.value_upgrade === "object" ? {...viewModel.value_upgrade} : {};
     viewModel.value_upgrade.quality = viewModel.value_upgrade.quality || result.report_quality || {};
     viewModel.value_upgrade.diagnostics = viewModel.value_upgrade.diagnostics || creatorReportDiagnosticsFromResult(result, overview);
+    viewModel.value_upgrade.diagnostics = {...viewModel.value_upgrade.diagnostics,
+      quality_label: qualityLabelFromScore(viewModel.value_upgrade.diagnostics.quality_score ?? viewModel.value_upgrade.quality.quality_score ?? viewModel.value_upgrade.quality.score)};
     return viewModel;
   }
   const strategy = creatorStrategyFromResult(result) || {};

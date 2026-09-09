@@ -1,0 +1,29 @@
+{
+  "summary": "合成对照报告：账号围绕手工角色造型，以主题合集和动作演示呈现内容。五条样本的互动量存在差异，合集获得更多分享，但这不能单独证明原因。当前记录包含转录线索，原始画面输入范围未完整记录。",
+  "analysis_focus": {"version":1,"primary":"beauty_cos","label":"视觉展示","source":"auto","initial_category":"beauty_cos","section_order":["visual_analysis","first_3_seconds","replication"]},
+  "category_review": {"suggested_category":"tutorial","reason":"部分样本有步骤说明，可以人工复核；本报告未改变方向。"},
+  "creator_positioning":{"what_the_creator_sells":"原创造型与呈现变化","audience_promise":"提供可尝试的造型参考","audience_assumption":"可能吸引手工爱好者，尚未验证"},
+  "focused_analysis":[{"question":"主题合集如何组织？","observation":"两条已有摘要描述先展示成品，再排列不同变化。","interpretation":"可能便于观众比较。","transfer":"一次只改变一个造型要素。","evidence":["sample_demo_a"],"uncertainty":"不能从静态材料判断真实留存。"}],
+  "content_groups":[{"label":"视觉展示","category":"beauty_cos","count":3,"analyzed_count":2,"metadata_only_count":0,"missing_analysis_count":1,"sample_ids":["sample_demo_a"],"patterns":["先给出主题，再展示变化"]},{"label":"步骤教程","category":"tutorial","count":2,"analyzed_count":0,"metadata_only_count":1,"missing_analysis_count":2,"sample_ids":["sample_demo_b"]}],
+  "thinking_patterns":["围绕同一主题测试不同呈现顺序"],
+  "expression_patterns":{"opening_hooks":["成品对照开头"],"visual_style":["保持背景简洁"],"ending_patterns":["邀请比较不同版本"]},
+  "transferable_formulas":[{"name":"主题合集与单项比较","when_to_use":"已有不同版本的授权素材","observation":"合集分享量较高。","beat_structure":"给出主题→依次展示变化→邀请比较","execution":"控制时长和主体，比较两个版本。","support":{"sample_id":"sample_demo_a","title":"合成样本：三种造型对照","metric":"share_count","metric_value":120},"risks":["互动绝对量不能替代互动率。"]}],
+  "candidate_ideas":[{"title":"同一材料的三种造型","formula_used":"主题合集与单项比较","why_worth_trying":"验证呈现顺序是否影响评论讨论","production_requirements":["三种成品","一致拍摄环境"],"evidence":"sample_demo_a"}],
+  "next_actions":["制作两个呈现顺序版本。","记录发布24小时后的分享和有效评论，保留未采集项。"],
+  "evidence_gaps":["缺少播放量，不能计算互动率。","本次没有完整的直接图片输入记录。"],
+  "creator_clone_strategy":{"positioning":"原创造型呈现","validation_rules":["一次只改变一个变量"],"templates":[],"idea_bank":[]},
+  "sample_overview":{"selected_count":5,"sample_count":5,"understanding_counts":{"partial":5}},
+  "creator_report_view_model":{
+    "headline":"围绕同一主题，比较可复用的呈现方式",
+    "summary":"合成摘要，非真实模型产物。",
+    "sections":{"formulas":["先展示结果，再安排比较"],"next_actions":["先做两种呈现顺序"],"next_ideas":["主题三变"],"repeatable_patterns":["主题一致，变化可比较"]},
+    "value_upgrade":{
+      "observation":{"bullets":["合集与单项展示并存"]},
+      "explanation":{"bullets":["方便比较是一个待验证假设"]},
+      "execution":{"bullets":["以相同主体对照呈现顺序"],"next_content_suggestions":["主题三变"]},
+      "sample_evidence":[{"sample_id":"sample_demo_a","title":"合成样本：三种造型对照","metric":"share_count","metric_value":120},{"sample_id":"sample_demo_b","title":"合成样本：步骤演示","metric":"comment_count","metric_value":null}],
+      "quality":{"score":100},
+      "diagnostics":{"source_label":"历史生成记录","quality_label":"高可信","quality_score":100,"coverage_text":"视频 5/5 · 关键帧 5/5 · ASR 5/5 · OCR 5/5 · 评论 5/5"}
+    }
+  }
+}

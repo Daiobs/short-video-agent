@@ -41,7 +41,7 @@ Case 在“应用类型”时保存方向但不调用模型；Creator 下拉框�
 
 ASR 状态与文本状态分别记录：未配置/未运行、失败、成功但空文本、有效文本。任何空文本状态都不证明没有口播。OCR 不当成口播原话，元数据标题不当成已观察的画面。
 
-每次正式请求依据实际发送的图片和文本建立证据说明。text_only 不声称看过图片；精简请求不声称收到完整素材包。静态帧不能证明连续运镜、节拍或精确动作时序。缺证据仅约束相关结论，不要求整份报告失败。
+单作品正式请求依据实际发送的图片和文本建立 request evidence。Creator 仍没有持久化同等完整的逐请求输入清单，不能套用 Case 合同或从素材库存反推历史请求。text_only 不声称看过图片；精简请求不声称收到完整素材包。静态帧不能证明连续运镜、节拍或精确动作时序。缺证据仅约束相关结论，不要求整份报告失败。
 
 输入文本是待分析资料，不是可执行指令。新增字段过滤链接、凭据和本机路径；不向模型补入真实 Cookie、Key 或签名资源地址。
 
@@ -108,6 +108,57 @@ ASR 状态与文本状态分别记录：未配置/未运行、失败、成功但
 本轮新增 49 项评分和 41 项评论回归；完整 `pytest -q` 为 **852 passed，1 warning（11.01 秒）**，保留原有 Starlette TestClient/httpx 弃用提示。全部 12 个跟踪 JS 语法、compileall、`git diff --check` 通过。前端与报告消费者继续读取统一的 `score / max_score=100` 和 `level`，无需修改 JS。
 
 独立审查补齐了正文方括号表情保留、有效摘要 coverage 判定，以及字符串化空对象经实际归一化不崩溃的测试。真实 LLM、采集/下载/富化调用与业务数据修改均为 0；本轮未重新运行浏览器或真实素材冒烟，也不以测试数量证明模型质量提升。
+
+## PR #29 阅读体验收尾
+
+对照代码：八月基线 `51293c4`、修复前 `7f8ae36`、本轮修复。已核对 8765 监听进程的 cwd、启动参数与本地 wrapper 的导入路径，确认实际承载服务的是 PR #29 工作树，而非终端所在的其它 main。没有主动切换或重启服务。
+
+反馈报告、样本清单、已有 Map 材料和 Prompt 直接从磁盘复制到仓库外隔离目录，不经过 GET/hydrate。副本和源目录逐文件一致；未重写真实产物。对同一份保存输入运行三个版本的 renderer，没有重新生成内容。没有找到同组样本的八月真实模型报告，因此仅验证展示回归，不宣称模型内容质量下降或提升。
+
+### 稳定主线与字段核对
+
+Creator 不再因 `analysis_focus` 存在绕过阅读骨架。方向只改变已有内容的组织与问题，不替换分类、请求或用户选择。自动初判、模型建议收在方向说明中；按类型归纳保留全部成员及已分析/仅元数据/缺少单条分析的区别。
+
+| 已有字段 | 页面区域 | 保留方式 |
+| --- | --- | --- |
+| summary / creator_positioning / view model observation | 账号定位与本轮结论 | 全文与定位，观众标明是假设 |
+| focused_analysis / thinking_patterns / expression_patterns | 核心规律 | 专门映射观察、解释、动作与限制，不统一强加论证或摄影标题 |
+| transferable_formulas / sections.formulas / templates | 可复用方法 | 名称、适用、步骤、行动、支持样本和风险；空新字段回退旧字段 |
+| content_groups | 按样本类型归纳 | 完整分组、来源计数与已有规律可展开 |
+| value_upgrade.sample_evidence / performance_segments | 代表样本对比 | 已知标题、中文指标；缺失值不显示为 0；不把互动当因果 |
+| next_actions / execution / sections.next_actions | 下一条怎么做 | 默认可见；不收进辅助分析 |
+| candidate_ideas / next_content_suggestions / next_ideas / idea_bank | 候选选题与执行方式 | 名称、适用公式、理由、所需素材及支持依据 |
+| strategy / creator_clone_spec | 补充策略与完整方法 | 有效补充内容保留在展开区，不静默丢弃 |
+| evidence_gaps / low_confidence_reasons / quality warnings | 证据与限制 | 重要缺口默认可见，不被高结构分盖住 |
+| 原始引用和未知扩展字段 | 原始记录 | escaping 后可展开；不把模型输出当 HTML |
+
+空数组和空对象不遮挡旧内容；没有内容的章节不生成空壳，也不补套话。不存在标题映射时显示“样本名称未记录”，不编造编号或关系。较长内容不静默截断。旧报告保留原生成方向，失败重分析继续保留上次报告。Case 的既有按类型排序逻辑保持不变。
+
+### 分数、库存与实际输入
+
+Creator 分数继续使用原来的 0–100 和阈值，只改为“结构与可执行性检查”，并放在次要展开区；持久化旧 view model 的“高可信”在展示时重新解释，不批量改文件。分数不是事实准确率，也不是效果验证。
+
+库存统计明确标为归档素材。Creator 尚无可靠的完整逐请求 manifest，页面显示“本次输入范围未完整记录”；不相信模型自己写出的 request_evidence 字段，不凭数量推断当时输入。ASR/OCR 文本、已有单条分析、Map/批次摘要可能构成二手材料，没有直接图片不等于只有标题；摘要仍带来源限制。Case 自身的实际输入 manifest 不变。
+
+只读对照另发现：该保存样本的 Map 文件中存在 ASR/OCR 摘录，而保存的 micro Prompt 样本条目没有这些摘录，仅有标题、指标、状态与短摘要。代码 `_micro_map_summary` 确实不包含原始摘录字段。这是独立的内容输入问题，不是 CSS；本轮未重写该链路，不能据此推断所有历史请求或所有模式。评论文件中的状态也不等于实际评论内容。
+
+### 运行详情
+
+“批次 3/1”来自 `phase_index`（包含规划、持久化、完成等阶段）被误用为批次序号。现在仅 `batch_reduce` 的有效序号形成 `batch_index`；完成时只显示计划批数。旧记录按已知阶段语义解释，无法确认的批次序号显示未记录，不做 min/max 钳制，原阶段诊断仍保留。成功任务的预算、尝试次数、Prompt 字符数收进“运行详情”，进行中保持可观察。没有改状态机、重试或等待预算。
+
+### 同输入浏览器对照
+
+[合成 fixture](content-aware-examples/reading-fixture.json) 是脱敏模拟内容，不是用户报告或真实模型产物。以下三个版本使用完全相同输入、独立 Chrome 上下文、100% 缩放和相同容器宽度：
+
+| 版本 | 桌面 1280px | 手机 390px |
+| --- | --- | --- |
+| 八月代码 | [截图](content-aware-screenshots/reading-august-1280.png) | [截图](content-aware-screenshots/reading-august-390.png) |
+| 修复前 | [截图](content-aware-screenshots/reading-before-1280.png) | [截图](content-aware-screenshots/reading-before-390.png) |
+| 修复后 | [截图](content-aware-screenshots/reading-after-1280.png) | [截图](content-aware-screenshots/reading-after-390.png) |
+
+真实保存输入也完成相同六次隔离渲染；真实副本、HTML、完整 Prompt 和截图只在仓库外。12 个视图均无水平溢出、无 pageerror。未修改用户 Chrome 的全局缩放，不在真实页面重新跑任务。自动测试使用合成输入和临时数据库，不以测试全绿代替用户阅读验收。
+
+本轮完整测试 **916 passed，1 个既有警告（11.59 秒）**；全部 12 个 JS 语法、compileall 和 diff 检查通过。独立审查补齐了标题别名并存、带引用的创作方案、非样本证据对象、空分组及成员回退回归。更新的旧断言是 Creator 章节标题与排序预期，而非取消方向、失败保留、Case、Strategy/Execution 或登录回归。真实 LLM、重新采集/下载/富化和原始业务产物修改均为 0。
 
 ## 仍存在的限制
 

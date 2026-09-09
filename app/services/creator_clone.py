@@ -2779,18 +2779,18 @@ def _action_items_for_report(content_profile: str, result: dict, formulas: list[
 
 def _report_quality_label(score: int | float | None) -> str:
     if score is None:
-        return "待评估"
+        return "结构待评估"
     try:
         numeric = float(score)
     except (TypeError, ValueError):
-        return "待评估"
+        return "结构待评估"
     if numeric >= 85:
-        return "高可信"
+        return "结构较完整"
     if numeric >= 70:
-        return "可用，建议复核"
+        return "结构基本完整"
     if numeric >= 50:
-        return "低置信，需要补证据"
-    return "占位/降级报告"
+        return "结构待补全"
+    return "结构明显缺失"
 
 
 def _report_generation_diagnostics(result: dict, selected_samples: list[CloneSample], sample_set: CloneSampleSet, report_quality: dict) -> dict:

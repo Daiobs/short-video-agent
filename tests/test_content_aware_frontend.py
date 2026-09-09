@@ -115,7 +115,9 @@ console.log(JSON.stringify({html, blank, legacy}));
     html = result["html"]
     assert "实时选择不应覆盖报告" not in html
     assert "本次分析重点：步骤教程" in html
-    assert html.index('data-analysis-section="thinking_patterns"') < html.index('data-analysis-section="expression_patterns"')
+    # Creator chapters keep the user reading order; type ordering stays inside chapters.
+    assert html.index('data-report-section="positioning"') < html.index('data-report-section="patterns"')
+    assert "合成论证" in html and "合成构图" in html
     assert "仅元数据：1，不视为已验证的内容规律" in html
     assert "已有分析：0" in html and "synthetic_metadata_2" in html
     assert "合成示例/非真实模型产物" in html
