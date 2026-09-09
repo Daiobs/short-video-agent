@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from app.config import settings
+from app.errors import AppError, ErrorCode
 
 
 LOCAL_SETTINGS_PATH = settings.project_root / ".local_settings.json"
@@ -79,7 +81,24 @@ def _safe_int(value, fallback: int) -> int:
 
 
 def effective_llm_settings() -> dict[str, Any]:
-    return {
+    local = load_local_settings().get("llm", {})
+    local = local if isinstance(local, dict) else {}
+    legacy_defaults = {
+        "quick_distill_budget_seconds": 240.0,
+        "deep_distill_budget_seconds": 600.0,
+        "batch_job_budget_seconds": 600.0,
+    }
+
+    def task_cap(key: str, fallback: float) -> float:
+        value = _safe_float(local.get(key, fallback), fallback)
+        # Only known former defaults without an explicit mode are upgraded in memory.
+        # Non-default caps and environment overrides retain their original meaning.
+        if "creator_distill_budget_mode" not in local and value == legacy_defaults[key]:
+            return fallback
+        return value
+
+    result = {
+        "creator_distill_budget_mode": str(_local_value("llm", "creator_distill_budget_mode", settings.llm_creator_distill_budget_mode) or "auto").strip().lower(),
         "provider": str(_local_value("llm", "provider", settings.llm_provider) or "").strip().lower(),
         "api_base": str(_local_value("llm", "api_base", settings.llm_api_base) or "").rstrip("/"),
         "api_key": str(_local_value("llm", "api_key", settings.llm_api_key) or ""),
@@ -97,18 +116,9 @@ def effective_llm_settings() -> dict[str, Any]:
             _local_value("llm", "final_reduce_timeout_seconds", settings.llm_final_reduce_timeout_seconds),
             settings.llm_final_reduce_timeout_seconds,
         ),
-        "quick_distill_budget_seconds": _safe_float(
-            _local_value("llm", "quick_distill_budget_seconds", settings.llm_quick_distill_budget_seconds),
-            settings.llm_quick_distill_budget_seconds,
-        ),
-        "deep_distill_budget_seconds": _safe_float(
-            _local_value("llm", "deep_distill_budget_seconds", settings.llm_deep_distill_budget_seconds),
-            settings.llm_deep_distill_budget_seconds,
-        ),
-        "batch_job_budget_seconds": _safe_float(
-            _local_value("llm", "batch_job_budget_seconds", settings.llm_batch_job_budget_seconds),
-            settings.llm_batch_job_budget_seconds,
-        ),
+        "quick_distill_budget_seconds": task_cap("quick_distill_budget_seconds", settings.llm_quick_distill_budget_seconds),
+        "deep_distill_budget_seconds": task_cap("deep_distill_budget_seconds", settings.llm_deep_distill_budget_seconds),
+        "batch_job_budget_seconds": task_cap("batch_job_budget_seconds", settings.llm_batch_job_budget_seconds),
         "final_reduce_min_reserve_seconds": _safe_float(
             _local_value(
                 "llm",
@@ -135,10 +145,29 @@ def effective_llm_settings() -> dict[str, Any]:
         "image_max_width": _safe_int(_local_value("llm", "image_max_width", settings.llm_image_max_width), settings.llm_image_max_width),
         "image_jpeg_quality": _safe_int(_local_value("llm", "image_jpeg_quality", settings.llm_image_jpeg_quality), settings.llm_image_jpeg_quality),
     }
+    # Persisted files and environment settings do not pass through the PUT schema.
+    # Validate only Creator timing here; do not change ordinary LLM conversion.
+    creator_limits = {
+        "creator_distill_request_timeout_seconds": (30, 1200),
+        "final_reduce_timeout_seconds": (30, 2400),
+        "quick_distill_budget_seconds": (60, 14400),
+        "deep_distill_budget_seconds": (120, 14400),
+        "batch_job_budget_seconds": (180, 14400),
+        "final_reduce_min_reserve_seconds": (30, 600),
+        "compact_retry_min_remaining_seconds": (10, 300),
+    }
+    for key, (minimum, maximum) in creator_limits.items():
+        value = result[key]
+        if not math.isfinite(value) or not minimum <= value <= maximum:
+            raise AppError(ErrorCode.LLM_SETTINGS_INVALID, f"Creator 等待配置 {key} 必须在 {minimum}–{maximum} 秒之间且为有限数字。")
+    if result["creator_distill_budget_mode"] not in {"auto", "manual"}:
+        raise AppError(ErrorCode.LLM_SETTINGS_INVALID, "Creator 等待模式必须为 auto 或 manual。")
+    return result
 
 
 def update_llm_runtime_settings(values: dict[str, Any]) -> dict[str, Any]:
     allowed = {
+        "creator_distill_budget_mode",
         "provider",
         "api_base",
         "api_key",

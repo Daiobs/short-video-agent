@@ -10,7 +10,7 @@ from app.errors import AppError, ErrorCode
 
 @dataclass
 class DistillDeadline:
-    """One monotonic wall-clock budget shared by every LLM layer."""
+    """Shared monotonic budget; network cancellation is opt-in for Creator."""
 
     total_budget_seconds: float
     started_monotonic: float
@@ -18,6 +18,7 @@ class DistillDeadline:
     started_at: datetime
     deadline_at: datetime
     _clock: Callable[[], float] = field(repr=False, compare=False)
+    enforce_network: bool = False
 
     @classmethod
     def start(
@@ -51,6 +52,7 @@ class DistillDeadline:
             started_at=now_wall,
             deadline_at=min(self.deadline_at, now_wall + timedelta(seconds=total)),
             _clock=self._clock,
+            enforce_network=self.enforce_network,
         )
 
     def elapsed_seconds(self) -> float:

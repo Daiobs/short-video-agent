@@ -2711,15 +2711,15 @@ def test_llm_settings_can_save_local_runtime_config_without_leaking_key(monkeypa
         ("timeout_seconds", 4),
         ("timeout_seconds", 301),
         ("creator_distill_request_timeout_seconds", 29),
-        ("creator_distill_request_timeout_seconds", 301),
+        ("creator_distill_request_timeout_seconds", 1201),
         ("quick_distill_budget_seconds", 59),
-        ("quick_distill_budget_seconds", 601),
+        ("quick_distill_budget_seconds", 14401),
         ("deep_distill_budget_seconds", 119),
-        ("deep_distill_budget_seconds", 1201),
+        ("deep_distill_budget_seconds", 14401),
         ("batch_job_budget_seconds", 179),
-        ("batch_job_budget_seconds", 1801),
+        ("batch_job_budget_seconds", 14401),
         ("final_reduce_timeout_seconds", 29),
-        ("final_reduce_timeout_seconds", 901),
+        ("final_reduce_timeout_seconds", 2401),
         ("final_reduce_min_reserve_seconds", 29),
         ("final_reduce_min_reserve_seconds", 601),
         ("compact_retry_min_remaining_seconds", 9),
@@ -2761,6 +2761,7 @@ def test_llm_settings_reject_cross_field_constraints_without_writing(
     runtime_path = tmp_path / ".local_settings.json"
     monkeypatch.setattr("app.services.runtime_settings.LOCAL_SETTINGS_PATH", runtime_path)
     valid = {
+        "creator_distill_budget_mode": "manual",
         "timeout_seconds": 90,
         "creator_distill_request_timeout_seconds": 180,
         "quick_distill_budget_seconds": 240,
@@ -11658,8 +11659,9 @@ def test_creator_clone_distill_execution_plan_scales_large_batches(monkeypatch, 
     assert plan["duration"]["known_count"] == 1
     assert plan["duration"]["total_seconds"] == 12.5
     assert plan["timeout_policy"]["recommended_enrichment_timeout_seconds"] >= 1800
-    assert plan["timeout_policy"]["recommended_batch_timeout_seconds"] == 90
-    assert plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] == 600
+    assert plan["timeout_policy"]["budget_mode"] == "auto"
+    assert 90 < plan["timeout_policy"]["recommended_batch_timeout_seconds"] <= 1200
+    assert 600 < plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] <= 2400
     assert plan["timeout_policy"]["basis"]["known_video_duration_seconds"] == 12.5
     assert plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"] > 0
     assert plan["timeout_policy"]["basis"]["components_seconds"]["sample_complexity"] > 0
@@ -11690,8 +11692,10 @@ def test_creator_clone_distill_execution_plan_uses_continuous_complexity_factors
     long_plan = build_distill_execution_plan(long_samples, batch_size=20, final_timeout_seconds=600, prompt_chars=12000)
     larger_prompt_plan = build_distill_execution_plan(short_samples, batch_size=20, final_timeout_seconds=600, prompt_chars=48000)
 
-    assert long_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] == short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
-    assert larger_prompt_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] == short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
+    assert short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] < long_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] <= 2400
+    assert short_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] < larger_prompt_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"] <= 2400
+    assert short_plan["timeout_policy"]["recommended_batch_timeout_seconds"] < long_plan["timeout_policy"]["recommended_batch_timeout_seconds"] <= 1200
+    assert short_plan["timeout_policy"]["recommended_batch_timeout_seconds"] < larger_prompt_plan["timeout_policy"]["recommended_batch_timeout_seconds"] <= 1200
     assert long_plan["timeout_policy"]["basis"]["components_seconds"]["duration_complexity"] > short_plan["timeout_policy"]["basis"]["components_seconds"]["duration_complexity"]
     assert larger_prompt_plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"] > short_plan["timeout_policy"]["basis"]["components_seconds"]["prompt_complexity"]
 

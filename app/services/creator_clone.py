@@ -2180,22 +2180,22 @@ def distill_creator_clone(
         ),
         final_timeout_seconds=float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds),
         prompt_chars=len(prompt),
+        budget_mode=effective_llm.get("creator_distill_budget_mode", "auto"),
     )
     configured_mode_budget = (
         effective_llm.get("deep_distill_budget_seconds")
         if distill_mode == "deep"
         else effective_llm.get("quick_distill_budget_seconds")
     )
-    total_budget_seconds = max(1, int(configured_mode_budget or settings.llm_quick_distill_budget_seconds))
+    configured_request_timeout = execution_plan["timeout_policy"]["recommended_batch_timeout_seconds"]
+    task_cap = max(1, int(configured_mode_budget or (
+        settings.llm_deep_distill_budget_seconds if distill_mode == "deep"
+        else settings.llm_quick_distill_budget_seconds
+    )))
+    total_budget_seconds = min(task_cap, configured_request_timeout * 2 + 30) if execution_plan["timeout_policy"]["budget_mode"] == "auto" else task_cap
     total_deadline = deadline or DistillDeadline.start(total_budget_seconds)
+    total_deadline.enforce_network = True
     total_budget_seconds = max(1, int(total_deadline.total_budget_seconds))
-    configured_request_timeout = max(
-        1,
-        int(
-            effective_llm.get("creator_distill_request_timeout_seconds")
-            or settings.llm_creator_distill_request_timeout_seconds
-        ),
-    )
     compact_retry_minimum = max(
         5,
         int(
@@ -2205,15 +2205,17 @@ def distill_creator_clone(
     )
     retry_available = (use_map_reduce or include_case_reports) and total_budget_seconds >= compact_retry_minimum + 5
     attempt_count = 2 if retry_available else 1
-    first_attempt_timeout = (
-        min(configured_request_timeout, max(1, total_budget_seconds - compact_retry_minimum))
-        if retry_available
-        else min(configured_request_timeout, total_budget_seconds)
-    )
+    first_attempt_timeout = min(configured_request_timeout, total_deadline.remaining_seconds())
+    # Permit only clock/bookkeeping jitter at an exact-cap boundary; the
+    # child deadline still limits the actual request to all remaining time.
+    plan_does_not_fit = configured_request_timeout - first_attempt_timeout > 0.05
     execution_plan["timeout_policy"].update(
         {
             "distill_mode": distill_mode,
             "total_request_budget_seconds": total_budget_seconds,
+            "task_cap_seconds": task_cap,
+            "effective_request_timeout_seconds": first_attempt_timeout,
+            "budget_limited": plan_does_not_fit,
             "max_external_attempts": attempt_count,
             "max_http_attempts_per_logical_request": 2,
             "max_total_external_http_requests": attempt_count * 2,
@@ -2233,7 +2235,8 @@ def distill_creator_clone(
     )
     report_progress(
         58,
-        f"蒸馏 Prompt 已写入，大模型总等待预算 {total_budget_seconds} 秒",
+        f"蒸馏 Prompt 已写入，本次请求最多等待 {int(first_attempt_timeout)} 秒，任务总预算 {total_budget_seconds} 秒"
+        + ("；任务剩余预算不足以容纳完整计划额度，已按实际剩余时间限制" if plan_does_not_fit else ""),
         {
             "current_phase": "prompt_ready",
             "current_phase_label": "Prompt 就绪",
@@ -2245,6 +2248,7 @@ def distill_creator_clone(
         },
     )
     active_attempt_index = 1
+    active_attempt_timeout = first_attempt_timeout
     active_provider = None
 
     def budget_phase(
@@ -2280,6 +2284,14 @@ def distill_creator_clone(
                 diagnostic="如果停留在这里，通常是网关排队、模型生成较慢，或 prompt 较长导致首字节/生成耗时增加。",
             ),
         )
+        if execution_plan["timeout_policy"]["budget_mode"] == "auto" and plan_does_not_fit:
+            retry_available = False
+            raise AppError(
+                ErrorCode.LLM_GATEWAY_TIMEOUT,
+                f"自动计划需要 {configured_request_timeout} 秒请求额度，但任务仅余 {int(first_attempt_timeout)} 秒；未发送请求，请调整任务上限或明确选择人工等待。",
+                details={"retryable": False, "phase": "budget_planning"},
+            )
+        total_deadline.require_remaining()
         first_deadline = total_deadline.child(first_attempt_timeout)
         active_provider = get_llm_provider(
             timeout_seconds=first_attempt_timeout,
@@ -2294,7 +2306,8 @@ def distill_creator_clone(
         ).to_dict()
     except AppError as error:
         retry_kind = "micro" if use_map_reduce else "compact"
-        error_retryable = distill_error_is_retryable(error.code, distill_mode)
+        budget_planning_failure = error.public_details().get("phase") == "budget_planning"
+        error_retryable = not budget_planning_failure and distill_error_is_retryable(error.code, distill_mode)
         can_retry = (
             error_retryable
             and retry_available
@@ -2309,13 +2322,15 @@ def distill_creator_clone(
                     first_attempt_timeout,
                     provider=active_provider,
                     error=error,
-                    current_phase="llm_failed",
-                    current_phase_label="大模型请求已停止",
+                    current_phase="budget_planning" if budget_planning_failure else "llm_failed",
+                    current_phase_label="任务预算不足，未发送请求" if budget_planning_failure else "大模型请求已停止",
                     status="failed",
                     failure_class=error.code,
                     retryable=error_retryable,
                     diagnostic=(
-                        "网关限流，任务已停止；没有继续重试。"
+                        "任务预算不足以容纳自动计划；请调整任务上限或明确选择人工等待。未发送请求。"
+                        if budget_planning_failure
+                        else "网关限流，任务已停止；没有继续重试。"
                         if error.code == ErrorCode.LLM_RATE_LIMITED
                         else "Quick 模式不自动重试 timeout；已保留 Prompt，可切换 Deep 模式容忍慢网关。"
                         if error.code == ErrorCode.LLM_GATEWAY_TIMEOUT and distill_mode == "quick"
@@ -2358,12 +2373,15 @@ def distill_creator_clone(
             (output_dir / "distill_prompt_compact.md").write_text(compact_prompt, encoding="utf-8")
             retry_prompt = compact_prompt
             success_warning = "首次蒸馏失败，已使用精简证据包重试成功。"
-        remaining_seconds = max(1, int(total_deadline.remaining_seconds()))
         retry_prompt, retry_visual = _prepare_creator_request(retry_prompt, selected_samples, effective_llm)
         (output_dir / f"distill_prompt_{retry_kind}.md").write_text(retry_prompt, encoding="utf-8")
-        retry_timeout_seconds = max(1, min(configured_request_timeout, remaining_seconds))
+        remaining_seconds = total_deadline.require_remaining(
+            compact_retry_minimum, phase="retry_budget", attempt_index=2,
+        )
+        retry_timeout_seconds = min(configured_request_timeout, remaining_seconds)
         retry_deadline = total_deadline.child(retry_timeout_seconds)
         active_attempt_index = 2
+        active_attempt_timeout = retry_timeout_seconds
         report_progress(
             78,
             f"第 2/{attempt_count} 次请求：使用精简 Prompt，本次最多等待 {retry_timeout_seconds} 秒",
@@ -2397,7 +2415,7 @@ def distill_creator_clone(
                 retry_error.message,
                 budget_phase(
                     2,
-                    remaining_seconds,
+                    retry_timeout_seconds,
                     provider=retry_provider,
                     error=retry_error,
                     current_phase="llm_failed",
@@ -2414,7 +2432,7 @@ def distill_creator_clone(
         "大模型已返回，正在解析蒸馏结果",
         budget_phase(
             active_attempt_index,
-            max(1, int(total_deadline.remaining_seconds())),
+            active_attempt_timeout,
             provider=active_provider,
             current_phase="parse_result",
             current_phase_label="解析结果",
@@ -2512,6 +2530,7 @@ def build_distill_execution_plan(
     final_timeout_seconds: float | None = None,
     single_timeout_seconds: float | None = None,
     prompt_chars: int | None = None,
+    budget_mode: str = "auto",
 ) -> dict:
     selected_count = len(selected_samples)
     normalized_batch_size = max(1, min(int(batch_size or MAX_DISTILL_SAMPLES), MAX_DISTILL_SAMPLES))
@@ -2542,8 +2561,20 @@ def build_distill_execution_plan(
     batch_complexity = batch_count * 75.0
     prompt_complexity = prompt_k * 8.0
     enrichment_timeout = int(min(1800.0, 120.0 + selected_count * 20.0 + known_duration_minutes * 15.0))
+    budget_mode = "manual" if budget_mode == "manual" else "auto"
     recommended_single_timeout = max(1, int(configured_single_timeout))
     recommended_final_timeout = max(1, int(configured_final_timeout))
+    if budget_mode == "auto":
+        recommended_single_timeout = int(min(1200, max(
+            configured_single_timeout,
+            180 + min(selected_count, normalized_batch_size) * 20
+            + prompt_complexity / max(1, batch_count)
+            + min(180, duration_complexity / max(1, batch_count)),
+        )))
+        recommended_final_timeout = int(min(2400, max(
+            configured_final_timeout,
+            300 + batch_complexity + prompt_complexity + sample_complexity + duration_complexity,
+        )))
     return {
         "strategy": strategy,
         "strategy_label": strategy_label,
@@ -2558,6 +2589,7 @@ def build_distill_execution_plan(
             "source": "case ffprobe.json" if durations else "unknown",
         },
         "timeout_policy": {
+            "budget_mode": budget_mode,
             "recommended_enrichment_timeout_seconds": enrichment_timeout,
             "recommended_batch_timeout_seconds": recommended_single_timeout,
             "recommended_final_reduce_timeout_seconds": recommended_final_timeout,
@@ -2577,8 +2609,9 @@ def build_distill_execution_plan(
                 },
                 "rules": [
                     "富化预算 = 120s + 样本数*20s + 已知视频分钟数*15s，上限 1800s",
-                    "单批请求上限使用显式配置，不因 Prompt 或视频时长自动扩展。",
-                    "最终汇总请求上限使用显式配置，并受 Batch Job 总墙钟预算约束。",
+                    "自动：单批 180s + 批内样本数*20s + Prompt字符数/1000*8s + 有界时长辅助项，上限1200s；配置为基础下限。",
+                    "自动：最终汇总 300s + 批次数*75s + Prompt复杂度 + 样本及有界时长辅助项，上限2400s。",
+                    "人工：请求额度使用显式配置；全部请求共享整任务上限。预算不是完成时间预测。",
                 ],
             },
             "phase_diagnostics": [
@@ -3507,11 +3540,38 @@ def batch_distill_creator_clone(
         or settings.llm_creator_distill_request_timeout_seconds
     )
     configured_final_timeout = float(effective_llm.get("final_reduce_timeout_seconds") or settings.llm_final_reduce_timeout_seconds)
+    budget_mode = effective_llm.get("creator_distill_budget_mode", "auto")
+    prepared_batches = []
+    for chunk in chunks:
+        maps = build_sample_map_summaries(chunk)
+        prepared_prompt = build_micro_reduce_distill_prompt(sample_set, chunk, maps, distill_mode=distill_mode)
+        prepared_prompt, visual = _prepare_creator_request(prepared_prompt, chunk, effective_llm)
+        plan = build_distill_execution_plan(
+            chunk, batch_size=batch_size, single_timeout_seconds=configured_batch_timeout,
+            final_timeout_seconds=configured_final_timeout, prompt_chars=len(prepared_prompt),
+            budget_mode=budget_mode,
+        )
+        prepared_batches.append((maps, prepared_prompt, visual, plan))
+    # Final summaries do not exist yet; reserve against the bounded source
+    # summaries, then recompute the final request from its actual prompt.
+    reserve_plan = build_distill_execution_plan(
+        selected_samples, batch_size=batch_size, single_timeout_seconds=configured_batch_timeout,
+        final_timeout_seconds=configured_final_timeout,
+        prompt_chars=sum(len(json.dumps(item[0], ensure_ascii=False)) for item in prepared_batches),
+        budget_mode=budget_mode,
+    )
+    planned_final_reserve = reserve_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
     total_job_budget = max(
         1,
         int(effective_llm.get("batch_job_budget_seconds") or settings.llm_batch_job_budget_seconds),
     )
+    task_cap = total_job_budget
+    if budget_mode != "manual":
+        total_job_budget = min(task_cap, sum(
+            item[3]["timeout_policy"]["recommended_batch_timeout_seconds"] for item in prepared_batches
+        ) + planned_final_reserve + 30)
     job_deadline = deadline or DistillDeadline.start(total_job_budget)
+    job_deadline.enforce_network = True
     total_job_budget = max(1, int(job_deadline.total_budget_seconds))
     configured_final_reserve = max(
         1,
@@ -3520,7 +3580,7 @@ def batch_distill_creator_clone(
             or settings.llm_final_reduce_min_reserve_seconds
         ),
     )
-    final_reduce_reserve = min(configured_final_reserve, max(1, total_job_budget - 5))
+    final_reduce_reserve = max(configured_final_reserve, planned_final_reserve)
     terminal_status = ""
     terminal_error_code = ""
 
@@ -3530,6 +3590,9 @@ def batch_distill_creator_clone(
             "batch_count": len(chunks),
             "total_job_budget_seconds": total_job_budget,
             "final_reduce_min_reserve_seconds": final_reduce_reserve,
+            "budget_mode": budget_mode,
+            "task_cap_seconds": task_cap,
+            "final_reserve_basis": "source_summary_estimate",
             **extra,
         }
 
@@ -3546,25 +3609,25 @@ def batch_distill_creator_clone(
 
     for index, chunk in enumerate(chunks, start=1):
         batch_id = f"batch_{index:03d}"
-        map_summaries = build_sample_map_summaries(chunk)
-        prompt = build_micro_reduce_distill_prompt(sample_set, chunk, map_summaries, distill_mode=distill_mode)
-        prompt, batch_visual = _prepare_creator_request(prompt, chunk, effective_llm)
+        map_summaries, prompt, batch_visual, batch_plan = prepared_batches[index - 1]
         prompt_path = batch_dir / f"{batch_id}_prompt.md"
         result_path = batch_dir / f"{batch_id}_result.json"
         markdown_path = batch_dir / f"{batch_id}.md"
         prompt_path.write_text(prompt, encoding="utf-8")
         _write_json(batch_dir / f"{batch_id}_map_summaries.json", map_summaries)
-        batch_plan = build_distill_execution_plan(
-            chunk,
-            batch_size=batch_size,
-            single_timeout_seconds=configured_batch_timeout,
-            final_timeout_seconds=configured_final_timeout,
-            prompt_chars=len(prompt),
-        )
         remaining_batch_count = len(chunks) - index + 1
         available_for_batches = max(0.0, job_deadline.remaining_seconds() - final_reduce_reserve)
         fair_batch_budget = available_for_batches / max(1, remaining_batch_count)
-        batch_timeout = max(0, int(min(configured_batch_timeout, fair_batch_budget)))
+        planned_batch_timeout = batch_plan["timeout_policy"]["recommended_batch_timeout_seconds"]
+        batch_timeout = max(0, int(min(planned_batch_timeout, fair_batch_budget)))
+        batch_plan["timeout_policy"].update({
+            "effective_request_timeout_seconds": batch_timeout,
+            "total_request_budget_seconds": total_job_budget,
+            "task_cap_seconds": task_cap,
+            "budget_limited": batch_timeout < planned_batch_timeout,
+        })
+        if batch_timeout < planned_batch_timeout:
+            warnings.append(f"批次 {index} 计划额度 {planned_batch_timeout} 秒，扣除最终汇总预留后只允许 {batch_timeout} 秒；已保留总任务上限。")
         batch_progress = 10 + int((index - 1) / max(1, len(chunks)) * 65)
         batch_payload = {
             "batch_id": batch_id,
@@ -3735,8 +3798,19 @@ def batch_distill_creator_clone(
         single_timeout_seconds=configured_batch_timeout,
         final_timeout_seconds=configured_final_timeout,
         prompt_chars=len(final_prompt),
+        budget_mode=budget_mode,
     )
-    final_timeout = max(0, int(min(configured_final_timeout, job_deadline.remaining_seconds())))
+    planned_final_timeout = execution_plan["timeout_policy"]["recommended_final_reduce_timeout_seconds"]
+    final_timeout = max(0, int(min(planned_final_timeout, job_deadline.remaining_seconds())))
+    execution_plan["timeout_policy"].update({
+        "effective_request_timeout_seconds": final_timeout,
+        "total_request_budget_seconds": total_job_budget,
+        "task_cap_seconds": task_cap,
+        "budget_limited": final_timeout < planned_final_timeout,
+        "final_reduce_min_reserve_seconds": final_reduce_reserve,
+    })
+    if final_timeout < planned_final_timeout:
+        warnings.append(f"最终汇总计划额度 {planned_final_timeout} 秒，任务剩余时间仅允许 {final_timeout} 秒。")
     final_blocked = terminal_status in {"rate_limited", "auth_failed", "budget_exhausted", "partial"}
     if llm_configured and not final_blocked and final_timeout >= 5:
         report_progress(
@@ -3807,8 +3881,9 @@ def batch_distill_creator_clone(
             final_result["creator_report_view_model"] = build_creator_report_view_model(final_result, sample_set, selected_samples)
             _write_json(final_result_path, final_result)
             final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
-            _write_json(output_dir / "creator_clone_result.json", final_result)
-            write_creator_clone_report_files(output_dir, final_result)
+            if not (output_dir / "creator_clone_result.json").exists():
+                _write_json(output_dir / "creator_clone_result.json", final_result)
+                write_creator_clone_report_files(output_dir, final_result)
             final_payload.update({"status": "fallback", "result": final_result, "error_code": error.code, "message": error.message})
             warnings.append(f"最终汇总失败：{error.code}：{error.message}")
             report_progress(
@@ -3851,8 +3926,9 @@ def batch_distill_creator_clone(
         )
         _write_json(final_result_path, final_result)
         final_markdown_path.write_text(render_creator_clone_markdown(final_result), encoding="utf-8")
-        _write_json(output_dir / "creator_clone_result.json", final_result)
-        write_creator_clone_report_files(output_dir, final_result)
+        if not (output_dir / "creator_clone_result.json").exists():
+            _write_json(output_dir / "creator_clone_result.json", final_result)
+            write_creator_clone_report_files(output_dir, final_result)
         final_payload.update(
             {
                 "status": "fallback",
@@ -3908,7 +3984,8 @@ def batch_distill_creator_clone(
         "job_status": job_status,
         "successful_batch_count": successful_batches,
         "total_job_budget_seconds": total_job_budget,
-        "per_batch_timeout_seconds": max(1, int(configured_batch_timeout)),
+        "per_batch_timeout_seconds": max((item["timeout_seconds"] for item in batch_results), default=0),
+        "configured_batch_timeout_seconds": int(configured_batch_timeout),
         "final_reduce_min_reserve_seconds": final_reduce_reserve,
         "budget": job_deadline.public_snapshot(),
         "execution_plan": execution_plan,

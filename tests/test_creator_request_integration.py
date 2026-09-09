@@ -110,7 +110,7 @@ def test_responses_transport_body_contains_bound_images_and_evidence(monkeypatch
     monkeypatch.setattr(llm_provider, "effective_llm_settings", lambda: effective)
     captured = []
 
-    def post(client, endpoint, **kwargs):
+    async def post(client, endpoint, **kwargs):
         body = kwargs["json"]
         captured.append(body)
         content = body["input"][0]["content"]
@@ -127,7 +127,7 @@ def test_responses_transport_body_contains_bound_images_and_evidence(monkeypatch
                 "creator_positioning": {"what_the_creator_sells": "Synthetic visual structure"}}),
         }]}]}, request=httpx.Request("POST", endpoint))
 
-    monkeypatch.setattr(httpx.Client, "post", post)
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
     result = creator.distill_creator_clone(pool, [s.sample_id for s in pool.samples])["result"]
     assert len(captured) == 1
     assert result["request_evidence"]["final_attempt"] is True

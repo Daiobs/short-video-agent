@@ -720,6 +720,7 @@ const llmModelInput = document.getElementById("llm-model-input");
 const llmApiKeyInput = document.getElementById("llm-api-key-input");
 const llmTimeoutInput = document.getElementById("llm-timeout-input");
 const llmCreatorDistillTimeoutInput = document.getElementById("llm-creator-distill-timeout-input");
+const llmCreatorBudgetModeInput = document.getElementById("llm-creator-budget-mode-input");
 const llmFinalReduceTimeoutInput = document.getElementById("llm-final-reduce-timeout-input");
 const llmQuickDistillBudgetInput = document.getElementById("llm-quick-distill-budget-input");
 const llmDeepDistillBudgetInput = document.getElementById("llm-deep-distill-budget-input");
@@ -1702,7 +1703,7 @@ function renderJobPhase(job) {
   }
   const plan = phase.execution_plan || result.execution_plan || {};
   const timeoutPolicy = plan.timeout_policy || {};
-  const timeout = phase.timeout_seconds || timeoutPolicy.recommended_batch_timeout_seconds || timeoutPolicy.configured_batch_timeout_seconds || "";
+  const timeout = phase.timeout_seconds ?? "";
   const totalBudget = Number(phase.total_budget_seconds || timeoutPolicy.total_request_budget_seconds || 0);
   const budgetStartedAt = Date.parse(phase.budget_started_at || "");
   const deadlineAt = Date.parse(phase.deadline_at || "");
@@ -1743,6 +1744,12 @@ function renderJobPhase(job) {
   const timeoutLine = timeout
     ? `本次请求最多等待 ${formatNumber(timeout)} 秒`
     : "";
+  const modeLine = timeoutPolicy.budget_mode === "manual" ? "人工覆盖" : timeoutPolicy.budget_mode === "auto" ? "自动预算（最大等待，非预计完成时间）" : "";
+  const sampleLine = Number(plan.selected_count || 0) ? `已选 ${formatNumber(plan.selected_count)} 条样本` : "";
+  const waitingLine = job.status === "running" && phase.status === "running"
+    && ["llm_wait", "llm_retry", "batch_reduce", "final_reduce"].includes(phase.current_phase)
+    ? "等待模型响应；已等待时间不代表模型完成进度"
+    : "";
   const runtimeBudgetLine = totalBudget
     ? `总预算 ${formatNumber(totalBudget)} 秒 · 已等待 ${formatNumber(liveElapsed)} 秒 · 剩余约 ${formatNumber(liveRemaining)} 秒`
     : "";
@@ -1772,6 +1779,9 @@ function renderJobPhase(job) {
     retryableLine,
     failureLine,
     batchLine,
+    modeLine,
+    sampleLine,
+    waitingLine,
     timeoutLine,
     runtimeBudgetLine,
     budgetLine,
@@ -1888,6 +1898,28 @@ function profileBuildJobAgeSeconds(job = {}, nowMilliseconds = Date.now()) {
 function isProfileBuildJobStale(job = {}, nowMilliseconds = Date.now()) {
   return ["pending", "running"].includes(job.status || activeProfileBuildJobStatus)
     && profileBuildJobAgeSeconds(job, nowMilliseconds) >= WORKBENCH_TASK_STALE_SECONDS;
+}
+
+function hasActiveCreatorJobBudget(job = {}, nowMilliseconds = Date.now()) {
+  if (job.status !== "running" || !["creator-clone-distill", "creator-clone-batch-distill"].includes(job.type || job.task_type)) {
+    return false;
+  }
+  const phase = job.result_json?.distill_phase;
+  const total = phase?.total_budget_seconds;
+  const remaining = phase?.remaining_seconds;
+  if (typeof total !== "number" || !Number.isFinite(total) || total <= 0 || total > 14400
+    || (remaining !== undefined && (typeof remaining !== "number" || !Number.isFinite(remaining) || remaining <= 0 || remaining > total))) {
+    return false;
+  }
+  const start = parseBackendJobTimestampMilliseconds(phase.budget_started_at);
+  const deadline = parseBackendJobTimestampMilliseconds(phase.deadline_at);
+  const created = parseBackendJobTimestampMilliseconds(job.created_at);
+  const updated = parseBackendJobTimestampMilliseconds(job.updated_at);
+  // A safe persisted waiting window is not proof that the worker/upstream is alive.
+  return Boolean(start && deadline && created && updated && Number.isFinite(nowMilliseconds)
+    && created <= start && start <= updated + 5000 && updated <= nowMilliseconds + 5000
+    && start <= nowMilliseconds && nowMilliseconds < deadline
+    && deadline > start && deadline - start <= total * 1000);
 }
 
 function setActiveProfileBuildJob(job = {}) {
@@ -6780,7 +6812,8 @@ async function pollCreatorCloneDistillJob(jobId, options = {}) {
     updateCreatorCloneSelectionStatus();
     return {completed: false, rendered: false};
   }
-  if (["pending", "running"].includes(job.status) && profileBuildJobAgeSeconds(job) >= WORKBENCH_TASK_STALE_SECONDS) {
+  if (["pending", "running"].includes(job.status) && profileBuildJobAgeSeconds(job) >= WORKBENCH_TASK_STALE_SECONDS
+    && !hasActiveCreatorJobBudget(job)) {
     jobMessage.className = "job-message";
     jobMessage.textContent = `stale · ${job.progress || 0}% · ${job.message || "任务较长时间没有更新"}`;
     profileScanStatus.textContent = "蒸馏任务可能已停止更新。任务状态没有被修改；请检查模型服务后手动决定是否重新执行蒸馏。";
@@ -8407,6 +8440,7 @@ const settingsPanelController = window.SettingsPanel?.init({
     llmApiKeyInput,
     llmTimeoutInput,
     llmCreatorDistillTimeoutInput,
+    llmCreatorBudgetModeInput,
     llmFinalReduceTimeoutInput,
     llmQuickDistillBudgetInput,
     llmDeepDistillBudgetInput,

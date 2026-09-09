@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -33,6 +34,7 @@ SQLITE_PROGRESS_CALLBACK_LIMIT = 5_000
 TASK_STALE_SECONDS = 30 * 60
 JOB_RESULT_MAX_BYTES = 2 * 1024 * 1024
 JOB_CONTEXT_MAX_BYTES = 8 * 1024 * 1024
+CREATOR_MAX_BUDGET_SECONDS = 14_400
 
 SAFE_RESOURCE_ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 CLONE_RESOURCE_ID = re.compile(r"^clone_[a-f0-9]{32}$", re.IGNORECASE)
@@ -576,6 +578,36 @@ def _safe_job_result(result: dict[str, Any], hints: dict[str, Any]) -> dict[str,
     return safe_result
 
 
+def _creator_budget_active(job_type: str, status: str, raw_result: Any,
+                           created_at: Any, updated_at: Any, *, now: datetime) -> bool:
+    """A bounded persisted waiting window, not proof of worker liveness."""
+    if status != "running" or job_type not in {"creator-clone-distill", "creator-clone-batch-distill"}:
+        return False
+    result = _bounded_json_object(raw_result, JOB_RESULT_MAX_BYTES)
+    phase = _nested_dict(result, "distill_phase")
+    total = phase.get("total_budget_seconds")
+    if type(total) not in {int, float} or not math.isfinite(total) or not 0 < total <= CREATOR_MAX_BUDGET_SECONDS:
+        return False
+    remaining = phase.get("remaining_seconds")
+    if remaining is not None and (
+        type(remaining) not in {int, float} or not math.isfinite(remaining) or not 0 < remaining <= total
+    ):
+        return False
+    try:
+        start, deadline, created, updated = (
+            datetime.fromisoformat(_iso_datetime(value))
+            for value in (phase.get("budget_started_at"), phase.get("deadline_at"), created_at, updated_at)
+        )
+        return (
+            created <= start <= updated + timedelta(seconds=5)
+            and updated <= now + timedelta(seconds=5)
+            and start <= now < deadline
+            and 0 < (deadline - start).total_seconds() <= total
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def build_workbench_job_detail(job_id: str, *, database_url: str | None = None) -> dict[str, Any] | None:
     safe_job_id = _first_safe_id(job_id, prefix="job_")
     if not safe_job_id:
@@ -625,24 +657,54 @@ def build_workbench_job_detail(job_id: str, *, database_url: str | None = None) 
     updated_at = _iso_datetime(row["updated_at"])
     status_override = ""
     if raw_status in {"pending", "running"}:
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=TASK_STALE_SECONDS)
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=TASK_STALE_SECONDS)
         parsed_updated_at = datetime.fromisoformat(updated_at) if updated_at else None
-        if parsed_updated_at and parsed_updated_at < cutoff:
+        if parsed_updated_at and parsed_updated_at < cutoff and not _creator_budget_active(
+            row["type"], raw_status, row["result_json"], row["created_at"], row["updated_at"], now=now
+        ):
             status_override = "stale"
     task = _job_payload(row, status_override=status_override)
     result = _bounded_json_object(row["result_json"], JOB_CONTEXT_MAX_BYTES)
     hints = _job_result_hints(row)
+    safe_result = _safe_job_result(result, hints)
+    if _creator_budget_active(
+        row["type"], raw_status, row["result_json"], row["created_at"], row["updated_at"],
+        now=datetime.now(timezone.utc),
+    ):
+        phase = result["distill_phase"]
+        deadline = datetime.fromisoformat(_iso_datetime(phase["deadline_at"]))
+        safe_result["distill_phase"] = {
+            "budget_started_at": _iso_datetime(phase["budget_started_at"]),
+            "deadline_at": deadline.isoformat(),
+            "total_budget_seconds": phase["total_budget_seconds"],
+            "remaining_seconds": max(0, (deadline - datetime.now(timezone.utc)).total_seconds()),
+        }
     return {
         **task,
         "id": task["task_id"],
         "type": task["task_type"],
-        "result_json": _safe_job_result(result, hints),
+        "result_json": safe_result,
     }
 
 
 def _collect_job_sections(database_url: str) -> tuple[list[dict], list[dict], list[dict], int, int]:
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=TASK_STALE_SECONDS)).replace(tzinfo=None).isoformat(sep=" ")
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(seconds=TASK_STALE_SECONDS)).replace(tzinfo=None).isoformat(sep=" ")
     with _readonly_connection(database_url) as connection:
+        connection.create_function(
+            "creator_budget_active", 5,
+            lambda kind, status, result, created, updated: int(_creator_budget_active(
+                kind, status, result, created, updated, now=now
+            )),
+        )
+        # Bound JSON passed to the validator; counts and the five-row lists use the same predicate.
+        active_budget = (
+            "creator_budget_active(type, status, CASE WHEN length(CAST(result_json AS BLOB)) "
+            f"<= {JOB_RESULT_MAX_BYTES} THEN result_json ELSE '{{}}' END, created_at, updated_at)"
+        )
+        running_where = f"status IN ('pending', 'running') AND (updated_at >= ? OR {active_budget} = 1)"
+        stale_where = f"status IN ('pending', 'running') AND updated_at < ? AND {active_budget} = 0"
         def read_rows(where_sql: str, parameters: tuple[Any, ...]) -> list[sqlite3.Row]:
             return connection.execute(
                 f"""
@@ -689,20 +751,20 @@ def _collect_job_sections(database_url: str) -> tuple[list[dict], list[dict], li
 
         running_count = int(
             connection.execute(
-                "SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running') AND updated_at >= ?",
+                f"SELECT COUNT(*) FROM jobs WHERE {running_where}",
                 (cutoff,),
             ).fetchone()[0]
             or 0
         )
         stale_count = int(
             connection.execute(
-                "SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running') AND updated_at < ?",
+                f"SELECT COUNT(*) FROM jobs WHERE {stale_where}",
                 (cutoff,),
             ).fetchone()[0]
             or 0
         )
-        running_rows = read_rows("status IN ('pending', 'running') AND updated_at >= ?", (cutoff,))
-        stale_rows = read_rows("status IN ('pending', 'running') AND updated_at < ?", (cutoff,))
+        running_rows = read_rows(running_where, (cutoff,))
+        stale_rows = read_rows(stale_where, (cutoff,))
         failure_rows = read_rows("status = 'failed'", ())
     return (
         [_job_payload(row) for row in running_rows],
