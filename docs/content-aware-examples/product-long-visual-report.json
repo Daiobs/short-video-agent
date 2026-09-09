@@ -1,0 +1,112 @@
+{
+  "summary": "合成验收数据：这个视觉展示账号用同一个角色的不同姿态与构图形成变化。重点不是套用教程的步骤，而是让人物识别、画面层次和动作变化共同服务同一种呈现方式。当前素材只能支持画面观察，不能通过互动量推定观众身份或吸引原因。",
+  "analysis_focus": {
+    "version": 1,
+    "primary": "beauty_cos",
+    "label": "视觉展示",
+    "source": "user"
+  },
+  "focused_analysis": [
+    {
+      "question": "用姿态变化延续同一种人物呈现",
+      "observation": "合成画面中人物保持相同服装与背景，通过侧身、转头和视线方向形成连续变化；构图留出动作空间，没有依赖频繁换景来制造差别。",
+      "interpretation": "这种安排可能让注意力持续集中于人物呈现，是否促进停留仍需观看数据验证。",
+      "transfer": "下一条固定布景与机位，先测试两组不同姿态，并比较首帧能否清楚识别人物。",
+      "evidence": [
+        "sample_fixture_one"
+      ],
+      "uncertainty": "合成示例，不代表真实观看效果。"
+    },
+    {
+      "question": "让背景层次支持人物轮廓",
+      "observation": "第二个合成画面通过人物与背景的明暗差保留服装边缘，装饰物放在不遮挡动作的位置。",
+      "transfer": "拍摄前分别检查近景和半身构图，避免道具压住动作。",
+      "evidence": [
+        "sample_fixture_two"
+      ],
+      "uncertainty": "没有原始拍摄参数，不能推断灯具型号。"
+    },
+    {
+      "question": "角色识别信息与标题保持一致",
+      "observation": "标题点出人物主题，首帧同时提供相应的服装与道具线索。",
+      "transfer": "只测试一个清晰主题，不在标题同时叠加多个不相关角色名。"
+    }
+  ],
+  "next_actions": [
+    "固定同一布景，拍两种姿态的首帧，先检查轮廓与视线是否清晰。",
+    "保持服装和机位不变，只调整一次转头或手部动作，比较画面呈现。",
+    "发布后记录具体评论与观看数据，不把高赞直接归因于某个姿态。"
+  ],
+  "transferable_formulas": [
+    {
+      "name": "统一造型＋姿态变化",
+      "when_to_use": "已有稳定人物主题与可见动作空间时",
+      "beat_structure": "角色识别 → 姿态变化 → 状态收束",
+      "evidence": [
+        "sample_fixture_one"
+      ],
+      "risks": [
+        "没有直接输入的画面不能写成观察事实。"
+      ]
+    }
+  ],
+  "candidate_ideas": [
+    {
+      "title": "同一个角色，平静与警觉两种状态",
+      "opening_3s": "先给清楚的角色首帧，再用一次视线变化进入下一状态。",
+      "evidence": [
+        "sample_fixture_one"
+      ],
+      "risks": [
+        "这是新创意，不是原视频发生过的情节。"
+      ]
+    }
+  ],
+  "performance_segments": {
+    "highest_like_samples": [
+      {
+        "sample_id": "sample_fixture_one",
+        "title": "合成作品：结果检查",
+        "metric": "like_count",
+        "metric_value": 120,
+        "comment_count": 0,
+        "share_count": 18,
+        "collect_count": 42
+      }
+    ],
+    "highest_share_samples": [
+      {
+        "sample_id": "sample_fixture_one",
+        "title": "合成作品：结果检查",
+        "metric": "share_count",
+        "metric_value": 18
+      }
+    ],
+    "highest_comment_samples": [
+      {
+        "sample_id": "sample_fixture_two",
+        "title": "合成作品：步骤演示",
+        "metric": "comment_count",
+        "metric_value": 8,
+        "like_count": 70,
+        "share_count": null,
+        "collect_count": 12
+      }
+    ]
+  },
+  "evidence_gaps": [
+    "合成验收数据没有真实留存、转化或评论材料，不能用于评价真实账号。",
+    "部分样本只有已有报告摘要；不能声称本次直接看过所有原片。"
+  ],
+  "report_provenance": {
+    "version": 1,
+    "fields": {
+      "summary": "unknown",
+      "focused_analysis": "unknown",
+      "next_actions": "unknown",
+      "transferable_formulas": "unknown",
+      "candidate_ideas": "unknown",
+      "performance_segments": "deterministic"
+    }
+  }
+}
