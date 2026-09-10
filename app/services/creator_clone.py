@@ -50,6 +50,7 @@ from app.services.creator_intelligence import (
 )
 from app.services.creator_intelligence.memory import CreatorMemoryGraph
 from app.services.creator_intelligence.models import validate_creator_clone_schema as validate_creator_clone_strategy_schema
+from app.services.creator_report_details import detail_markdown
 from app.services.creator_intelligence.report_quality import validate_creator_report_quality
 
 
@@ -3825,11 +3826,11 @@ def render_creator_clone_markdown(result: dict) -> str:
         "",
         "### 下一条内容建议",
         "",
-        _markdown_list(execution.get("next_content_suggestions") or sections.get("next_ideas") or strategy.get("idea_bank")),
+        detail_markdown(result, "candidate_ideas"),
         "",
         "## 4. 可复刻结构",
         "",
-        _markdown_list(sections.get("formulas") or strategy.get("templates")),
+        detail_markdown(result, "transferable_formulas"),
         "",
         "### 共性创作要素",
         "",

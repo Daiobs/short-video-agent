@@ -3882,6 +3882,38 @@ pre {
     gap: 14px;
 }
 
+.creator-content-detail {
+    margin: 10px 0;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.creator-content-detail summary {
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.creator-content-detail dl {
+    display: block;
+    margin: 10px 0;
+}
+
+.creator-content-detail dt {
+    font-weight: 600;
+    margin-top: 10px;
+}
+
+.creator-content-detail dd {
+    margin: 4px 0 12px;
+    white-space: pre-wrap;
+}
+
+.creator-detail-name, .creator-detail-notice {
+    overflow-wrap: anywhere;
+}
+
 .creator-report-hero-card {
     display: grid;
     grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr);

@@ -14,6 +14,65 @@
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   }
 
+  const detailLabels = {
+    when_to_use: "适用条件", description: "说明", beat_structure: "步骤", beats: "步骤",
+    structure: "结构", formula_used: "相关方法", production_requirements: "制作要点",
+    why_worth_trying: "值得尝试的理由", reason: "理由", expected_metric_strength: "预期指标方向",
+    likely_strength: "预期优势", risks: "风险与限制", uncertainty: "尚不能确认",
+    evidence: "依据", sample_id: "样本引用", metric: "指标", metric_value: "指标数值",
+    evidence_level: "证据等级", low_confidence: "低置信标记", input_material_needed: "所需素材",
+    opening_3s: "开头", action: "具体动作",
+  };
+
+  function hasDetail(value) {
+    if (typeof value === "string") return Boolean(value.trim());
+    if (value && typeof value === "object") return Object.values(value).some(hasDetail);
+    return typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value));
+  }
+
+  function renderDetailValue(value) {
+    if (Array.isArray(value)) return `<ul>${value.filter(hasDetail).map(v => `<li>${renderDetailValue(v)}</li>`).join("")}</ul>`;
+    if (value && typeof value === "object") return `<dl>${Object.entries(value).filter(([,v]) => hasDetail(v)).map(([k,v]) => `<dt>${escapeHtml(detailLabels[k] || k)}</dt><dd>${renderDetailValue(v)}</dd>`).join("")}</dl>`;
+    return `<span>${escapeHtml(value === true ? "是" : value === false ? "否" : value)}</span>`;
+  }
+
+  function renderReportDetails(result, kind, viewModel) {
+    // Never consult the active/global strategy: details must belong to this report.
+    const strategy = objectValue(result.creator_clone_strategy);
+    const legacy = kind === "transferable_formulas" ? "templates" : "idea_bank";
+    const short = kind === "transferable_formulas" ? "formulas" : "next_ideas";
+    const sources = [result[kind], strategy[legacy], result[legacy], objectValue(viewModel.sections)[short]];
+    let source = -1;
+    let value;
+    try {
+      let nodes = 0;
+      function validate(item, depth = 0) {
+        if (++nodes > 10000 || depth > 8) throw new Error("detail limit");
+        if (item && typeof item === "object") Object.values(item).forEach(child => validate(child, depth + 1));
+        else if (typeof item === "number" && !Number.isFinite(item)) throw new Error("invalid detail");
+      }
+      for (let i = 0; i < sources.length; i++) {
+        nodes = 0;
+        validate(sources[i]);
+        if (hasDetail(sources[i])) { source = i; value = sources[i]; break; }
+      }
+      // Same 2 MiB JSON bound as the server/asset library, including UTF-8 bytes.
+      if (unescape(encodeURIComponent(JSON.stringify(value ?? []))).length > 2 * 1024 * 1024) throw new Error("detail limit");
+    } catch (_) {
+      return '<p class="creator-detail-notice">完整详情超过安全读取范围，未展开；原始保存记录未修改。</p>';
+    }
+    const rows = (Array.isArray(value) ? value : [value]).filter(item => item && typeof item !== "boolean" && typeof item !== "number" && hasDetail(item));
+    if (!rows.length) return '<p class="creator-detail-notice">当前保存记录未提供完整内容。</p>';
+    const notice = source === 3 ? '<p class="creator-detail-notice">仅有同报告的已保存展示摘要，可能包含兼容建议；完整原文未记录。</p>' : "";
+    return notice + rows.map((item, index) => {
+      const key = ["name", "title", "formula", "template", "idea", "text", "summary"].find(k => typeof item?.[k] === "string" && item[k].trim());
+      const title = typeof item === "string" ? item : key ? item[key] : `已保存内容 ${index + 1}`;
+      const content = Array.isArray(item) ? item : typeof item === "object" ? Object.fromEntries(Object.entries(item).filter(([k]) => k !== key)) : null;
+      if (!hasDetail(content)) return `<p class="creator-detail-name">${escapeHtml(title)}</p>`;
+      return `<details class="creator-content-detail"><summary>${escapeHtml(title)}</summary><div>${renderDetailValue(content)}</div></details>`;
+    }).join("");
+  }
+
   function createRenderer(helpers = {}) {
     const {
       compactReportList,
@@ -58,19 +117,8 @@
       return values.some((value) => publicValueHasContent(value));
     }
 
-    function renderFormulaList(strategy, result) {
-      const templates = normalizeItems(strategy.templates);
-      const formulas = normalizeItems(result.transferable_formulas);
-      if (templates.length || formulas.length) {
-        return renderFormulaCards(templates.length ? templates : formulas);
-      }
-      const fallback = compactReportList(
-        strategy.content_strategy,
-        result.creator_clone_spec?.structure_rules,
-        result.creator_clone_spec?.visual_rules,
-        result.expression_patterns?.opening_hooks,
-      ).slice(0, 4);
-      return renderPublicList(fallback, "本次没有返回独立公式，建议先从内容策略中人工提炼 2-3 个可复用拍法。");
+    function renderFormulaList(result) {
+      return renderReportDetails(result, "transferable_formulas", objectValue(result.creator_report_view_model));
     }
 
     function renderThinkingPatterns(patterns = {}) {
@@ -270,7 +318,7 @@
             ${reportValueHasAny(result.topic_buckets) ? `<section><h5>选题桶</h5>${renderTopicBuckets(result.topic_buckets)}</section>` : ""}
             ${hasThinking ? `<section><h5>思维模式</h5>${renderThinkingPatterns(thinking)}</section>` : ""}
             ${hasExpression ? `<section><h5>表达 / 视觉依据</h5>${renderExpressionPatterns(patterns, spec)}</section>` : ""}
-            ${reportValueHasAny(strategy.templates, result.transferable_formulas) ? `<section><h5>原始公式字段</h5>${renderFormulaList(strategy, result)}</section>` : ""}
+            ${reportValueHasAny(objectValue(result.creator_clone_strategy).templates, result.transferable_formulas) ? `<section><h5>原始公式字段</h5>${renderFormulaList(result)}</section>` : ""}
             ${reportValueHasAny(result.evidence_gaps) ? `<section><h5>证据缺口</h5>${renderPublicList(result.evidence_gaps)}</section>` : ""}
             ${reportValueHasAny(viewModel.technical_notes) ? `<section><h5>运行备注</h5>${renderPublicList(viewModel.technical_notes)}</section>` : ""}
           </div>
@@ -294,7 +342,7 @@
       const executionBody = `
         ${renderPublicList(execution.bullets || sections.next_actions, "先从最高互动样本中选 3 条，人工复核开头、封面、动作和标题，再生成候选脚本。")}
         <h5>下一条内容建议</h5>
-        ${renderPublicList(execution.next_content_suggestions || sections.next_ideas, "本次没有返回独立选题库，可先基于爆款共性手动生成候选选题。")}
+        ${renderReportDetails(result, "candidate_ideas", viewModel)}
       `;
       return `
         <section class="public-analysis-hero">
@@ -321,7 +369,7 @@
             `, "featured")}
             ${renderPublicCard("3. 执行：下一条怎么拍 / 怎么写 / 怎么验证", executionBody, "featured")}
             ${renderPublicCard("4. 可复刻结构：保留有效动作，替换具体素材", `
-              ${renderPublicList(sections.formulas, "本次没有返回独立公式，建议先从高互动样本中人工提炼 2-3 个可复用拍法。")}
+              ${renderReportDetails(result, "transferable_formulas", viewModel)}
               <h5>共性创作要素</h5>
               ${renderPublicList(repeatablePatterns, "暂无稳定共性。")}
             `)}
