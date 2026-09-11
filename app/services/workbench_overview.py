@@ -1055,7 +1055,7 @@ def _collect_creator_sections(
         summary = _sample_set_summary(clone_dir, resource_id)
         open_url = ""
         if (clone_dir / "creator_clone.html").is_file() and not (clone_dir / "creator_clone.html").is_symlink():
-            open_url = f"/api/creator-clone/sets/{resource_id}/files/creator_clone.html"
+            open_url = f"/api/creator-clone/sets/{resource_id}/files/creator_clone.html?view=1"
         elif (clone_dir / "creator_clone.md").is_file() and not (clone_dir / "creator_clone.md").is_symlink():
             open_url = f"/api/creator-clone/sets/{resource_id}/files/creator_clone.md"
         resume_target = WorkbenchResumeTarget(

@@ -165,7 +165,7 @@ def test_library_api_unifies_case_report_and_strategy_without_paths_or_bodies():
     assert by_type["case"]["asset_id"] == case_id
     assert by_type["case"]["open_url"] == f"/cases/{case_id}"
     assert by_type["creator_report"]["asset_id"] == f"{set_id}_report"
-    assert by_type["creator_report"]["open_url"].endswith("/creator_clone.html")
+    assert by_type["creator_report"]["open_url"].endswith("/creator_clone.html?view=1")
     assert by_type["strategy_plan"]["open_url"] == ""
     assert by_type["strategy_plan"]["resume_target"]["resource_id"] == set_id
     assert by_type["creator_report"]["sample_count"] == 10
@@ -218,7 +218,7 @@ def test_creator_assets_only_offer_resume_for_readable_sample_sets():
 
     missing_report = by_id[f"{missing_samples_id}_report"]
     assert missing_report["status"] == "incomplete"
-    assert missing_report["open_url"].endswith("/creator_clone.html")
+    assert missing_report["open_url"].endswith("/creator_clone.html?view=1")
     assert missing_report["resume_target"]["route"] == ""
     assert missing_report["resume_target"]["resource_id"] == ""
 
@@ -227,12 +227,12 @@ def test_creator_assets_only_offer_resume_for_readable_sample_sets():
     assert missing_strategy["resume_target"]["resource_id"] == ""
 
     invalid_report = by_id[f"{invalid_samples_id}_report"]
-    assert invalid_report["open_url"].endswith("/creator_clone.html")
+    assert invalid_report["open_url"].endswith("/creator_clone.html?view=1")
     assert invalid_report["resume_target"]["route"] == ""
     assert invalid_report["resume_target"]["resource_id"] == ""
 
     valid_report = by_id[f"{valid_id}_report"]
-    assert valid_report["open_url"].endswith("/creator_clone.html")
+    assert valid_report["open_url"].endswith("/creator_clone.html?view=1")
     assert valid_report["resume_target"] == {
         "route": "profile",
         "stage": "export",

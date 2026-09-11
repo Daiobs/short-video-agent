@@ -1,16 +1,18 @@
 from __future__ import annotations
 import json
+import re
 import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.config import settings
 from app.errors import AppError, ErrorCode, PROMPT_RECOVERY_LLM_ERROR_CODES
 from app.routes.common import error_response
 from app.services.creator_clone import (
@@ -20,7 +22,6 @@ from app.services.creator_clone import (
     creator_clone_dir,
     creator_intelligence_payload_for_sample_set,
     distill_creator_clone,
-    ensure_creator_clone_html_report,
     export_paths,
     load_sample_set,
     normalize_content_profile,
@@ -342,7 +343,7 @@ def distill_creator_clone_endpoint(payload: CreatorCloneDistillRequest):
 
 
 @router.get("/sets/{set_id}/files/{filename}")
-def download_creator_clone_file(set_id: str, filename: str):
+def download_creator_clone_file(set_id: str, filename: str, request: Request, view: str | None = None):
     allowed = {
         "samples.json",
         "handoff_manifest.json",
@@ -354,9 +355,36 @@ def download_creator_clone_file(set_id: str, filename: str):
     }
     if filename not in allowed:
         return error_response(AppError(ErrorCode.HOST_NOT_ALLOWED, "不允许下载该文件。"))
+    if view is not None and (filename != "creator_clone.html" or request.url.query != "view=1"):
+        return error_response(AppError(ErrorCode.HOST_NOT_ALLOWED, "查看模式仅支持 HTML 创作者报告。"), status_code=400)
+    if filename == "creator_clone.html":
+        # Viewing or downloading an existing report must never generate artifacts.
+        if not re.fullmatch(r"clone_[A-Za-z0-9_-]{1,94}", set_id):
+            return error_response(AppError(ErrorCode.HOST_NOT_ALLOWED, "报告标识无效。"), status_code=400)
+        root = settings.creator_clones_dir.resolve()
+        directory = root / set_id
+        file_path = directory / filename
+        try:
+            if directory.is_symlink() or file_path.is_symlink() or file_path.resolve().parent != directory:
+                return error_response(AppError(ErrorCode.HOST_NOT_ALLOWED, "不允许访问该报告。"), status_code=403)
+            if not file_path.is_file():
+                return error_response(AppError(ErrorCode.CASE_BUILD_FAILED, "网页报告文件缺失，请返回 Creator 查看已有结果或下载 Markdown。"), status_code=404)
+            if file_path.stat().st_size > 8 * 1024 * 1024:
+                return error_response(AppError(ErrorCode.HOST_NOT_ALLOWED, "网页报告超出安全读取上限。"), status_code=413)
+        except OSError:
+            return error_response(AppError(ErrorCode.CASE_BUILD_FAILED, "网页报告暂时无法读取。"), status_code=404)
+        headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+        if view == "1":
+            # Saved HTML is content, not trusted same-origin application code.
+            headers["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            headers["Referrer-Policy"] = "no-referrer"
+        return FileResponse(
+            file_path, media_type="text/html; charset=utf-8", filename=filename,
+            content_disposition_type="inline" if view == "1" else "attachment", headers=headers,
+        )
     if filename == "handoff_manifest.json":
         load_handoff_manifest(set_id)
-    file_path = ensure_creator_clone_html_report(set_id) if filename == "creator_clone.html" else creator_clone_dir(set_id) / filename
+    file_path = creator_clone_dir(set_id) / filename
     if not file_path.is_file():
         return error_response(AppError(ErrorCode.CASE_BUILD_FAILED, "文件尚未生成。"), status_code=404)
     media_type = (

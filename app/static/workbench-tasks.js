@@ -140,15 +140,16 @@
     } catch {
       return "";
     }
-    if (url.origin !== global.location.origin || url.search || url.hash) {
+    if (url.origin !== global.location.origin || url.hash) {
       return "";
     }
+    if (url.search && !(url.search === "?view=1" && raw.endsWith("?view=1") && /\/creator_clone\.html$/.test(url.pathname))) return "";
     const path = url.pathname;
     if (/^\/cases\/[A-Za-z0-9_-]{1,100}$/.test(path)) {
       return path;
     }
     if (/^\/api\/creator-clone\/sets\/[A-Za-z0-9_-]{1,100}\/files\/creator_clone\.(?:html|md)$/.test(path)) {
-      return path;
+      return path + (path.endsWith("/creator_clone.html") ? "?view=1" : url.search);
     }
     return "";
   }
