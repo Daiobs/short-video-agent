@@ -20,6 +20,7 @@ import httpx
 from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.metric_availability import metric_availability_from_mapping
+from app.services.creator_covers import validated_cover_url
 from app.services.creator_clone import (
     CloneSample,
     CloneSampleSet,
@@ -735,7 +736,7 @@ def _handoff_sample(sample: CloneSample) -> dict:
     }
     clean = {key: payload.get(key) for key in allowed if key in payload}
     clean["source_url"] = _safe_metadata_url(str(clean.get("source_url") or ""), aweme_id=str(clean.get("aweme_id") or ""))
-    clean["cover_url"] = _safe_metadata_url(str(clean.get("cover_url") or ""))
+    clean["cover_url"] = validated_cover_url(clean.get("cover_url"))
     clean["title"] = _redact_sensitive(str(clean.get("title") or ""))[:220]
     clean["desc"] = _redact_sensitive(str(clean.get("desc") or ""))[:500]
     clean["author"] = _redact_sensitive(str(clean.get("author") or ""))[:120]
@@ -1217,7 +1218,7 @@ def _sample_from_browser_item(item: dict) -> CloneSample:
     source_url = _safe_metadata_url(str(item.get("source_url") or ""), aweme_id=aweme_id)
     title = _redact_sensitive(str(item.get("title") or f"抖音作品 {aweme_id}"))[:180]
     desc = _redact_sensitive(str(item.get("desc") or ""))
-    cover_url = _safe_metadata_url(str(item.get("cover_url") or ""))
+    cover_url = validated_cover_url(item.get("cover_url"))
     return CloneSample(
         sample_id=f"sample_{aweme_id or uuid.uuid4().hex}",
         source_type=detect_source_type(source_url),
