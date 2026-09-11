@@ -291,7 +291,7 @@ def _safe_internal_url(value: Any) -> str:
     if re.fullmatch(r"/cases/case_[A-Za-z0-9_-]{1,94}", candidate):
         return candidate
     if re.fullmatch(
-        r"/api/creator-clone/sets/clone_[A-Za-z0-9_-]{1,94}/files/creator_clone\.(?:html|md)",
+        r"/api/creator-clone/sets/clone_[A-Za-z0-9_-]{1,94}/files/creator_clone\.(?:html(?:\?view=1)?|md)",
         candidate,
     ):
         return candidate
@@ -723,7 +723,7 @@ def _collect_creator_assets(
                 report_status = "incomplete"
             open_url = ""
             if "creator_clone.html" in report_files:
-                open_url = f"/api/creator-clone/sets/{resource_id}/files/creator_clone.html"
+                open_url = f"/api/creator-clone/sets/{resource_id}/files/creator_clone.html?view=1"
             elif "creator_clone.md" in report_files:
                 open_url = f"/api/creator-clone/sets/{resource_id}/files/creator_clone.md"
             assets.append(

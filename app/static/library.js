@@ -30,8 +30,8 @@
     if (/^\/cases\/case_[A-Za-z0-9_-]{1,94}$/.test(candidate)) {
       return candidate;
     }
-    if (/^\/api\/creator-clone\/sets\/clone_[A-Za-z0-9_-]{1,94}\/files\/creator_clone\.(?:html|md)$/.test(candidate)) {
-      return candidate;
+    if (/^\/api\/creator-clone\/sets\/clone_[A-Za-z0-9_-]{1,94}\/files\/creator_clone\.(?:html(?:\?view=1)?|md)$/.test(candidate)) {
+      return candidate.endsWith(".html") ? `${candidate}?view=1` : candidate;
     }
     return "";
   }
@@ -167,14 +167,22 @@
     const openUrl = safeOpenUrl(asset.open_url);
     if (openUrl) {
       const link = documentRef.createElement("a");
-      link.href = openUrl;
+      const htmlReport = /\/creator_clone\.html(?:\?view=1)?$/.test(openUrl);
+      link.href = htmlReport ? `${openUrl.split("?")[0]}?view=1` : openUrl;
       link.className = "library-open-button";
-      link.textContent = asset.asset_type === "case" ? "打开 Case" : "打开报告";
+      link.textContent = asset.asset_type === "case" ? "打开 Case" : htmlReport ? "打开报告" : "下载 Markdown";
       if (asset.asset_type !== "case") {
         link.target = "_blank";
         link.rel = "noopener noreferrer";
       }
       actionCell.appendChild(link);
+      if (htmlReport) {
+        const download = documentRef.createElement("a");
+        download.href = openUrl.split("?")[0];
+        download.className = "text-link";
+        download.textContent = "下载 HTML";
+        actionCell.appendChild(download);
+      }
     }
     const target = normalizeResumeTarget(asset.resume_target);
     if (target?.route === "profile") {

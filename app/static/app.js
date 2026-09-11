@@ -4790,7 +4790,7 @@ async function handleWizardPrimaryAction() {
       }
     }
     if (reportHref && reportHref !== "#") {
-      window.open(reportHref, "_blank", "noopener,noreferrer");
+      window.open(reportHref.replace(/\?view=1$/, ""), "_blank", "noopener,noreferrer");
       return;
     }
     creatorCloneResultCard?.scrollIntoView({behavior: "smooth", block: "start"});
@@ -5976,7 +5976,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
   }
   if (downloadCreatorCloneMd && set?.set_id) {
     const reportFile = exports.creator_clone_html ? "creator_clone.html" : "creator_clone.md";
-    downloadCreatorCloneMd.href = `/api/creator-clone/sets/${encodeURIComponent(set.set_id)}/files/${reportFile}`;
+    downloadCreatorCloneMd.href = `/api/creator-clone/sets/${encodeURIComponent(set.set_id)}/files/${reportFile}${reportFile === "creator_clone.html" ? "?view=1" : ""}`;
     downloadCreatorCloneMd.textContent = reportFile === "creator_clone.html" ? "打开网页报告" : "下载 Markdown";
   }
   if (!result) {
@@ -7254,14 +7254,15 @@ function safeWorkbenchInternalUrl(value) {
   } catch {
     return "";
   }
-  if (url.origin !== window.location.origin || url.search || url.hash) {
+  if (url.origin !== window.location.origin || url.hash) {
     return "";
   }
+  if (url.search && !(url.search === "?view=1" && String(value).endsWith("?view=1") && /\/creator_clone\.html$/.test(url.pathname))) return "";
   if (/^\/cases\/[A-Za-z0-9_-]{1,100}$/.test(url.pathname)) {
     return url.pathname;
   }
   if (/^\/api\/creator-clone\/sets\/clone_[a-f0-9]{32}\/files\/creator_clone\.(?:html|md)$/i.test(url.pathname)) {
-    return url.pathname;
+    return url.pathname + (url.pathname.endsWith("/creator_clone.html") ? "?view=1" : url.search);
   }
   return "";
 }
