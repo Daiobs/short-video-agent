@@ -83,7 +83,39 @@ configured limit) and a 372,383-byte serialized body, versus 4,418 characters
 and zero images in reconstructed main. Provider receives 300 seconds, with
 360 seconds of task budget, only in the isolated acceptance process.
 
-Real-generation outcome: pending the single authorized run. Files, screenshots,
-request bodies and responses remain private outside Git. Encoded-size-rejected
+Real-generation outcome: one authorized task, one logical request, one HTTP
+attempt; 81.75 seconds, HTTP 200, Responses status `completed`, no incomplete
+details, successful normal JSON/business validation and persistence. Returned
+usage: 5,608 input / 2,820 output / 8,428 total tokens. The request retained
+`max_output_tokens=1800`; the gateway's larger reported output usage is an
+unresolved gateway accounting/enforcement limitation, not adjusted in this PR.
+
+Actual coverage: two ASR texts (one is a likely recognition artifact), five OCR
+texts of uneven quality, two ordered contact sheets under the existing image
+limit, no semantic comments and no saved single-analysis result in these five
+Cases. Synthetic request tests cover the missing source types; this real call
+does not claim to verify their real-world analysis quality.
+
+The raw model summary, positioning, formulas, ideas, gaps and next actions
+equal the normalized/saved values. Both saved reports mount the unchanged main
+renderer at 1280 and 390 pixels / 100% zoom; native details open without new
+detail overflow. The existing main mobile layout is not redesigned. Original
+report/config/source-file hashes and the 8765 main process remain unchanged.
+
+The candidate uses concrete costume variation and an audience-surrounded venue
+visible in the two contact sheets. A proposed scale-reveal idea also has a
+counterpart in OCR's setup/question/device-orientation wording. Those are more
+grounded details, not proof of audience motivation or performance causality.
+Music strength and exact beat/movement claims remain unsupported by static
+input; the candidate's stronger confidence wording is not justified by this
+call. Overall product gain is **not yet established**; human comparison is
+pending. No Prompt/UI follow-up or second generation was performed.
+
+The old renderer still displays inventory flags and structural quality labels
+that can look like actual input coverage/factual confidence. The private preview
+header states actual input counts to prevent that confusion; production UI is
+unchanged and this pre-existing display issue is outside the PR scope.
+
+Files, screenshots, request bodies and responses remain private outside Git. Encoded-size-rejected
 contact sheets skip that sample rather than attempting another encoding or a
 second image; this is an explicit bounded omission, not a processing failure.
