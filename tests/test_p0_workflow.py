@@ -11883,9 +11883,11 @@ def test_creator_clone_sample_set_updates_with_generated_case_artifact() -> None
     assert "蒸馏证据" in updated_sample.notes
     assert load_sample_set(set_id).samples[0].case_id == case_id
     prompt = build_distill_prompt(updated, [updated_sample], include_case_reports=True)
-    assert "已有 Case 报告" in prompt
-    assert "这个样本已经抽帧分析" in prompt
-    assert "case_evidence_pack" in prompt
+    # The same saved analysis now travels as a bounded, labelled JSON excerpt,
+    # not as a duplicate entire Markdown report alongside unbounded raw JSON.
+    assert "已经有视觉报告" in prompt
+    assert "saved_single_analysis" in prompt
+    assert "secondhand" in prompt
     assert "evidence_status" in prompt
     assert "provider_missing" in prompt
     assert "no_text" in prompt
@@ -11894,7 +11896,7 @@ def test_creator_clone_sample_set_updates_with_generated_case_artifact() -> None
     assert "真正厉害的人会先抓住前三秒" in prompt
     assert "先抓住前三秒" in prompt
     assert "求教程" in prompt
-    assert "keyframe_count" in prompt
+    assert "本次附带材料" in prompt
 
 
 def test_creator_clone_distill_unconfigured_returns_prompt(monkeypatch) -> None:
@@ -12248,7 +12250,9 @@ def test_creator_clone_distill_uses_map_reduce_for_three_samples(monkeypatch) ->
     assert payload["result"]["sample_overview"]["selected_count"] == 3
     assert payload["map_reduce"]["enabled"] is True
     assert len(provider.prompts) == 1
-    assert len(provider.prompts[-1]) < 5000
+    # Micro now includes explicit material/image availability and missing-vs-zero
+    # metadata; keep a short-input bound without omitting those required facts.
+    assert len(provider.prompts[-1]) < 6000
     assert Path(payload["exports"]["map_summaries_json"]).is_file()
     assert Path(payload["exports"]["distill_prompt_micro_md"]).is_file()
 
