@@ -51,6 +51,7 @@ from app.services.creator_intelligence import (
 from app.services.creator_intelligence.memory import CreatorMemoryGraph
 from app.services.creator_intelligence.models import validate_creator_clone_schema as validate_creator_clone_strategy_schema
 from app.services.creator_report_details import detail_markdown
+from app.services.creator_covers import attach_frame_previews, validated_cover_url
 from app.services.creator_intelligence.report_quality import validate_creator_report_quality
 
 
@@ -159,6 +160,8 @@ class CloneSample:
     desc: str = ""
     author: str = ""
     cover_url: str = ""
+    preview_url: str = ""
+    preview_source: str = ""
     media_type: str = "unknown"
     duration: float = 0.0
     content_category: str = ""
@@ -198,6 +201,8 @@ class CloneSample:
             "desc": self.desc,
             "author": self.author,
             "cover_url": self.cover_url,
+            "preview_url": self.preview_url,
+            "preview_source": self.preview_source,
             "media_type": self.media_type,
             "duration": self.duration,
             "content_category": self.content_category,
@@ -403,7 +408,7 @@ def sample_from_profile_item(item: ProfileVideoItem) -> CloneSample:
         title=_safe_public_metadata_text(item.title, 220),
         desc=_safe_public_metadata_text(item.desc, 500),
         author=_safe_public_metadata_text(item.author, 120),
-        cover_url=_safe_public_metadata_url(item.cover_url),
+        cover_url=validated_cover_url(item.cover_url),
         media_type=media_type,
         duration=max(0.0, float(item.duration or 0)) / 1000.0,
         like_count=int(item.like_count or 0),
@@ -499,7 +504,7 @@ def build_sample_set_from_handoff_manifest(payload: dict) -> CloneSampleSet:
 
 def sample_from_handoff_item(item: dict) -> CloneSample:
     source_url = _safe_handoff_url(str(item.get("source_url") or ""), aweme_id=str(item.get("aweme_id") or ""))
-    cover_url = _safe_handoff_url(str(item.get("cover_url") or ""))
+    cover_url = validated_cover_url(item.get("cover_url"))
     source_type = normalize_source_type(str(item.get("source_type") or "")) if item.get("source_type") else detect_source_type(source_url)
     return CloneSample(
         sample_id=_safe_handoff_text(str(item.get("sample_id") or f"sample_{uuid.uuid4().hex}"), 120),
@@ -562,7 +567,7 @@ def sample_from_structured_row(row: dict) -> CloneSample:
         title=title or (f"抖音作品 {aweme_id}" if aweme_id else _safe_public_metadata_text(raw_id, 120) or "未命名样本"),
         desc=_safe_public_metadata_text(str(_row_field(row, "desc", "description", "caption", default="")).strip(), 500),
         author=_safe_public_metadata_text(str(_row_field(row, "author", "nickname", default="")).strip(), 120),
-        cover_url=_safe_public_metadata_url(str(_row_field(row, "cover_url", "cover", default="")).strip()),
+        cover_url=validated_cover_url(_row_field(row, "cover_url", "cover", default="")),
         media_type=media_type,
         duration=_safe_float(_row_field(row, "duration", "duration_seconds", default=0)),
         content_category=_safe_public_metadata_text(
@@ -781,7 +786,15 @@ def dedupe_samples(samples: list[CloneSample]) -> tuple[list[CloneSample], int]:
 
 def save_sample_set(sample_set: CloneSampleSet) -> None:
     output_dir = creator_clone_dir(sample_set.set_id)
-    _write_json(output_dir / "samples.json", sample_set.to_dict())
+    for sample in sample_set.samples:
+        sample.cover_url = validated_cover_url(sample.cover_url)
+    attach_frame_previews(sample_set.samples)
+    payload = sample_set.to_dict()
+    for row in payload["samples"]:
+        row["cover_url"] = validated_cover_url(row["cover_url"])
+        row.pop("preview_url", None)
+        row.pop("preview_source", None)
+    _write_json(output_dir / "samples.json", payload)
 
 
 def save_sample_recommendations(set_id: str, payload: dict) -> Path:
@@ -793,6 +806,7 @@ def save_sample_recommendations(set_id: str, payload: dict) -> Path:
 def load_sample_set(set_id: str) -> CloneSampleSet:
     payload = _read_json(creator_clone_dir(set_id) / "samples.json")
     samples = [sample_from_dict(item) for item in payload.get("samples", []) if isinstance(item, dict)]
+    attach_frame_previews(samples)
     return CloneSampleSet(
         set_id=str(payload.get("set_id") or set_id),
         title=str(payload.get("title") or "创作者克隆实验室素材池"),
@@ -816,7 +830,7 @@ def sample_from_dict(item: dict) -> CloneSample:
         title=_safe_public_metadata_text(str(item.get("title") or ""), 220),
         desc=_safe_public_metadata_text(str(item.get("desc") or ""), 500),
         author=_safe_public_metadata_text(str(item.get("author") or ""), 120),
-        cover_url=_safe_public_metadata_url(str(item.get("cover_url") or "")),
+        cover_url=validated_cover_url(item.get("cover_url")),
         media_type=normalize_media_type(str(item.get("media_type") or "unknown")),
         duration=_safe_float(item.get("duration")),
         content_category=_safe_public_metadata_text(str(item.get("content_category") or ""), 120),
@@ -1589,6 +1603,9 @@ def behavior_representation_prompt_payload(sample_set: CloneSampleSet, selected_
 
 def sample_to_prompt_payload(sample: CloneSample, include_case_reports: bool = True) -> dict:
     payload = sample.to_dict()
+    payload["cover_url"] = _safe_public_metadata_url(sample.cover_url)
+    payload.pop("preview_url", None)
+    payload.pop("preview_source", None)
     payload["evidence_status"] = _sample_evidence_status(sample)
     payload["evidence_note"] = _sample_evidence_note(sample)
     if include_case_reports and sample.case_id:
@@ -4176,12 +4193,16 @@ def _handoff_payload_has_sensitive_sample_data(payload: dict) -> bool:
         if not isinstance(item, dict):
             continue
         for field_name in HANDOFF_SAMPLE_SENSITIVE_FIELDS:
+            if field_name == "cover_url" and validated_cover_url(item.get(field_name)):
+                continue
             if _handoff_sensitive_value(item.get(field_name)):
                 return True
     return _handoff_metadata_tree_has_sensitive_data(payload)
 
 
 def _handoff_metadata_tree_has_sensitive_data(value: Any, path: tuple[str, ...] = ()) -> bool:
+    if path == ("samples", "cover_url") and validated_cover_url(value):
+        return False
     if path and path[0] in HANDOFF_CONTRACT_SECTIONS:
         return False
     if isinstance(value, dict):

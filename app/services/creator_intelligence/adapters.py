@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.creator_covers import validated_cover_url
+
 from app.services.creator_intelligence.models import (
     CreatorProfile,
     CreatorProject,
@@ -50,7 +52,7 @@ def sample_from_mapping(payload: dict[str, Any]) -> CreatorSample:
         title=str(payload.get("title") or payload.get("desc") or ""),
         description=str(payload.get("desc") or payload.get("description") or ""),
         author=str(payload.get("author") or payload.get("nickname") or ""),
-        cover_url=str(payload.get("cover_url") or ""),
+        cover_url=validated_cover_url(payload.get("cover_url")),
         media_kind=normalize_media_kind(str(payload.get("media_type") or payload.get("media_kind") or "unknown")),
         metrics=SampleMetrics(
             like_count=int(payload.get("like_count") or 0),
@@ -75,7 +77,7 @@ def sample_from_mapping(payload: dict[str, Any]) -> CreatorSample:
         tags=tuple(str(item) for item in (payload.get("tags") or []) if str(item)),
         created_at=str(payload.get("create_time") or payload.get("created_at") or ""),
         selected=bool(payload.get("selected")),
-        raw=dict(payload),
+        raw={**payload, "cover_url": validated_cover_url(payload.get("cover_url"))},
     )
 
 
@@ -112,7 +114,7 @@ def sample_from_clone_sample(sample: Any) -> CreatorSample:
         title=str(getattr(sample, "title", "") or ""),
         description=str(getattr(sample, "desc", "") or ""),
         author=str(getattr(sample, "author", "") or ""),
-        cover_url=str(getattr(sample, "cover_url", "") or ""),
+        cover_url=validated_cover_url(getattr(sample, "cover_url", "")),
         media_kind=normalize_media_kind(str(getattr(sample, "media_type", "") or "unknown")),
         metrics=SampleMetrics(
             like_count=int(getattr(sample, "like_count", 0) or 0),
@@ -137,7 +139,7 @@ def sample_from_clone_sample(sample: Any) -> CreatorSample:
         tags=tuple(str(item) for item in (getattr(sample, "tags", None) or []) if str(item)),
         created_at=str(getattr(sample, "create_time", "") or ""),
         selected=bool(getattr(sample, "selected", False)),
-        raw=sample.to_dict() if hasattr(sample, "to_dict") else {},
+        raw={**sample.to_dict(), "cover_url": validated_cover_url(getattr(sample, "cover_url", ""))} if hasattr(sample, "to_dict") else {},
     )
 
 

@@ -1935,6 +1935,8 @@ function sampleViewItemFromCreatorSample(sample = {}) {
     desc: sample.description || raw.desc || "",
     author: sample.author || raw.author || "",
     cover_url: sample.cover_url || raw.cover_url || "",
+    preview_url: sample.preview_url ?? raw.preview_url ?? "",
+    preview_source: sample.preview_source ?? raw.preview_source ?? "",
     media_type: sample.media_kind || raw.media_type || "unknown",
     duration: Number(raw.duration || 0),
     content_category: raw.content_category || "",
@@ -1974,6 +1976,8 @@ function creatorSampleFromViewItem(item = {}) {
     description: item.desc || "",
     author: item.author || "",
     cover_url: item.cover_url || "",
+    preview_url: item.preview_url || "",
+    preview_source: item.preview_source || "",
     media_kind: item.media_type || "unknown",
     metrics: {
       like_count: Number(item.like_count || 0),
@@ -2054,7 +2058,10 @@ function activeCreatorSampleViewItems() {
   );
   const merged = projectItems.map((item) => {
     const local = localByKey.get(sampleViewItemKey(item));
-    return local ? {...item, ...local} : item;
+    return local ? {...item, ...local,
+      preview_url: local.preview_url ?? item.preview_url,
+      preview_source: local.preview_source ?? item.preview_source,
+    } : item;
   });
   const projectKeys = new Set(merged.map(sampleViewItemKey).filter(Boolean));
   localItems.forEach((item) => {
@@ -4239,10 +4246,19 @@ function renderCompactProfileTable() {
 
 function profileCoverMarkup(item) {
   const title = item.title || item.desc || item.aweme_id || item.sample_id || "素材";
-  if (!item.cover_url) {
-    return profileCoverFallbackMarkup(item, "无封面");
+  const previewUrl = safeProfilePreviewUrl(item);
+  const source = item.cover_url || previewUrl;
+  if (!source) {
+    return profileCoverFallbackMarkup();
   }
-  return `<img src="${escapeHtml(item.cover_url)}" alt="${escapeHtml(title)}" class="profile-cover" loading="lazy" referrerpolicy="no-referrer" data-profile-cover-url="${escapeHtml(item.cover_url)}" data-profile-cover-fallback="${escapeHtml(profileCoverFallbackLabel(item))}">`;
+  const local = !item.cover_url;
+  return `<span class="profile-cover-slot"><img src="${escapeHtml(source)}" alt="${escapeHtml(title)}" class="profile-cover" loading="lazy" referrerpolicy="no-referrer" data-profile-preview-url="${escapeHtml(previewUrl)}" data-profile-cover-local="${local}" data-profile-cover-fallback="${escapeHtml(profileCoverFallbackLabel(item))}">${local ? '<small class="profile-cover-caption">视频帧预览</small>' : ""}</span>`;
+}
+
+function safeProfilePreviewUrl(item) {
+  if (item.preview_source !== "video_frame" || typeof item.preview_url !== "string") return "";
+  const match = item.preview_url.match(/^\/api\/cases\/([A-Za-z0-9_-]+)\/keyframes\/([A-Za-z0-9_-][A-Za-z0-9_.-]*)$/);
+  return match && match[0] === item.preview_url && match[1] === item.case_id && !match[2].includes("..") ? item.preview_url : "";
 }
 
 function profileCoverFallbackLabel(item) {
@@ -4250,33 +4266,52 @@ function profileCoverFallbackLabel(item) {
   return type === "video" ? "视频" : type === "image" ? "图文" : "无封面";
 }
 
-function profileCoverFallbackMarkup(item, label = "") {
-  const coverUrl = item.cover_url || "";
-  const text = label || profileCoverFallbackLabel(item);
-  if (coverUrl) {
-    return `<div class="profile-cover placeholder"><span>封面受限</span><small>${escapeHtml(text)}</small></div>`;
-  }
-  return `<div class="profile-cover placeholder"><span>${escapeHtml(text)}</span></div>`;
+function profileCoverFallbackMarkup() {
+  return '<div class="profile-cover placeholder"><span>暂无可用预览</span></div>';
 }
 
 function installProfileCoverFallbacks() {
   profileResultsBody.querySelectorAll("img.profile-cover").forEach((image) => {
-    image.addEventListener("error", () => {
-      const label = image.dataset.profileCoverFallback || "无封面";
-      const coverUrl = image.dataset.profileCoverUrl || "";
-      if (coverUrl) {
-        const fallback = document.createElement("div");
-        fallback.className = "profile-cover placeholder";
-        fallback.innerHTML = `<span>封面受限</span><small>${escapeHtml(label)}</small>`;
-        image.replaceWith(fallback);
-        return;
-      }
+    bindProfileCover(image);
+  });
+}
+
+function bindProfileCover(image) {
+  if (image.dataset.profileCoverBound) return;
+  image.dataset.profileCoverBound = "true";
+  let settled = false;
+  const finish = (failed) => {
+    if (settled || !profileResultsBody.contains(image)) return;
+    settled = true;
+    if (!failed) return;
+    const slot = image.parentNode;
+    const previewUrl = image.dataset.profilePreviewUrl;
+    if (image.dataset.profileCoverLocal !== "true" && previewUrl) {
+      // A separate node isolates late remote events from the local request.
+      const local = document.createElement("img");
+      local.className = "profile-cover";
+      local.alt = image.alt;
+      local.loading = "lazy";
+      local.referrerPolicy = "no-referrer";
+      local.dataset.profileCoverLocal = "true";
+      local.dataset.profileCoverFallback = image.dataset.profileCoverFallback;
+      local.src = previewUrl;
+      image.replaceWith(local);
+      const caption = document.createElement("small");
+      caption.className = "profile-cover-caption";
+      caption.textContent = "视频帧预览";
+      slot.appendChild(caption);
+      bindProfileCover(local);
+    } else {
       const fallback = document.createElement("div");
       fallback.className = "profile-cover placeholder";
-      fallback.innerHTML = `<span>${escapeHtml(label)}</span>`;
-      image.replaceWith(fallback);
-    }, {once: true});
-  });
+      fallback.innerHTML = '<span>暂无可用预览</span>';
+      slot.replaceWith(fallback);
+    }
+  };
+  image.addEventListener("load", () => finish(image.naturalWidth === 0), {once: true});
+  image.addEventListener("error", () => finish(true), {once: true});
+  if (image.complete) finish(image.naturalWidth === 0);
 }
 
 function renderProfileTableRow(item) {
@@ -4832,6 +4867,8 @@ function mergeProfileQueueItems(items) {
     return {
       ...item,
       case_id: caseId,
+      preview_url: queueItem.preview_url ?? item.preview_url ?? "",
+      preview_source: queueItem.preview_source ?? item.preview_source ?? "",
       local_video_id: queueItem.local_video_id || item.local_video_id || "",
       has_video: Boolean(item.has_video || queueItem.local_video_id || caseId),
       has_frames: Boolean(item.has_frames || caseId),

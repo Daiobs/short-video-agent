@@ -924,7 +924,7 @@ def test_home_uses_versioned_static_assets() -> None:
     assert 'referrerpolicy="no-referrer"' in script
     assert "creatorCloneNextActionRunning" in script
     assert "处理中..." in script
-    assert "封面受限" in script
+    assert "暂无可用预览" in script
     assert ".profile-group-row" in stylesheet
     assert ".profile-cover.placeholder" in stylesheet
     assert ".profile-cover-link" not in stylesheet
@@ -10979,7 +10979,7 @@ def test_creator_clone_import_handoff_manifest_accepts_sanitized_metadata_only()
     assert any("handoff_manifest.json" in value for value in payload["exports"].values())
     sample = payload["set"]["samples"][0]
     assert sample["source_url"] == "https://www.douyin.com/video/7622653084993647603"
-    assert sample["cover_url"] == "https://example.com/cover.jpg"
+    assert sample["cover_url"] == ""  # Non-platform cover hosts are not accepted.
     assert sample["like_count"] == 200
     assert sample["title"] == "交接作品"
     assert "secret" not in json.dumps(payload, ensure_ascii=False).lower()
@@ -11207,7 +11207,7 @@ def test_creator_clone_import_handoff_manifest_strips_url_userinfo() -> None:
     assert response.status_code == 200
     sample = response.json()["set"]["samples"][0]
     assert sample["source_url"] == "https://example.com/video/7622653084993647603"
-    assert sample["cover_url"] == "https://example.com/cover.jpg"
+    assert sample["cover_url"] == ""  # Cover userinfo is rejected, not rewritten.
     payload_text = json.dumps(response.json(), ensure_ascii=False).lower()
     assert "viewer:password" not in payload_text
     assert "cover_user:cover_pass" not in payload_text
@@ -13682,7 +13682,7 @@ def test_local_chrome_sample_redacts_sensitive_dom_fields() -> None:
     assert sample.view_count == 1200
     assert sample.tags == ["甜美", "[redacted]", "COS"]
     assert sample.source_url == "https://www.douyin.com/video/7622653084993647603"
-    assert sample.cover_url == "https://example.com/cover.jpg"
+    assert sample.cover_url == ""  # Non-platform cover hosts are not accepted.
 
 
 def test_local_chrome_sample_preserves_visible_metadata_fields() -> None:
@@ -13786,7 +13786,7 @@ def test_local_chrome_sample_strips_url_userinfo() -> None:
     )
 
     assert sample.source_url == "https://example.com/video/7622653084993647603"
-    assert sample.cover_url == "https://example.com/cover.jpg"
+    assert sample.cover_url == ""  # Cover userinfo is rejected, not rewritten.
     payload_text = json.dumps(sample.to_dict(), ensure_ascii=False).lower()
     assert "viewer:password" not in payload_text
     assert "cover_user:cover_pass" not in payload_text
