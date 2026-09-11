@@ -38,6 +38,12 @@ from app.services.creator_intelligence.outcome_snapshot import (
     update_creator_outcome_snapshot,
     upsert_creator_outcome_timeline,
 )
+from app.services.creator_intelligence.iteration_history import (
+    get_creator_iteration,
+    get_creator_iteration_artifact,
+    list_creator_iterations,
+    start_next_creator_iteration,
+)
 
 
 router = APIRouter(prefix="/api/creator-intelligence", tags=["creator-intelligence"])
@@ -104,6 +110,12 @@ class CreatorOutcomeMetricsRequest(BaseModel):
     comments: OutcomeMetricValue = None
     shares: OutcomeMetricValue = None
     collects: OutcomeMetricValue = None
+
+
+class CreatorIterationStartNextRequest(BaseModel):
+    close_current: bool = False
+    close_reason: Literal["", "cancelled", "superseded", "not_published", "other"] = ""
+    close_note: str = Field(default="", max_length=500)
 
 
 def project_payload_for_sample_set(
@@ -308,6 +320,69 @@ def patch_creator_intelligence_outcome_snapshot(
         )
         return JSONResponse(
             content={"ok": True, "snapshot": snapshot, "outcome": outcome},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.get("/projects/{project_id}/iterations")
+def get_creator_intelligence_iterations(project_id: str):
+    try:
+        return JSONResponse(
+            content={"ok": True, **list_creator_iterations(project_id)},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.get("/projects/{project_id}/iterations/{iteration_id}")
+def get_creator_intelligence_iteration(project_id: str, iteration_id: str):
+    try:
+        return JSONResponse(
+            content={"ok": True, **get_creator_iteration(project_id, iteration_id)},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.get("/projects/{project_id}/iterations/{iteration_id}/artifacts/{artifact_name}")
+def get_creator_intelligence_iteration_artifact(
+    project_id: str,
+    iteration_id: str,
+    artifact_name: Literal["execution-pack", "execution-record", "outcome"],
+):
+    try:
+        return JSONResponse(
+            content={
+                "ok": True,
+                "project_id": project_id,
+                "iteration_id": iteration_id,
+                "artifact_name": artifact_name,
+                "artifact": get_creator_iteration_artifact(project_id, iteration_id, artifact_name),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+    except AppError as error:
+        return error_response(error)
+
+
+@router.post("/projects/{project_id}/iterations/start-next")
+def start_next_creator_intelligence_iteration(
+    project_id: str,
+    payload: CreatorIterationStartNextRequest,
+):
+    try:
+        result = start_next_creator_iteration(
+            project_id,
+            close_current=payload.close_current,
+            close_reason=payload.close_reason,
+            close_note=payload.close_note,
+        )
+        return JSONResponse(
+            content={"ok": True, **result},
             headers={"Cache-Control": "no-store"},
         )
     except AppError as error:

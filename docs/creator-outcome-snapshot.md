@@ -154,10 +154,16 @@ Successful responses use `Cache-Control: no-store`. There is no DELETE endpoint,
 
 ## Persistence
 
-The Timeline is stored beside existing Creator artifacts:
+Without an iteration index, the Timeline remains beside existing Creator artifacts:
 
 ```text
 outputs/creator_clones/{project_id}/creator_outcome_snapshots.json
+```
+
+After the user starts a new iteration, the current Timeline is stored at:
+
+```text
+outputs/creator_clones/{project_id}/iterations/{iteration_id}/creator_outcome_snapshots.json
 ```
 
 Writes use UTF-8 JSON, a temporary file in the same directory, `flush`, `fsync`, and `os.replace`. Outcome operations do not modify:
@@ -196,7 +202,7 @@ Creator Outcome Snapshot v1 does not:
 ## Known Limitations
 
 - Write coordination uses a process-local lock and is intended for the current local-first, single-process runtime.
-- One Timeline is stored per Creator project and remains bound to its original Execution Record identity.
+- One Timeline is stored per Creator iteration and remains bound to its original Execution Record identity. Closed Timelines are read-only.
 - Snapshot deletion is intentionally unavailable; corrections use PATCH.
 - Manual values are not independently verified.
 - `expected_metric` is displayed as source text and is not automatically scored against observed metrics.

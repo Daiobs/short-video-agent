@@ -859,6 +859,7 @@ const creatorExecutionRecordResult = document.getElementById("creator-execution-
 const creatorOutcomeCard = document.getElementById("creator-outcome-card");
 const creatorOutcomeStatus = document.getElementById("creator-outcome-status");
 const creatorOutcomeResult = document.getElementById("creator-outcome-result");
+const creatorIterationCard = document.getElementById("creator-iteration-card");
 const PROFILE_BUILD_MAX_ITEMS = Math.max(1, Number(document.body.dataset.profileBuildMaxItems || 10));
 const CREATOR_CLONE_MAX_DISTILL_SAMPLES = Math.max(1, Number(document.body.dataset.creatorCloneMaxDistillSamples || 20));
 const HANDOFF_MANIFEST_MAX_BYTES = 2 * 1024 * 1024;
@@ -913,6 +914,8 @@ let currentCreatorExecutionRecord = null;
 let creatorExecutionRecordRunning = false;
 let currentCreatorOutcome = null;
 let creatorOutcomeRunning = false;
+let currentCreatorIterationOverview = null;
+let creatorIterationRunning = false;
 let currentRepresentativeSampleSelection = null;
 let representativeRecommendationState = "idle";
 let representativeRecommendationMessage = "";
@@ -968,6 +971,7 @@ const creatorReportView = window.CreatorReportView?.createRenderer({
 const creatorExecutionPackView = window.CreatorExecutionPackView || null;
 const creatorExecutionRecordView = window.CreatorExecutionRecordView || null;
 const creatorOutcomeView = window.CreatorOutcomeSnapshotView || null;
+const creatorIterationHistoryView = window.CreatorIterationHistoryView || null;
 
 function renderSingleItemStatus({job = currentSingleJob, caseData = loadedHomeCase, flow = singleItemFlow} = {}) {
   const statusView = window.SingleItemJobStatus?.derive({job, caseData, flow});
@@ -1536,6 +1540,14 @@ function resetCreatorExecutionPackUi({hide = true} = {}) {
   creatorExecutionPackCard?.classList.toggle("hidden", hide);
 }
 
+function resetCreatorIterationUi() {
+  currentCreatorIterationOverview = null;
+  creatorIterationRunning = false;
+  if (creatorIterationCard) {
+    creatorIterationCard.innerHTML = '<div class="creator-iteration-loading muted">正在读取创作迭代...</div>';
+  }
+}
+
 function resetCreatorClonePoolForNewProfile({clearInput = true} = {}) {
   currentCloneSetId = "";
   currentCloneProfileFingerprint = "";
@@ -1549,6 +1561,7 @@ function resetCreatorClonePoolForNewProfile({clearInput = true} = {}) {
   currentCreatorRuntimeState = null;
   currentCreatorStrategyPlan = null;
   resetCreatorExecutionPackUi();
+  resetCreatorIterationUi();
   currentRepresentativeSampleSelection = null;
   representativeRecommendationState = "idle";
   representativeRecommendationMessage = "";
@@ -5919,6 +5932,7 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
   }
   currentCreatorStrategyPlan = null;
   resetCreatorExecutionPackUi();
+  resetCreatorIterationUi();
   if (creatorStrategyPlanStatus) {
     creatorStrategyPlanStatus.textContent = result
       ? "基于当前创作者蒸馏报告生成，不重新扫描、不重新富化。"
@@ -5956,6 +5970,9 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
       <pre class="prompt-preview">${escapeHtml(currentDistillPrompt.slice(0, 3000))}</pre>
     `;
     revealCreatorCloneResultCard({scroll: options.scroll !== false});
+    if (set?.set_id) {
+      void hydrateCreatorIterations(set.set_id, {silent: true});
+    }
     return true;
   }
   const contentProfile = result.content_profile || overview.content_profile || {};
@@ -5971,6 +5988,9 @@ function renderCreatorCloneResult(result, set, prompt, exports = {}, options = {
     throw new Error("蒸馏报告节点未生成。");
   }
   revealCreatorCloneResultCard({scroll: options.scroll !== false});
+  if (set?.set_id) {
+    void hydrateCreatorIterations(set.set_id, {silent: true});
+  }
   return true;
 }
 
@@ -6174,6 +6194,131 @@ function renderCreatorOutcome(outcome = {}) {
   return creatorOutcomeView.hasOutcome(creatorOutcomeResult);
 }
 
+function renderCreatorIterationOverview(payload = {}) {
+  if (!creatorIterationHistoryView || !creatorIterationCard) {
+    return false;
+  }
+  currentCreatorIterationOverview = payload;
+  creatorIterationCard.innerHTML = creatorIterationHistoryView.renderOverview(payload);
+  return true;
+}
+
+async function hydrateCreatorIterations(setId, options = {}) {
+  if (!setId || !creatorIterationHistoryView || !creatorIterationCard) {
+    return null;
+  }
+  try {
+    const response = await fetch(`/api/creator-intelligence/projects/${encodeURIComponent(setId)}/iterations`, {
+      cache: "no-store",
+    });
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      throw payload;
+    }
+    renderCreatorIterationOverview(payload);
+    return payload;
+  } catch (error) {
+    if (!options.silent) {
+      creatorIterationCard.innerHTML = `<div class="inline-status error-text">${escapeHtml(error.error_code || "ITERATION_LOAD_FAILED")}：${escapeHtml(error.message || "创作迭代读取失败。")}</div>`;
+    }
+    return null;
+  }
+}
+
+async function openCreatorIterationDetail(setId, iterationId) {
+  if (!setId || !iterationId || !creatorIterationCard || !creatorIterationHistoryView) {
+    return false;
+  }
+  const detailContainer = creatorIterationCard.querySelector("[data-iteration-detail]");
+  if (!detailContainer) {
+    return false;
+  }
+  detailContainer.innerHTML = '<p class="muted">正在读取历史产物...</p>';
+  try {
+    const detailResponse = await fetch(
+      `/api/creator-intelligence/projects/${encodeURIComponent(setId)}/iterations/${encodeURIComponent(iterationId)}`,
+      {cache: "no-store"},
+    );
+    const detail = await readJsonResponse(detailResponse);
+    if (!detail.ok) {
+      throw detail;
+    }
+    const availability = detail.artifact_availability || {};
+    const artifactNames = ["execution-pack", "execution-record", "outcome"];
+    const artifacts = {};
+    await Promise.all(artifactNames.map(async (name) => {
+      const availabilityKey = name.replaceAll("-", "_");
+      if (availability[availabilityKey] !== "ready") {
+        return;
+      }
+      const response = await fetch(
+        `/api/creator-intelligence/projects/${encodeURIComponent(setId)}/iterations/${encodeURIComponent(iterationId)}/artifacts/${encodeURIComponent(name)}`,
+        {cache: "no-store"},
+      );
+      const payload = await readJsonResponse(response);
+      if (payload.ok) {
+        artifacts[name] = payload.artifact || null;
+      }
+    }));
+    detailContainer.innerHTML = creatorIterationHistoryView.renderDetail(detail, artifacts, {
+      pack: creatorExecutionPackView,
+      record: creatorExecutionRecordView,
+      outcome: creatorOutcomeView,
+    });
+    detailContainer.scrollIntoView({behavior: "smooth", block: "nearest"});
+    return true;
+  } catch (error) {
+    detailContainer.innerHTML = `<p class="error-text">${escapeHtml(error.error_code || "ITERATION_DETAIL_FAILED")}：${escapeHtml(error.message || "历史轮次读取失败。")}</p>`;
+    return false;
+  }
+}
+
+async function startNextCreatorIterationFromUi(setId) {
+  if (!setId || creatorIterationRunning || !creatorIterationCard || !creatorIterationHistoryView) {
+    return false;
+  }
+  const requestPayload = creatorIterationHistoryView.startNextPayload(creatorIterationCard);
+  if (!requestPayload) {
+    const status = creatorIterationCard.querySelector("[data-iteration-status]");
+    if (status) {
+      status.textContent = "请先明确选择结束当前轮次的原因。";
+    }
+    return false;
+  }
+  creatorIterationRunning = true;
+  creatorIterationHistoryView.setBusy(creatorIterationCard, true, "正在安全结束当前轮次并创建下一轮...");
+  try {
+    const response = await fetch(
+      `/api/creator-intelligence/projects/${encodeURIComponent(setId)}/iterations/start-next`,
+      {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(requestPayload),
+      },
+    );
+    const payload = await readJsonResponse(response);
+    if (!payload.ok) {
+      throw payload;
+    }
+    resetCreatorExecutionPackUi();
+    const overview = await hydrateCreatorIterations(setId);
+    const status = creatorIterationCard.querySelector("[data-iteration-status]");
+    if (status && overview) {
+      status.textContent = `已开始第 ${payload.current_iteration?.sequence || "新"} 轮，请从 Strategy Plan 选择新选题。`;
+    }
+    return Boolean(overview);
+  } catch (error) {
+    creatorIterationHistoryView.setBusy(
+      creatorIterationCard,
+      false,
+      `${error.error_code || "ITERATION_START_FAILED"}：${error.message || "开始下一轮失败。"}`,
+    );
+    return false;
+  } finally {
+    creatorIterationRunning = false;
+  }
+}
+
 function setCreatorOutcomeBusy(running, message = "") {
   creatorOutcomeRunning = Boolean(running);
   creatorOutcomeResult?.querySelectorAll("button, input, select, textarea").forEach((control) => {
@@ -6233,6 +6378,13 @@ async function saveCreatorOutcomePublication() {
     if (!renderCreatorOutcome(payload.outcome || {})) {
       throw {error_code: "OUTCOME_RENDER_FAILED", message: "发布信息已保存，但页面渲染失败。"};
     }
+    if (
+      typeof hydrateCreatorIterations === "function"
+      && typeof creatorIterationHistoryView !== "undefined"
+      && typeof creatorIterationCard !== "undefined"
+    ) {
+      await hydrateCreatorIterations(setId, {silent: true});
+    }
     return true;
   } catch (error) {
     if (creatorOutcomeStatus) {
@@ -6269,6 +6421,13 @@ async function addCreatorOutcomeSnapshot() {
     }
     if (!renderCreatorOutcome(payload.outcome || {})) {
       throw {error_code: "OUTCOME_RENDER_FAILED", message: "数据已保存，但页面渲染失败。"};
+    }
+    if (
+      typeof hydrateCreatorIterations === "function"
+      && typeof creatorIterationHistoryView !== "undefined"
+      && typeof creatorIterationCard !== "undefined"
+    ) {
+      await hydrateCreatorIterations(setId, {silent: true});
     }
     return true;
   } catch (error) {
@@ -6307,6 +6466,13 @@ async function patchCreatorOutcomeSnapshot(snapshotElement) {
     }
     if (!renderCreatorOutcome(payload.outcome || {})) {
       throw {error_code: "OUTCOME_RENDER_FAILED", message: "修正已保存，但页面渲染失败。"};
+    }
+    if (
+      typeof hydrateCreatorIterations === "function"
+      && typeof creatorIterationHistoryView !== "undefined"
+      && typeof creatorIterationCard !== "undefined"
+    ) {
+      await hydrateCreatorIterations(setId, {silent: true});
     }
     return true;
   } catch (error) {
@@ -6381,6 +6547,13 @@ async function startCreatorExecutionRecord() {
     if (!renderCreatorExecutionRecord(payload.execution_record || {})) {
       throw {error_code: "EXECUTION_RECORD_RENDER_FAILED", message: "执行记录已创建，但页面渲染失败。"};
     }
+    if (
+      typeof hydrateCreatorIterations === "function"
+      && typeof creatorIterationHistoryView !== "undefined"
+      && typeof creatorIterationCard !== "undefined"
+    ) {
+      await hydrateCreatorIterations(setId, {silent: true});
+    }
     return true;
   } catch (error) {
     if (creatorExecutionRecordStatus) {
@@ -6413,6 +6586,13 @@ async function patchCreatorExecutionRecord(changes, message = "正在保存执�
       throw {error_code: "EXECUTION_RECORD_RENDER_FAILED", message: "执行记录已保存，但页面渲染失败。"};
     }
     await hydrateCreatorOutcome(setId, {silent: true});
+    if (
+      typeof hydrateCreatorIterations === "function"
+      && typeof creatorIterationHistoryView !== "undefined"
+      && typeof creatorIterationCard !== "undefined"
+    ) {
+      await hydrateCreatorIterations(setId, {silent: true});
+    }
     return true;
   } catch (error) {
     if (creatorExecutionRecordStatus) {
@@ -6490,6 +6670,13 @@ async function generateCreatorExecutionPack(topicIndex) {
       throw {error_code: "EXECUTION_PACK_RENDER_FAILED", message: "执行方案已生成，但页面渲染失败。"};
     }
     await hydrateCreatorExecutionRecord(setId, {silent: true});
+    if (
+      typeof hydrateCreatorIterations === "function"
+      && typeof creatorIterationHistoryView !== "undefined"
+      && typeof creatorIterationCard !== "undefined"
+    ) {
+      await hydrateCreatorIterations(setId, {silent: true});
+    }
     return true;
   } catch (error) {
     if (creatorExecutionPackStatus) {
@@ -8014,6 +8201,22 @@ creatorCloneBatchDistillButton?.addEventListener("click", async () => {
 
 generateCreatorStrategyButton?.addEventListener("click", async () => {
   await generateCreatorStrategyPlan();
+});
+
+creatorIterationCard?.addEventListener("click", async (event) => {
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  const button = target?.closest("[data-iteration-action]");
+  const action = button?.dataset?.iterationAction || "";
+  const setId = currentCreatorCloneSetId();
+  if (action === "start-next") {
+    await startNextCreatorIterationFromUi(setId);
+  } else if (action === "open") {
+    const history = creatorIterationCard.querySelector(".creator-iteration-history");
+    if (history) {
+      history.open = true;
+    }
+    await openCreatorIterationDetail(setId, button.dataset.iterationId || "");
+  }
 });
 
 creatorStrategyPlanResult?.addEventListener("click", async (event) => {

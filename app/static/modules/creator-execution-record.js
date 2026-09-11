@@ -42,7 +42,7 @@
     `;
   }
 
-  function renderStage(stage, value, archived) {
+  function renderStage(stage, value, archived, readOnly = false) {
     const stageLabel = STAGE_LABELS[stage] || stage;
     const statusLabel = PRODUCTION_LABELS[value] || PRODUCTION_LABELS.pending;
     return `
@@ -51,19 +51,20 @@
           <span>${escapeHtml(stageLabel)}</span>
           <strong class="execution-record-stage-status status-${escapeHtml(value || "pending")}">${escapeHtml(statusLabel)}</strong>
         </div>
-        <div class="execution-record-stage-actions">
+        ${readOnly ? "" : `<div class="execution-record-stage-actions">
           <button type="button" class="secondary-button" data-execution-stage="${escapeHtml(stage)}" data-execution-stage-value="completed"${archived ? " disabled" : ""}>标记完成</button>
           <button type="button" class="secondary-button" data-execution-stage="${escapeHtml(stage)}" data-execution-stage-value="skipped"${archived ? " disabled" : ""}>跳过</button>
-        </div>
+        </div>`}
       </article>
     `;
   }
 
-  function renderRecord(recordValue) {
+  function renderRecord(recordValue, options = {}) {
     const record = objectValue(recordValue);
     const production = objectValue(record.production_status);
     const feedback = objectValue(record.feedback);
     const archived = record.status === "archived";
+    const readOnly = options.readOnly === true;
     return `
       <section class="creator-execution-record" data-execution-record-version="${escapeHtml(record.version || "1.0")}">
         <div class="execution-record-summary">
@@ -75,10 +76,21 @@
           ${archived ? '<span class="status-badge muted-badge">已归档</span>' : ""}
         </div>
         <div class="execution-record-stage-grid">
-          ${renderStage("shooting", production.shooting || "pending", archived)}
-          ${renderStage("editing", production.editing || "pending", archived)}
-          ${renderStage("publishing", production.publishing || "pending", archived)}
+          ${renderStage("shooting", production.shooting || "pending", archived, readOnly)}
+          ${renderStage("editing", production.editing || "pending", archived, readOnly)}
+          ${renderStage("publishing", production.publishing || "pending", archived, readOnly)}
         </div>
+        ${readOnly ? `
+        <section class="execution-record-feedback execution-record-feedback-readonly" aria-label="执行反馈只读摘要">
+          <div class="profile-card-heading"><div><span class="entry-label">Feedback</span><h4>执行反馈</h4></div></div>
+          <dl class="iteration-readonly-facts">
+            <div><dt>实际使用</dt><dd>${feedback.was_used ? "是" : "否"}</dd></div>
+            <div><dt>执行难度</dt><dd>${escapeHtml(feedback.difficulty || "—")}</dd></div>
+            <div><dt>方案质量</dt><dd>${escapeHtml(feedback.quality_rating ?? "—")}</dd></div>
+            <div><dt>实际结果</dt><dd>${escapeHtml(feedback.result_rating ?? "—")}</dd></div>
+            <div><dt>备注</dt><dd>${escapeHtml(feedback.notes || "—")}</dd></div>
+          </dl>
+        </section>` : `
         <section class="execution-record-feedback" aria-label="执行反馈">
           <div class="profile-card-heading">
             <div>
@@ -118,7 +130,7 @@
             <button type="button" data-execution-record-action="save-feedback">保存反馈</button>
             ${archived ? "" : '<button type="button" class="secondary-button" data-execution-record-action="archive">归档</button>'}
           </div>
-        </section>
+        </section>`}
       </section>
     `;
   }
